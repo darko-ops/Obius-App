@@ -1,0 +1,39 @@
+// Release Configuration
+// Obius iOS App
+
+// Build Settings
+DEBUG_INFORMATION_FORMAT = dwarf-with-dsym
+SWIFT_OPTIMIZATION_LEVEL = -O
+ENABLE_TESTABILITY = NO
+ONLY_ACTIVE_ARCH = NO
+SWIFT_ACTIVE_COMPILATION_CONDITIONS =
+VALIDATE_PRODUCT = YES
+ENABLE_BITCODE = NO
+DEAD_CODE_STRIPPING = YES
+
+// Strip Debug Symbols
+STRIP_INSTALLED_PRODUCT = YES
+COPY_PHASE_STRIP = YES
+STRIP_STYLE = all
+
+// Environment
+OBIUS_API_BASE_URL = https://api.obius.app
+SUPABASE_URL = https://$(SUPABASE_PROJECT_REF).supabase.co
+SUPABASE_ANON_KEY =
+
+// Bundle ID
+PRODUCT_BUNDLE_IDENTIFIER = app.obius.ios
+
+// App Display Name
+PRODUCT_NAME = Obius
+DISPLAY_NAME = Obius
+
+// Code Signing (manual for production)
+CODE_SIGN_STYLE = Manual
+DEVELOPMENT_TEAM =
+CODE_SIGN_IDENTITY = Apple Distribution
+PROVISIONING_PROFILE_SPECIFIER =
+
+// Logging
+OBIUS_LOG_LEVEL = error
+OBIUS_ENABLE_ANALYTICS = YES

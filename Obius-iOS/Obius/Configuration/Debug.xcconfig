@@ -1,0 +1,29 @@
+// Debug Configuration
+// Obius iOS App
+
+// Build Settings
+DEBUG_INFORMATION_FORMAT = dwarf-with-dsym
+SWIFT_OPTIMIZATION_LEVEL = -Onone
+ENABLE_TESTABILITY = YES
+ONLY_ACTIVE_ARCH = YES
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG
+
+// Environment
+OBIUS_API_BASE_URL = https://dev.obius.app
+SUPABASE_URL = https://$(SUPABASE_PROJECT_REF).supabase.co
+SUPABASE_ANON_KEY =
+
+// Bundle ID (append .debug for debug builds)
+PRODUCT_BUNDLE_IDENTIFIER = app.obius.ios.debug
+
+// App Display Name
+PRODUCT_NAME = Obius (Dev)
+DISPLAY_NAME = Obius Dev
+
+// Code Signing (automatic for development)
+CODE_SIGN_STYLE = Automatic
+DEVELOPMENT_TEAM =
+
+// Logging
+OBIUS_LOG_LEVEL = debug
+OBIUS_ENABLE_ANALYTICS = NO

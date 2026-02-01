@@ -1,0 +1,168 @@
+import Foundation
+import GRDB
+import Combine
+
+@MainActor
+final class NoteRepository: ObservableObject {
+    private let database: DatabaseManager
+    private var cancellables = Set<AnyCancellable>()
+
+    @Published private(set) var notes: [Note] = []
+
+    init(database: DatabaseManager) {
+        self.database = database
+        observeNotes()
+    }
+
+    private func observeNotes() {
+        database.observeNotes()
+            .receive(on: DispatchQueue.main)
+            .catch { error -> Just<[Note]> in
+                print("Error observing notes: \(error)")
+                return Just([])
+            }
+            .sink { [weak self] notes in
+                self?.notes = notes
+            }
+            .store(in: &cancellables)
+    }
+
+    // MARK: - Create
+
+    func createNote(title: String? = nil, intent: IntentType = .idea) async throws -> Note {
+        let note = Note(
+            title: title,
+            intent: intent
+        )
+
+        try await database.write { db in
+            try note.insert(db)
+        }
+
+        // No longer create initial section - user can type directly on the note
+        // and add sections manually via "Add section" button
+
+        return note
+    }
+
+    func updateNoteBody(_ noteId: String, body: String) async throws {
+        try await database.write { db in
+            guard var note = try Note.fetchOne(db, key: noteId) else { return }
+            note.body = body
+            note.touch()
+            try note.update(db)
+        }
+    }
+
+    func updateInterstitialContent(_ noteId: String, afterSectionId: String?, content: String) async throws {
+        try await database.write { db in
+            guard var note = try Note.fetchOne(db, key: noteId) else { return }
+            let key = afterSectionId.map { "after_\($0)" } ?? "end"
+            if content.isEmpty {
+                note.interstitialContent.removeValue(forKey: key)
+            } else {
+                note.interstitialContent[key] = content
+            }
+            note.touch()
+            try note.update(db)
+        }
+    }
+
+    // MARK: - Read
+
+    func getNote(id: String) async throws -> Note? {
+        try await database.read { db in
+            try Note.fetchOne(db, key: id)
+        }
+    }
+
+    func getNoteWithSections(id: String) async throws -> NoteWithSections? {
+        try await database.read { db in
+            guard let note = try Note.fetchOne(db, key: id) else {
+                return nil
+            }
+            let sections = try note.sections.fetchAll(db)
+            return NoteWithSections(note: note, sections: sections)
+        }
+    }
+
+    func observeNoteWithSections(id: String) -> AnyPublisher<NoteWithSections?, Error> {
+        database.observeNoteWithSections(noteId: id)
+    }
+
+    // MARK: - Update
+
+    func updateNote(_ note: Note) async throws {
+        var updated = note
+        updated.touch()
+
+        try await database.write { db in
+            try updated.update(db)
+        }
+    }
+
+    func updateNoteTitle(_ noteId: String, title: String?) async throws {
+        try await database.write { db in
+            guard var note = try Note.fetchOne(db, key: noteId) else { return }
+            note.title = title
+            note.touch()
+            try note.update(db)
+        }
+    }
+
+    func togglePinned(_ noteId: String) async throws {
+        try await database.write { db in
+            guard var note = try Note.fetchOne(db, key: noteId) else { return }
+            note.isPinned.toggle()
+            note.touch()
+            try note.update(db)
+        }
+    }
+
+    func setIntent(_ noteId: String, intent: IntentType) async throws {
+        try await database.write { db in
+            guard var note = try Note.fetchOne(db, key: noteId) else { return }
+            note.intent = intent
+            note.touch()
+            try note.update(db)
+        }
+    }
+
+    // MARK: - Delete
+
+    func deleteNote(_ noteId: String) async throws {
+        try await database.write { db in
+            guard var note = try Note.fetchOne(db, key: noteId) else { return }
+            note.softDelete()
+            try note.update(db)
+
+            // Also soft-delete all sections
+            try db.execute(sql: """
+                UPDATE sections
+                SET deletedAt = ?, syncStatus = 'pending', localVersion = localVersion + 1
+                WHERE noteId = ?
+            """, arguments: [Int64(Date().timeIntervalSince1970 * 1000), noteId])
+        }
+    }
+
+    func permanentlyDelete(_ noteId: String) async throws {
+        try await database.write { db in
+            try Note.deleteOne(db, key: noteId)
+        }
+    }
+
+    // MARK: - Search
+
+    func searchNotes(query: String) async throws -> [Note] {
+        let sections = try await database.searchSections(query: query)
+        let noteIds = Set(sections.map { $0.noteId })
+
+        return try await database.read { db in
+            try Note
+                .filter(noteIds.contains(Note.Columns.id))
+                .filter(Note.Columns.deletedAt == nil)
+                .order(Note.Columns.updatedAt.desc)
+                .fetchAll(db)
+        }
+    }
+}
