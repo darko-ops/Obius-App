@@ -25,44 +25,23 @@ struct DraggableSectionList: View {
     let onApplyTemplate: (String) -> Void  // Apply template to section
     let onCreateLoop: (String) -> Void  // Handle Loop: Create new handle from section
     let onUnlinkHandle: (String) -> Void  // Handle Loop: Unlink section from handle
+    let onCommit: (String) -> Void  // Commit the note containing this container
     let getInterstitialContent: (String?) -> String  // Get text after section (nil = end)
     let onInterstitialContentChange: (String?, String) -> Void  // Update text after section
+    let onInterstitialBackspaceEmpty: (String?) -> Void  // Backspace on empty interstitial
 
     @State private var draggingSection: Section?
     @State private var dragOffset: CGFloat = 0
     @State private var dropTargetIndex: Int?
-    @State private var horizontalDragOffset: CGFloat = 0
-    @State private var indentCandidate: String?  // Section ID that would become parent
     @GestureState private var isDragging = false
 
-    private let indentThreshold: CGFloat = 50  // Pixels to drag right to trigger indent
-    private let outdentThreshold: CGFloat = -50  // Pixels to drag left to trigger outdent
     private let rowHeight: CGFloat = 60  // Approximate row height for calculating drop position
-    
-    /// Progress of horizontal drag (0 to 1 for indent, -1 to 0 for outdent)
-    private var dragProgress: CGFloat {
-        if horizontalDragOffset > 0 {
-            return min(horizontalDragOffset / indentThreshold, 1.0)
-        } else {
-            return max(horizontalDragOffset / abs(outdentThreshold), -1.0)
-        }
-    }
-    
-    /// Whether currently dragging past indent threshold
-    private var isPastIndentThreshold: Bool {
-        horizontalDragOffset > indentThreshold
-    }
-    
-    /// Whether currently dragging past outdent threshold
-    private var isPastOutdentThreshold: Bool {
-        horizontalDragOffset < outdentThreshold
-    }
 
     var body: some View {
         ZStack {
-            VStack(spacing: 12) {
+            VStack(spacing: 0) {
                 ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
-                    // Section row
+                    // Section row (no layout animation)
                     DraggableSectionRow(
                         section: section,
                         index: index,
@@ -73,8 +52,6 @@ struct DraggableSectionList: View {
                         displayContent: getDisplayContent(section),
                         isDragging: draggingSection?.id == section.id,
                         isDropTarget: dropTargetIndex == index,
-                        isIndentCandidate: indentCandidate == section.id,
-                        horizontalOffset: draggingSection?.id == section.id ? horizontalDragOffset : 0,
                         onDragStart: { startDragging(section) },
                         onDragChanged: { translation in
                             handleDragChanged(section: section, index: index, translation: translation)
@@ -94,45 +71,24 @@ struct DraggableSectionList: View {
                         onDrillIn: { onDrillIn(section.id) },
                         onApplyTemplate: { onApplyTemplate(section.id) },
                         onCreateLoop: { onCreateLoop(section.id) },
-                        onUnlinkHandle: { onUnlinkHandle(section.id) }
+                        onUnlinkHandle: { onUnlinkHandle(section.id) },
+                        onCommit: { onCommit(section.id) }
                     )
+                    .id(section.id)  // For ScrollViewReader
                     .zIndex(draggingSection?.id == section.id ? 1 : 0)
-                    .onDrop(of: [.text], delegate: SectionDropDelegate(
-                        item: section,
-                        items: $sections,
-                        draggedItem: $draggingSection,
-                        dropTargetIndex: $dropTargetIndex,
-                        onMove: onMove
-                    ))
 
                     // Interstitial text field after this section
                     InterstitialTextField(
                         afterSectionId: section.id,
                         getContent: getInterstitialContent,
-                        onContentChange: onInterstitialContentChange
+                        onContentChange: onInterstitialContentChange,
+                        onBackspaceEmpty: onInterstitialBackspaceEmpty
                     )
+                    .id("interstitial-\(section.id)")
                 }
+            }
+            .animation(nil, value: sections.count)  // Prevent layout animations when content changes
 
-                // Interstitial text field at the end (after all sections)
-                if !sections.isEmpty {
-                    InterstitialTextField(
-                        afterSectionId: nil,
-                        getContent: getInterstitialContent,
-                        onContentChange: onInterstitialContentChange
-                    )
-                }
-            }
-            
-            // Drag-to-indent feedback overlay
-            if draggingSection != nil && abs(horizontalDragOffset) > 20 {
-                DragIndentFeedback(
-                    isIndenting: horizontalDragOffset > 0,
-                    progress: abs(dragProgress)
-                )
-                .allowsHitTesting(false)
-                .transition(.opacity)
-                .animation(.easeOut(duration: 0.15), value: dragProgress)
-            }
         }
     }
 
@@ -146,9 +102,7 @@ struct DraggableSectionList: View {
     private func handleDragChanged(section: Section, index: Int, translation: CGSize) {
         guard draggingSection?.id == section.id else { return }
 
-        horizontalDragOffset = translation.width
-
-        // Calculate target index based on vertical translation
+        // Calculate target index based on vertical translation only
         let rowsMoved = Int(round(translation.height / rowHeight))
         let newTargetIndex = max(0, min(sections.count - 1, index + rowsMoved))
 
@@ -156,41 +110,9 @@ struct DraggableSectionList: View {
             dropTargetIndex = newTargetIndex
             HapticFeedback.selection()
         }
-
-        // Check for indent candidate (section above that could become parent)
-        if translation.width > indentThreshold && index > 0 {
-            let potentialParent = sections[index - 1]
-            if potentialParent.id != section.parentSectionId {
-                if indentCandidate != potentialParent.id {
-                    indentCandidate = potentialParent.id
-                    HapticFeedback.selection()
-                }
-            }
-        } else if translation.width < outdentThreshold {
-            // Show outdent visual feedback
-            indentCandidate = nil
-        } else {
-            indentCandidate = nil
-        }
     }
 
     private func endDragging(section: Section, at index: Int) {
-        // Handle drag-to-indent
-        if horizontalDragOffset > indentThreshold && index > 0 {
-            let potentialParent = sections[index - 1]
-            if potentialParent.id != section.parentSectionId {
-                // Set parent to section above
-                onSetParent(section.id, potentialParent.id)
-                HapticFeedback.impact(.light)
-            }
-        } else if horizontalDragOffset < outdentThreshold {
-            // Outdent - remove parent
-            if section.parentSectionId != nil {
-                onSetParent(section.id, nil)
-                HapticFeedback.impact(.light)
-            }
-        }
-        
         // Handle vertical reordering
         if let targetIndex = dropTargetIndex, let draggedSection = draggingSection {
             if let fromIndex = sections.firstIndex(where: { $0.id == draggedSection.id }) {
@@ -204,8 +126,6 @@ struct DraggableSectionList: View {
         withAnimation(.easeInOut(duration: 0.2)) {
             draggingSection = nil
             dropTargetIndex = nil
-            horizontalDragOffset = 0
-            indentCandidate = nil
         }
     }
 }
@@ -222,8 +142,6 @@ struct DraggableSectionRow: View {
     let displayContent: String  // Handle Loop: content to display
     let isDragging: Bool
     let isDropTarget: Bool
-    let isIndentCandidate: Bool  // This section might become a parent
-    let horizontalOffset: CGFloat
     let onDragStart: () -> Void
     let onDragChanged: (CGSize) -> Void
     let onDragEnd: () -> Void
@@ -242,6 +160,7 @@ struct DraggableSectionRow: View {
     let onApplyTemplate: () -> Void
     let onCreateLoop: () -> Void  // Handle Loop support
     let onUnlinkHandle: () -> Void  // Handle Loop support
+    let onCommit: () -> Void  // Commit container
 
     @State private var dragAmount = CGSize.zero
     @GestureState private var isLongPressing = false
@@ -269,7 +188,8 @@ struct DraggableSectionRow: View {
                 onDelete: onDelete,
                 onApplyTemplate: onApplyTemplate,
                 onCreateLoop: onCreateLoop,
-                onUnlinkHandle: onUnlinkHandle
+                onUnlinkHandle: onUnlinkHandle,
+                onCommit: onCommit
             )
 
             // Drill-in button for sections with children
@@ -284,14 +204,14 @@ struct DraggableSectionRow: View {
         }
         .background(rowBackground)
         .overlay(dropIndicator)
-        .overlay(indentIndicator)
-        .offset(x: horizontalOffset * 0.3)  // Partial horizontal offset for visual feedback
         .offset(y: isDragging ? dragAmount.height : 0)
         .scaleEffect(isDragging ? 1.02 : 1.0)
         .opacity(isDragging ? 0.9 : 1.0)
         .animation(.easeInOut(duration: 0.15), value: isDragging)
-        .contentShape(Rectangle())
-        .gesture(
+        // Use simultaneousGesture so the parent ScrollView's scroll gesture
+        // isn't blocked. The long press (0.3s) naturally fails during a scroll
+        // because the finger moves, so only a deliberate hold activates reorder.
+        .simultaneousGesture(
             LongPressGesture(minimumDuration: 0.3)
                 .sequenced(before: DragGesture())
                 .onChanged { value in
@@ -320,28 +240,18 @@ struct DraggableSectionRow: View {
                     }
                 }
         )
-        .draggable(section.id) {
-            DragPreview(section: section)
+        .transaction { transaction in
+            // Only allow animations for dragging state changes
+            if !isDragging {
+                transaction.animation = nil
+            }
         }
     }
 
     private var rowBackground: some View {
         RoundedRectangle(cornerRadius: 8)
-            .fill(backgroundColor)
+            .fill(isDragging ? Color.accentColor.opacity(0.15) : Color.clear)
             .animation(.easeInOut(duration: 0.15), value: isDragging)
-            .animation(.easeInOut(duration: 0.15), value: isIndentCandidate)
-    }
-    
-    private var backgroundColor: Color {
-        if isDragging {
-            // Dragging state - blue tint
-            return Color.accentColor.opacity(0.15)
-        } else if isIndentCandidate {
-            // This section will become a parent - green glow
-            return Color.green.opacity(0.2)
-        } else {
-            return Color.clear
-        }
     }
 
     @ViewBuilder
@@ -358,105 +268,6 @@ struct DraggableSectionRow: View {
         }
     }
     
-    @ViewBuilder
-    private var indentIndicator: some View {
-        if isIndentCandidate {
-            HStack {
-                Spacer()
-                VStack {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.turn.down.right")
-                            .font(.caption.weight(.semibold))
-                        Text("Nest here")
-                            .font(.caption2.weight(.medium))
-                    }
-                    .foregroundStyle(.green)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(Color.green.opacity(0.2))
-                    )
-                    Spacer()
-                }
-                .padding(.top, 6)
-                .padding(.trailing, 6)
-            }
-            .transition(.scale(scale: 0.8, anchor: .topTrailing).combined(with: .opacity))
-        }
-    }
-}
-
-// MARK: - Drag Preview
-
-struct DragPreview: View {
-    let section: Section
-
-    var body: some View {
-        HStack(spacing: 8) {
-            // Intent rail
-            RoundedRectangle(cornerRadius: 2)
-                .fill(section.intent.color)
-                .frame(width: 3, height: 32)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                if let title = section.title, !title.isEmpty {
-                    Text(title)
-                        .font(.caption.weight(.semibold))
-                }
-                Text(section.preview)
-                    .font(.body)
-                    .lineLimit(2)
-            }
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(.ultraThinMaterial)
-                .shadow(radius: 4)
-        )
-        .frame(maxWidth: 280)
-    }
-}
-
-// MARK: - Drop Delegate
-
-struct SectionDropDelegate: DropDelegate {
-    let item: Section
-    @Binding var items: [Section]
-    @Binding var draggedItem: Section?
-    @Binding var dropTargetIndex: Int?
-    let onMove: (Int, Int) -> Void
-
-    func performDrop(info: DropInfo) -> Bool {
-        dropTargetIndex = nil
-        return true
-    }
-
-    func dropEntered(info: DropInfo) {
-        guard let draggedItem = draggedItem,
-              draggedItem.id != item.id,
-              let fromIndex = items.firstIndex(where: { $0.id == draggedItem.id }),
-              let toIndex = items.firstIndex(where: { $0.id == item.id }) else {
-            return
-        }
-
-        dropTargetIndex = toIndex
-
-        if fromIndex != toIndex {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                items.move(fromOffsets: IndexSet(integer: fromIndex), toOffset: toIndex > fromIndex ? toIndex + 1 : toIndex)
-            }
-        }
-    }
-
-    func dropExited(info: DropInfo) {
-        // Keep the drop target visible until drop completes
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        return DropProposal(operation: .move)
-    }
 }
 
 // MARK: - Interstitial Text Field
@@ -466,28 +277,431 @@ struct InterstitialTextField: View {
     let afterSectionId: String?  // nil means "at end"
     let getContent: (String?) -> String
     let onContentChange: (String?, String) -> Void
+    let onBackspaceEmpty: (String?) -> Void  // Called when backspace on empty field
 
     @State private var text: String = ""
     @FocusState private var isFocused: Bool
 
     var body: some View {
+        InterstitialTextView(
+            text: $text,
+            isFocused: $isFocused,
+            onContentChange: { newValue in
+                onContentChange(afterSectionId, newValue)
+            },
+            onBackspaceEmpty: {
+                onBackspaceEmpty(afterSectionId)
+            }
+        )
+        .frame(minHeight: 22)
+        .fixedSize(horizontal: false, vertical: true)  // Take natural height
+        .padding(.horizontal, 10)
+        .animation(nil, value: text)  // Prevent layout animations
+        .onAppear {
+            text = getContent(afterSectionId)
+        }
+    }
+}
+
+#if os(iOS)
+/// Keyboard toolbar with formatting buttons and dismiss for interstitial text
+private class InterstitialKeyboardToolbar: UIToolbar {
+    weak var textView: UITextView?
+    var onDismiss: (() -> Void)?
+
+    private var titleButton: UIBarButtonItem?
+    private var boldButton: UIBarButtonItem?
+    private var italicButton: UIBarButtonItem?
+    private var underlineButton: UIBarButtonItem?
+
+    // Track active formatting states for typing
+    private var isTitleActive = false
+    private var isBoldActive = false
+    private var isItalicActive = false
+    private var isUnderlineActive = false
+
+    private var normalFontSize: CGFloat {
+        UIFont.preferredFont(forTextStyle: .body).pointSize
+    }
+
+    private var titleFontSize: CGFloat {
+        UIFont.preferredFont(forTextStyle: .body).pointSize * 2
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupToolbar()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupToolbar()
+    }
+
+    convenience init() {
+        self.init(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 44))
+    }
+
+    private func setupToolbar() {
+        barStyle = .default
+        isTranslucent = true
+        sizeToFit()
+
+        var items: [UIBarButtonItem] = []
+
+        // Indent/Outdent buttons (visual consistency, no action for interstitials)
+        let outdentButton = UIBarButtonItem(
+            image: UIImage(systemName: "decrease.indent"),
+            style: .plain,
+            target: nil,
+            action: nil
+        )
+        outdentButton.isEnabled = false
+        items.append(outdentButton)
+
+        let indentButton = UIBarButtonItem(
+            image: UIImage(systemName: "increase.indent"),
+            style: .plain,
+            target: nil,
+            action: nil
+        )
+        indentButton.isEnabled = false
+        items.append(indentButton)
+
+        let flexSpace = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
+        items.append(flexSpace)
+
+        // Title size button
+        let title = UIBarButtonItem(
+            image: UIImage(systemName: "textformat.size"),
+            style: .plain,
+            target: self,
+            action: #selector(titleTapped)
+        )
+        titleButton = title
+        items.append(title)
+
+        // Formatting buttons: Bold, Italic, Underline
+        let bold = UIBarButtonItem(
+            image: UIImage(systemName: "bold"),
+            style: .plain,
+            target: self,
+            action: #selector(boldTapped)
+        )
+        boldButton = bold
+        items.append(bold)
+
+        let italic = UIBarButtonItem(
+            image: UIImage(systemName: "italic"),
+            style: .plain,
+            target: self,
+            action: #selector(italicTapped)
+        )
+        italicButton = italic
+        items.append(italic)
+
+        let underline = UIBarButtonItem(
+            image: UIImage(systemName: "underline"),
+            style: .plain,
+            target: self,
+            action: #selector(underlineTapped)
+        )
+        underlineButton = underline
+        items.append(underline)
+
+        // Add spacing
+        let fixedSpace = UIBarButtonItem(barButtonSystemItem: .fixedSpace, target: nil, action: nil)
+        fixedSpace.width = 12
+        items.append(fixedSpace)
+
+        // Dismiss button (far right)
+        let dismissButton = UIBarButtonItem(
+            image: UIImage(systemName: "keyboard.chevron.compact.down"),
+            style: .plain,
+            target: self,
+            action: #selector(dismissTapped)
+        )
+        items.append(dismissButton)
+
+        setItems(items, animated: false)
+    }
+
+    private func updateButtonAppearance() {
+        titleButton?.tintColor = isTitleActive ? .systemPurple : nil
+        boldButton?.tintColor = isBoldActive ? .systemPurple : nil
+        italicButton?.tintColor = isItalicActive ? .systemPurple : nil
+        underlineButton?.tintColor = isUnderlineActive ? .systemPurple : nil
+    }
+
+    /// Sync button states with the text view's current typing attributes
+    func syncWithTypingAttributes() {
+        guard let textView = textView else { return }
+        let attrs = textView.typingAttributes
+        let font = (attrs[.font] as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+        let traits = font.fontDescriptor.symbolicTraits
+
+        isTitleActive = font.pointSize >= titleFontSize && traits.contains(.traitBold)
+        isBoldActive = traits.contains(.traitBold) && !isTitleActive
+        isItalicActive = traits.contains(.traitItalic)
+        isUnderlineActive = (attrs[.underlineStyle] as? Int) != nil && (attrs[.underlineStyle] as? Int) != 0
+
+        updateButtonAppearance()
+    }
+
+    @objc private func titleTapped() {
+        guard let textView = textView else { return }
+        isTitleActive.toggle()
+        let range = textView.selectedRange
+
+        if range.length > 0 {
+            let mutableAttrString = NSMutableAttributedString(attributedString: textView.attributedText)
+            mutableAttrString.enumerateAttribute(.font, in: range, options: []) { value, subRange, _ in
+                let currentFont = (value as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+                let size = isTitleActive ? titleFontSize : normalFontSize
+                var traits = currentFont.fontDescriptor.symbolicTraits
+                if isTitleActive { traits.insert(.traitBold) }
+                if let desc = currentFont.fontDescriptor.withSymbolicTraits(traits) {
+                    let newFont = UIFont(descriptor: desc, size: size)
+                    mutableAttrString.addAttribute(.font, value: newFont, range: subRange)
+                }
+            }
+            textView.attributedText = mutableAttrString
+            textView.selectedRange = range
+        } else {
+            var attrs = textView.typingAttributes
+            let currentFont = (attrs[.font] as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+            let size = isTitleActive ? titleFontSize : normalFontSize
+            var traits = currentFont.fontDescriptor.symbolicTraits
+            if isTitleActive { traits.insert(.traitBold) } else if !isBoldActive { traits.remove(.traitBold) }
+            if let desc = currentFont.fontDescriptor.withSymbolicTraits(traits) {
+                attrs[.font] = UIFont(descriptor: desc, size: size)
+                textView.typingAttributes = attrs
+            }
+        }
+
+        updateButtonAppearance()
+    }
+
+    @objc private func boldTapped() {
+        guard let textView = textView else { return }
+        let range = textView.selectedRange
+
+        if range.length > 0 {
+            applyFontTraitToSelection(.traitBold, in: textView)
+        } else {
+            isBoldActive.toggle()
+            applyFontTraitToTyping(.traitBold, isActive: isBoldActive, in: textView)
+        }
+        updateButtonAppearance()
+    }
+
+    @objc private func italicTapped() {
+        guard let textView = textView else { return }
+        let range = textView.selectedRange
+
+        if range.length > 0 {
+            applyFontTraitToSelection(.traitItalic, in: textView)
+        } else {
+            isItalicActive.toggle()
+            applyFontTraitToTyping(.traitItalic, isActive: isItalicActive, in: textView)
+        }
+        updateButtonAppearance()
+    }
+
+    @objc private func underlineTapped() {
+        guard let textView = textView else { return }
+        let range = textView.selectedRange
+
+        if range.length > 0 {
+            let mutableAttrString = NSMutableAttributedString(attributedString: textView.attributedText)
+
+            var isUnderlined = false
+            mutableAttrString.enumerateAttribute(.underlineStyle, in: range, options: []) { value, _, _ in
+                if let style = value as? Int, style != 0 {
+                    isUnderlined = true
+                }
+            }
+
+            if isUnderlined {
+                mutableAttrString.removeAttribute(.underlineStyle, range: range)
+            } else {
+                mutableAttrString.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+            }
+
+            textView.attributedText = mutableAttrString
+            textView.selectedRange = range
+        } else {
+            isUnderlineActive.toggle()
+            var attrs = textView.typingAttributes
+            if isUnderlineActive {
+                attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+            } else {
+                attrs.removeValue(forKey: .underlineStyle)
+            }
+            textView.typingAttributes = attrs
+        }
+        updateButtonAppearance()
+    }
+
+    private func applyFontTraitToSelection(_ trait: UIFontDescriptor.SymbolicTraits, in textView: UITextView) {
+        let range = textView.selectedRange
+        guard range.length > 0 else { return }
+
+        let mutableAttrString = NSMutableAttributedString(attributedString: textView.attributedText)
+
+        mutableAttrString.enumerateAttribute(.font, in: range, options: []) { value, subRange, _ in
+            let currentFont = (value as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+            var newTraits = currentFont.fontDescriptor.symbolicTraits
+
+            if newTraits.contains(trait) {
+                newTraits.remove(trait)
+            } else {
+                newTraits.insert(trait)
+            }
+
+            if let newDescriptor = currentFont.fontDescriptor.withSymbolicTraits(newTraits) {
+                let newFont = UIFont(descriptor: newDescriptor, size: currentFont.pointSize)
+                mutableAttrString.addAttribute(.font, value: newFont, range: subRange)
+            }
+        }
+
+        textView.attributedText = mutableAttrString
+        textView.selectedRange = range
+    }
+
+    private func applyFontTraitToTyping(_ trait: UIFontDescriptor.SymbolicTraits, isActive: Bool, in textView: UITextView) {
+        var attrs = textView.typingAttributes
+        let currentFont = (attrs[.font] as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+        var newTraits = currentFont.fontDescriptor.symbolicTraits
+
+        if isActive {
+            newTraits.insert(trait)
+        } else {
+            newTraits.remove(trait)
+        }
+
+        if let newDescriptor = currentFont.fontDescriptor.withSymbolicTraits(newTraits) {
+            let newFont = UIFont(descriptor: newDescriptor, size: currentFont.pointSize)
+            attrs[.font] = newFont
+            textView.typingAttributes = attrs
+        }
+    }
+
+    @objc private func dismissTapped() {
+        onDismiss?()
+    }
+}
+
+/// Custom UITextView wrapper with proper cursor positioning and tap handling
+struct InterstitialTextView: UIViewRepresentable {
+    @Binding var text: String
+    var isFocused: FocusState<Bool>.Binding
+    let onContentChange: (String) -> Void
+    let onBackspaceEmpty: () -> Void
+
+    func makeUIView(context: Context) -> SelfSizingTextView {
+        // Use SelfSizingTextView which has proper single-tap handling
+        let textView = SelfSizingTextView()
+        textView.delegate = context.coordinator
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.backgroundColor = .clear
+        textView.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
+        textView.textContainer.lineFragmentPadding = 0
+        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textView.setContentCompressionResistancePriority(.required, for: .vertical)
+
+        // Add keyboard accessory toolbar with formatting and dismiss buttons
+        let toolbar = InterstitialKeyboardToolbar()
+        toolbar.textView = textView
+        toolbar.onDismiss = { [weak textView] in
+            textView?.resignFirstResponder()
+        }
+        textView.inputAccessoryView = toolbar
+
+        return textView
+    }
+
+    func updateUIView(_ textView: SelfSizingTextView, context: Context) {
+        if textView.text != text {
+            textView.text = text
+        }
+        textView.invalidateIntrinsicContentSize()
+
+        if isFocused.wrappedValue && !textView.isFirstResponder {
+            textView.becomeFirstResponder()
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject, UITextViewDelegate {
+        var parent: InterstitialTextView
+
+        init(_ parent: InterstitialTextView) {
+            self.parent = parent
+        }
+
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            parent.isFocused.wrappedValue = true
+            // Sync toolbar button states with current typing attributes
+            if let toolbar = textView.inputAccessoryView as? InterstitialKeyboardToolbar {
+                toolbar.syncWithTypingAttributes()
+            }
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            parent.isFocused.wrappedValue = false
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            // Sync toolbar button states when cursor moves
+            if let toolbar = textView.inputAccessoryView as? InterstitialKeyboardToolbar {
+                toolbar.syncWithTypingAttributes()
+            }
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            let newText = textView.text ?? ""
+            // Only update binding if text actually changed (prevents loop when only formatting changes)
+            if parent.text != newText {
+                parent.text = newText
+                parent.onContentChange(newText)
+            }
+            textView.invalidateIntrinsicContentSize()
+        }
+
+        // Detect backspace on empty text
+        func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            // Check if backspace was pressed (empty replacement) on empty text
+            if text.isEmpty && textView.text.isEmpty {
+                parent.onBackspaceEmpty()
+                return false
+            }
+            return true
+        }
+    }
+}
+#else
+/// macOS fallback using TextEditor
+struct InterstitialTextView: View {
+    @Binding var text: String
+    var isFocused: FocusState<Bool>.Binding
+    let onContentChange: (String) -> Void
+    let onBackspaceEmpty: () -> Void
+
+    var body: some View {
         TextEditor(text: $text)
             .font(.body)
-            .foregroundStyle(.primary)
             .scrollContentBackground(.hidden)
-            .focused($isFocused)
-            .frame(minHeight: text.isEmpty && !isFocused ? 28 : 40)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 4)
+            .focused(isFocused)
             .onChange(of: text) { _, newValue in
-                onContentChange(afterSectionId, newValue)
-            }
-            .onAppear {
-                text = getContent(afterSectionId)
+                onContentChange(newValue)
             }
     }
 }
+#endif
 
 // MARK: - Haptic Feedback
 
@@ -562,8 +776,10 @@ enum HapticFeedback {
                     onApplyTemplate: { _ in },
                     onCreateLoop: { _ in },
                     onUnlinkHandle: { _ in },
+                    onCommit: { _ in },
                     getInterstitialContent: { _ in "" },
-                    onInterstitialContentChange: { _, _ in }
+                    onInterstitialContentChange: { _, _ in },
+                    onInterstitialBackspaceEmpty: { _ in }
                 )
                 .padding()
             }

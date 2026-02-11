@@ -1,28 +1,42 @@
 import Foundation
 
-/// Template type - fold templates apply to folds, page templates create full pages
+/// Template type - node templates apply to nodes, page templates create full pages
 enum TemplateType: String, Codable, CaseIterable {
-    case fold = "fold"
+    case node = "node"
     case page = "page"
 
     var displayName: String {
         switch self {
-        case .fold: return "Fold"
+        case .node: return "Node"
         case .page: return "Page"
         }
     }
 
     var icon: String {
         switch self {
-        case .fold: return "rectangle.split.3x1"
+        case .node: return "app"
         case .page: return "doc.text"
         }
     }
 
     var description: String {
         switch self {
-        case .fold: return "Apply to folds within a page"
+        case .node: return "Apply to nodes within a page"
         case .page: return "Create a full page structure"
+        }
+    }
+
+    // Custom decoder to handle migration from "fold" to "node"
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        switch rawValue {
+        case "node", "fold":  // "fold" was the old name
+            self = .node
+        case "page":
+            self = .page
+        default:
+            self = .node  // Default to node for unknown types
         }
     }
 }
@@ -39,7 +53,7 @@ struct SectionTemplate: Codable, Identifiable, Hashable {
     init(
         id: String = UUID().uuidString,
         name: String = "New Template",
-        templateType: TemplateType = .fold,
+        templateType: TemplateType = .node,
         sections: [TemplateSectionItem] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -55,20 +69,34 @@ struct SectionTemplate: Codable, Identifiable, Hashable {
 
 /// Item type for template items
 enum TemplateItemType: String, Codable, CaseIterable {
-    case fold = "fold"
+    case node = "node"
     case line = "line"
 
     var displayName: String {
         switch self {
-        case .fold: return "Fold"
+        case .node: return "Node"
         case .line: return "Line"
         }
     }
 
     var icon: String {
         switch self {
-        case .fold: return "rectangle"
+        case .node: return "circle"
         case .line: return "text.alignleft"
+        }
+    }
+
+    // Custom decoder to handle migration from "fold" to "node"
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        switch rawValue {
+        case "node", "fold":  // "fold" was the old name
+            self = .node
+        case "line":
+            self = .line
+        default:
+            self = .node  // Default to node for unknown types
         }
     }
 }
@@ -83,7 +111,7 @@ struct TemplateSectionItem: Codable, Identifiable, Hashable {
 
     init(
         id: String = UUID().uuidString,
-        itemType: TemplateItemType = .fold,
+        itemType: TemplateItemType = .node,
         content: String = "",
         intent: IntentType = .idea,
         indentLevel: Int = 0
@@ -99,7 +127,7 @@ struct TemplateSectionItem: Codable, Identifiable, Hashable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
-        itemType = try container.decodeIfPresent(TemplateItemType.self, forKey: .itemType) ?? .fold
+        itemType = try container.decodeIfPresent(TemplateItemType.self, forKey: .itemType) ?? .node
         content = try container.decode(String.self, forKey: .content)
         intent = try container.decode(IntentType.self, forKey: .intent)
         indentLevel = try container.decode(Int.self, forKey: .indentLevel)
@@ -123,8 +151,8 @@ class TemplateManager: ObservableObject {
         loadTemplates()
     }
 
-    var foldTemplates: [SectionTemplate] {
-        templates.filter { $0.templateType == .fold }
+    var nodeTemplates: [SectionTemplate] {
+        templates.filter { $0.templateType == .node }
     }
 
     var pageTemplates: [SectionTemplate] {

@@ -1,0 +1,799 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B8A1D0010000000000000001 /* ObiusApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000001 /* ObiusApp.swift */; };
+		B8A1D0010000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000002 /* ContentView.swift */; };
+		B8A1D0010000000000000003 /* PreviewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000003 /* PreviewApp.swift */; };
+		B8A1D0010000000000000004 /* AppConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000004 /* AppConfiguration.swift */; };
+		B8A1D0010000000000000005 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000005 /* AuthManager.swift */; };
+		B8A1D0010000000000000006 /* BiometricManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000006 /* BiometricManager.swift */; };
+		B8A1D0010000000000000007 /* DatabaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000007 /* DatabaseManager.swift */; };
+		B8A1D0010000000000000008 /* HandleManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000008 /* HandleManager.swift */; };
+		B8A1D0010000000000000009 /* NetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000009 /* NetworkMonitor.swift */; };
+		B8A1D0010000000000000010 /* SupabaseClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000010 /* SupabaseClient.swift */; };
+		B8A1D0010000000000000011 /* SyncTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000011 /* SyncTypes.swift */; };
+		B8A1D0010000000000000012 /* ColdStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000012 /* ColdStore.swift */; };
+		B8A1D0010000000000000013 /* CommitModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000013 /* CommitModule.swift */; };
+		B8A1D0010000000000000014 /* ProfileScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000014 /* ProfileScanner.swift */; };
+		B8A1D0010000000000000015 /* SyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000015 /* SyncEngine.swift */; };
+		B8A1D0010000000000000016 /* SyncOperationLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000016 /* SyncOperationLogger.swift */; };
+		B8A1D0010000000000000017 /* Debouncer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000017 /* Debouncer.swift */; };
+		B8A1D0010000000000000018 /* ErrorHandling.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000018 /* ErrorHandling.swift */; };
+		B8A1D0010000000000000019 /* FractionalIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000019 /* FractionalIndex.swift */; };
+		B8A1D0010000000000000020 /* Commit.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000020 /* Commit.swift */; };
+		B8A1D0010000000000000021 /* Handle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000021 /* Handle.swift */; };
+		B8A1D0010000000000000022 /* IntentType.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000022 /* IntentType.swift */; };
+		B8A1D0010000000000000023 /* Media.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000023 /* Media.swift */; };
+		B8A1D0010000000000000024 /* Note.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000024 /* Note.swift */; };
+		B8A1D0010000000000000025 /* Section.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000025 /* Section.swift */; };
+		B8A1D0010000000000000026 /* SectionTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000026 /* SectionTemplate.swift */; };
+		B8A1D0010000000000000027 /* CommitRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000027 /* CommitRepository.swift */; };
+		B8A1D0010000000000000028 /* HandleRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000028 /* HandleRepository.swift */; };
+		B8A1D0010000000000000029 /* MediaRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000029 /* MediaRepository.swift */; };
+		B8A1D0010000000000000030 /* NoteRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000030 /* NoteRepository.swift */; };
+		B8A1D0010000000000000031 /* SectionRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000031 /* SectionRepository.swift */; };
+		B8A1D0010000000000000032 /* NoteEditorViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000032 /* NoteEditorViewModel.swift */; };
+		B8A1D0010000000000000033 /* NotesListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000033 /* NotesListViewModel.swift */; };
+		B8A1D0010000000000000034 /* AuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000034 /* AuthView.swift */; };
+		B8A1D0010000000000000035 /* DraggableSectionList.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000035 /* DraggableSectionList.swift */; };
+		B8A1D0010000000000000036 /* HandleAutocomplete.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000036 /* HandleAutocomplete.swift */; };
+		B8A1D0010000000000000037 /* HandleBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000037 /* HandleBadge.swift */; };
+		B8A1D0010000000000000038 /* HandleNameSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000038 /* HandleNameSheet.swift */; };
+		B8A1D0010000000000000039 /* IntentTypePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000039 /* IntentTypePicker.swift */; };
+		B8A1D0010000000000000040 /* LoadingStates.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000040 /* LoadingStates.swift */; };
+		B8A1D0010000000000000041 /* MoebiusNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000041 /* MoebiusNavigation.swift */; };
+		B8A1D0010000000000000042 /* SectionToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000042 /* SectionToolbar.swift */; };
+		B8A1D0010000000000000043 /* ShimmerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000043 /* ShimmerView.swift */; };
+		B8A1D0010000000000000044 /* SwipeableSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000044 /* SwipeableSectionView.swift */; };
+		B8A1D0010000000000000045 /* SyncStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000045 /* SyncStatusView.swift */; };
+		B8A1D0010000000000000046 /* NoteEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000046 /* NoteEditorView.swift */; };
+		B8A1D0010000000000000047 /* SectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000047 /* SectionView.swift */; };
+		B8A1D0010000000000000048 /* IntelligenceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000048 /* IntelligenceView.swift */; };
+		B8A1D0010000000000000049 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000049 /* LibraryView.swift */; };
+		B8A1D0010000000000000050 /* NoteRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000050 /* NoteRowView.swift */; };
+		B8A1D0010000000000000051 /* NotesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000051 /* NotesListView.swift */; };
+		B8A1D0010000000000000052 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000052 /* SearchView.swift */; };
+		B8A1D0010000000000000053 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000053 /* SettingsView.swift */; };
+		B8A1D0010000000000000054 /* TemplateCreatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000054 /* TemplateCreatorView.swift */; };
+		B8A1D0010000000000000055 /* TemplateListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000055 /* TemplateListView.swift */; };
+		B8A1D0010000000000000056 /* Echo.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000056 /* Echo.swift */; };
+		B8A1D0010000000000000057 /* EchoRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000057 /* EchoRepository.swift */; };
+		B8A1D0010000000000000058 /* EchoManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000058 /* EchoManager.swift */; };
+		B8A1D0010000000000000059 /* EchoConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000059 /* EchoConfigSheet.swift */; };
+		B8A1D0010000000000000090 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000090 /* Assets.xcassets */; };
+		B8A1D0010000000000000091 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = B8A1E0010000000000000091 /* GRDB */; };
+		B8A1D0010000000000000092 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = B8A1E0010000000000000092 /* Supabase */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		B8A1A0010000000000000000 /* Obius.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Obius.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B8A1F0010000000000000001 /* ObiusApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObiusApp.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000003 /* PreviewApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewApp.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000004 /* AppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfiguration.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000005 /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000006 /* BiometricManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricManager.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000007 /* DatabaseManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseManager.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000008 /* HandleManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandleManager.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000009 /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000010 /* SupabaseClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseClient.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000011 /* SyncTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncTypes.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000012 /* ColdStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColdStore.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000013 /* CommitModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitModule.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000014 /* ProfileScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileScanner.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000015 /* SyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncEngine.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000016 /* SyncOperationLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncOperationLogger.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000017 /* Debouncer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Debouncer.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000018 /* ErrorHandling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorHandling.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000019 /* FractionalIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FractionalIndex.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000020 /* Commit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Commit.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000021 /* Handle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Handle.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000022 /* IntentType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentType.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000023 /* Media.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Media.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000024 /* Note.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Note.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000025 /* Section.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Section.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000026 /* SectionTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionTemplate.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000027 /* CommitRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitRepository.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000028 /* HandleRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandleRepository.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000029 /* MediaRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaRepository.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000030 /* NoteRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteRepository.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000031 /* SectionRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionRepository.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000032 /* NoteEditorViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteEditorViewModel.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000033 /* NotesListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesListViewModel.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000034 /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000035 /* DraggableSectionList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraggableSectionList.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000036 /* HandleAutocomplete.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandleAutocomplete.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000037 /* HandleBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandleBadge.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000038 /* HandleNameSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandleNameSheet.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000039 /* IntentTypePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentTypePicker.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000040 /* LoadingStates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoadingStates.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000041 /* MoebiusNavigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MoebiusNavigation.swift; path = "MöbiusNavigation.swift"; sourceTree = "<group>"; };
+		B8A1F0010000000000000042 /* SectionToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionToolbar.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000043 /* ShimmerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShimmerView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000044 /* SwipeableSectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeableSectionView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000045 /* SyncStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncStatusView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000046 /* NoteEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteEditorView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000047 /* SectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000048 /* IntelligenceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntelligenceView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000049 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000050 /* NoteRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteRowView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000051 /* NotesListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesListView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000052 /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000053 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000054 /* TemplateCreatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateCreatorView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000055 /* TemplateListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateListView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000056 /* Echo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Echo.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000057 /* EchoRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoRepository.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000058 /* EchoManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoManager.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000059 /* EchoConfigSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoConfigSheet.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000088 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B8A1F0010000000000000090 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		B8A1B0010000000000000000 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B8A1D0010000000000000091 /* GRDB in Frameworks */,
+				B8A1D0010000000000000092 /* Supabase in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		B8A1G0010000000000000000 = {
+			isa = PBXGroup;
+			children = (
+				B8A1G0010000000000000001 /* Obius */,
+				B8A1G0010000000000000099 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000001 /* Obius */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1G0010000000000000002 /* App */,
+				B8A1G0010000000000000003 /* Configuration */,
+				B8A1G0010000000000000004 /* Core */,
+				B8A1G0010000000000000011 /* Models */,
+				B8A1G0010000000000000012 /* Repositories */,
+				B8A1G0010000000000000013 /* ViewModels */,
+				B8A1G0010000000000000014 /* Views */,
+				B8A1G0010000000000000020 /* Resources */,
+			);
+			path = Obius;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000002 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000001 /* ObiusApp.swift */,
+				B8A1F0010000000000000002 /* ContentView.swift */,
+				B8A1F0010000000000000003 /* PreviewApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000003 /* Configuration */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000004 /* AppConfiguration.swift */,
+				B8A1F0010000000000000088 /* Info.plist */,
+			);
+			path = Configuration;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000004 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1G0010000000000000005 /* Auth */,
+				B8A1G0010000000000000006 /* Database */,
+				B8A1F0010000000000000058 /* EchoManager.swift */,
+				B8A1F0010000000000000008 /* HandleManager.swift */,
+				B8A1G0010000000000000007 /* Network */,
+				B8A1G0010000000000000008 /* Storage */,
+				B8A1G0010000000000000009 /* Sync */,
+				B8A1G0010000000000000010 /* Utilities */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000005 /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000005 /* AuthManager.swift */,
+				B8A1F0010000000000000006 /* BiometricManager.swift */,
+			);
+			path = Auth;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000006 /* Database */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000007 /* DatabaseManager.swift */,
+			);
+			path = Database;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000007 /* Network */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000009 /* NetworkMonitor.swift */,
+				B8A1F0010000000000000010 /* SupabaseClient.swift */,
+				B8A1F0010000000000000011 /* SyncTypes.swift */,
+			);
+			path = Network;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000008 /* Storage */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000012 /* ColdStore.swift */,
+				B8A1F0010000000000000013 /* CommitModule.swift */,
+				B8A1F0010000000000000014 /* ProfileScanner.swift */,
+			);
+			path = Storage;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000009 /* Sync */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000015 /* SyncEngine.swift */,
+				B8A1F0010000000000000016 /* SyncOperationLogger.swift */,
+			);
+			path = Sync;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000010 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000017 /* Debouncer.swift */,
+				B8A1F0010000000000000018 /* ErrorHandling.swift */,
+				B8A1F0010000000000000019 /* FractionalIndex.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000011 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000020 /* Commit.swift */,
+				B8A1F0010000000000000056 /* Echo.swift */,
+				B8A1F0010000000000000021 /* Handle.swift */,
+				B8A1F0010000000000000022 /* IntentType.swift */,
+				B8A1F0010000000000000023 /* Media.swift */,
+				B8A1F0010000000000000024 /* Note.swift */,
+				B8A1F0010000000000000025 /* Section.swift */,
+				B8A1F0010000000000000026 /* SectionTemplate.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000012 /* Repositories */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000027 /* CommitRepository.swift */,
+				B8A1F0010000000000000057 /* EchoRepository.swift */,
+				B8A1F0010000000000000028 /* HandleRepository.swift */,
+				B8A1F0010000000000000029 /* MediaRepository.swift */,
+				B8A1F0010000000000000030 /* NoteRepository.swift */,
+				B8A1F0010000000000000031 /* SectionRepository.swift */,
+			);
+			path = Repositories;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000013 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000032 /* NoteEditorViewModel.swift */,
+				B8A1F0010000000000000033 /* NotesListViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000014 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1G0010000000000000015 /* Auth */,
+				B8A1G0010000000000000016 /* Components */,
+				B8A1G0010000000000000017 /* Editor */,
+				B8A1G0010000000000000018 /* Intelligence */,
+				B8A1G0010000000000000019 /* Library */,
+				B8A1G0010000000000000021 /* Notes */,
+				B8A1G0010000000000000022 /* Search */,
+				B8A1G0010000000000000023 /* Settings */,
+				B8A1G0010000000000000024 /* Templates */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000015 /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000034 /* AuthView.swift */,
+			);
+			path = Auth;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000016 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000035 /* DraggableSectionList.swift */,
+				B8A1F0010000000000000059 /* EchoConfigSheet.swift */,
+				B8A1F0010000000000000036 /* HandleAutocomplete.swift */,
+				B8A1F0010000000000000037 /* HandleBadge.swift */,
+				B8A1F0010000000000000038 /* HandleNameSheet.swift */,
+				B8A1F0010000000000000039 /* IntentTypePicker.swift */,
+				B8A1F0010000000000000040 /* LoadingStates.swift */,
+				B8A1F0010000000000000041 /* MoebiusNavigation.swift */,
+				B8A1F0010000000000000042 /* SectionToolbar.swift */,
+				B8A1F0010000000000000043 /* ShimmerView.swift */,
+				B8A1F0010000000000000044 /* SwipeableSectionView.swift */,
+				B8A1F0010000000000000045 /* SyncStatusView.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000017 /* Editor */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000046 /* NoteEditorView.swift */,
+				B8A1F0010000000000000047 /* SectionView.swift */,
+			);
+			path = Editor;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000018 /* Intelligence */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000048 /* IntelligenceView.swift */,
+			);
+			path = Intelligence;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000019 /* Library */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000049 /* LibraryView.swift */,
+			);
+			path = Library;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000020 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000090 /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000021 /* Notes */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000050 /* NoteRowView.swift */,
+				B8A1F0010000000000000051 /* NotesListView.swift */,
+			);
+			path = Notes;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000022 /* Search */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000052 /* SearchView.swift */,
+			);
+			path = Search;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000023 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000053 /* SettingsView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000024 /* Templates */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1F0010000000000000054 /* TemplateCreatorView.swift */,
+				B8A1F0010000000000000055 /* TemplateListView.swift */,
+			);
+			path = Templates;
+			sourceTree = "<group>";
+		};
+		B8A1G0010000000000000099 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B8A1A0010000000000000000 /* Obius.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B8A1C0010000000000000000 /* Obius */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B8A1H0010000000000000001 /* Build configuration list for PBXNativeTarget "Obius" */;
+			buildPhases = (
+				B8A1B0010000000000000001 /* Sources */,
+				B8A1B0010000000000000000 /* Frameworks */,
+				B8A1B0010000000000000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Obius;
+			packageProductDependencies = (
+				B8A1E0010000000000000091 /* GRDB */,
+				B8A1E0010000000000000092 /* Supabase */,
+			);
+			productName = Obius;
+			productReference = B8A1A0010000000000000000 /* Obius.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B8A1P0010000000000000000 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					B8A1C0010000000000000000 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = B8A1H0010000000000000000 /* Build configuration list for PBXProject "Obius" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = B8A1G0010000000000000000;
+			packageReferences = (
+				B8A1I0010000000000000091 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
+				B8A1I0010000000000000092 /* XCRemoteSwiftPackageReference "supabase-swift" */,
+			);
+			productRefGroup = B8A1G0010000000000000099 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B8A1C0010000000000000000 /* Obius */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B8A1B0010000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B8A1D0010000000000000090 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B8A1B0010000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B8A1D0010000000000000001 /* ObiusApp.swift in Sources */,
+				B8A1D0010000000000000002 /* ContentView.swift in Sources */,
+				B8A1D0010000000000000003 /* PreviewApp.swift in Sources */,
+				B8A1D0010000000000000004 /* AppConfiguration.swift in Sources */,
+				B8A1D0010000000000000005 /* AuthManager.swift in Sources */,
+				B8A1D0010000000000000006 /* BiometricManager.swift in Sources */,
+				B8A1D0010000000000000007 /* DatabaseManager.swift in Sources */,
+				B8A1D0010000000000000008 /* HandleManager.swift in Sources */,
+				B8A1D0010000000000000009 /* NetworkMonitor.swift in Sources */,
+				B8A1D0010000000000000010 /* SupabaseClient.swift in Sources */,
+				B8A1D0010000000000000011 /* SyncTypes.swift in Sources */,
+				B8A1D0010000000000000012 /* ColdStore.swift in Sources */,
+				B8A1D0010000000000000013 /* CommitModule.swift in Sources */,
+				B8A1D0010000000000000014 /* ProfileScanner.swift in Sources */,
+				B8A1D0010000000000000015 /* SyncEngine.swift in Sources */,
+				B8A1D0010000000000000016 /* SyncOperationLogger.swift in Sources */,
+				B8A1D0010000000000000017 /* Debouncer.swift in Sources */,
+				B8A1D0010000000000000018 /* ErrorHandling.swift in Sources */,
+				B8A1D0010000000000000019 /* FractionalIndex.swift in Sources */,
+				B8A1D0010000000000000020 /* Commit.swift in Sources */,
+				B8A1D0010000000000000021 /* Handle.swift in Sources */,
+				B8A1D0010000000000000022 /* IntentType.swift in Sources */,
+				B8A1D0010000000000000023 /* Media.swift in Sources */,
+				B8A1D0010000000000000024 /* Note.swift in Sources */,
+				B8A1D0010000000000000025 /* Section.swift in Sources */,
+				B8A1D0010000000000000026 /* SectionTemplate.swift in Sources */,
+				B8A1D0010000000000000027 /* CommitRepository.swift in Sources */,
+				B8A1D0010000000000000028 /* HandleRepository.swift in Sources */,
+				B8A1D0010000000000000029 /* MediaRepository.swift in Sources */,
+				B8A1D0010000000000000030 /* NoteRepository.swift in Sources */,
+				B8A1D0010000000000000031 /* SectionRepository.swift in Sources */,
+				B8A1D0010000000000000032 /* NoteEditorViewModel.swift in Sources */,
+				B8A1D0010000000000000033 /* NotesListViewModel.swift in Sources */,
+				B8A1D0010000000000000034 /* AuthView.swift in Sources */,
+				B8A1D0010000000000000035 /* DraggableSectionList.swift in Sources */,
+				B8A1D0010000000000000036 /* HandleAutocomplete.swift in Sources */,
+				B8A1D0010000000000000037 /* HandleBadge.swift in Sources */,
+				B8A1D0010000000000000038 /* HandleNameSheet.swift in Sources */,
+				B8A1D0010000000000000039 /* IntentTypePicker.swift in Sources */,
+				B8A1D0010000000000000040 /* LoadingStates.swift in Sources */,
+				B8A1D0010000000000000041 /* MoebiusNavigation.swift in Sources */,
+				B8A1D0010000000000000042 /* SectionToolbar.swift in Sources */,
+				B8A1D0010000000000000043 /* ShimmerView.swift in Sources */,
+				B8A1D0010000000000000044 /* SwipeableSectionView.swift in Sources */,
+				B8A1D0010000000000000045 /* SyncStatusView.swift in Sources */,
+				B8A1D0010000000000000046 /* NoteEditorView.swift in Sources */,
+				B8A1D0010000000000000047 /* SectionView.swift in Sources */,
+				B8A1D0010000000000000048 /* IntelligenceView.swift in Sources */,
+				B8A1D0010000000000000049 /* LibraryView.swift in Sources */,
+				B8A1D0010000000000000050 /* NoteRowView.swift in Sources */,
+				B8A1D0010000000000000051 /* NotesListView.swift in Sources */,
+				B8A1D0010000000000000052 /* SearchView.swift in Sources */,
+				B8A1D0010000000000000053 /* SettingsView.swift in Sources */,
+				B8A1D0010000000000000054 /* TemplateCreatorView.swift in Sources */,
+				B8A1D0010000000000000055 /* TemplateListView.swift in Sources */,
+				B8A1D0010000000000000056 /* Echo.swift in Sources */,
+				B8A1D0010000000000000057 /* EchoRepository.swift in Sources */,
+				B8A1D0010000000000000058 /* EchoManager.swift in Sources */,
+				B8A1D0010000000000000059 /* EchoConfigSheet.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		B8A1J0010000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		B8A1J0010000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		B8A1K0010000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = W276447S6T;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Obius/Configuration/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Obius;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.obius.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B8A1K0010000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = W276447S6T;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Obius/Configuration/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Obius;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.obius.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		B8A1H0010000000000000000 /* Build configuration list for PBXProject "Obius" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B8A1J0010000000000000001 /* Debug */,
+				B8A1J0010000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B8A1H0010000000000000001 /* Build configuration list for PBXNativeTarget "Obius" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B8A1K0010000000000000001 /* Debug */,
+				B8A1K0010000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B8A1I0010000000000000091 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/groue/GRDB.swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 6.24.0;
+			};
+		};
+		B8A1I0010000000000000092 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B8A1E0010000000000000091 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B8A1I0010000000000000091 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			productName = GRDB;
+		};
+		B8A1E0010000000000000092 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B8A1I0010000000000000092 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = B8A1P0010000000000000000 /* Project object */;
+}

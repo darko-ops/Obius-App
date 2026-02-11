@@ -4,7 +4,6 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var authManager: AuthManager
-    @StateObject private var networkMonitor = NetworkMonitor.shared
     @State private var showingSignOut = false
 
     var body: some View {
@@ -41,31 +40,6 @@ struct SettingsView: View {
                         Label("Sign In", systemImage: "person.crop.circle.badge.plus")
                     }
                 }
-            }
-
-            // Sync Section
-            SwiftUI.Section("Sync") {
-                HStack {
-                    Label("Status", systemImage: "arrow.triangle.2.circlepath")
-                    Spacer()
-                    SyncStatusView()
-                }
-
-                HStack {
-                    Label("Connection", systemImage: "wifi")
-                    Spacer()
-                    Text(networkMonitor.isConnected ? "Online" : "Offline")
-                        .foregroundStyle(.secondary)
-                }
-
-                Button {
-                    Task {
-                        await appState.triggerSync()
-                    }
-                } label: {
-                    Label("Sync Now", systemImage: "arrow.clockwise")
-                }
-                .disabled(!networkMonitor.isConnected || !authManager.isAuthenticated)
             }
 
             // Privacy Section

@@ -23,7 +23,9 @@ final class SectionRepository: ObservableObject {
         content: String = "",
         contentType: ContentType = .text,
         sectionType: SectionType = .fold,
-        afterSectionId: String? = nil
+        afterSectionId: String? = nil,
+        isTemplateContent: Bool = false,
+        templatePrefix: String? = nil
     ) async throws -> Section {
         try await database.write { db in
             // Get existing sections to determine order key
@@ -52,7 +54,9 @@ final class SectionRepository: ObservableObject {
                 content: content,
                 contentType: contentType,
                 sectionType: sectionType,
-                orderKey: orderKey
+                orderKey: orderKey,
+                isTemplateContent: isTemplateContent,
+                templatePrefix: templatePrefix
             )
 
             try section.insert(db)
@@ -415,21 +419,99 @@ final class SectionRepository: ObservableObject {
 
     /// Promote a section to a new handle, copying its content
     func promoteToHandle(sectionId: String, handleName: String, handleRepository: HandleRepository) async throws -> Handle {
-        // Get the section's current content
-        guard let section = try await getSection(id: sectionId) else {
-            throw HandleError.notFound(sectionId)
-        }
+        // Get the section's current content (may be nil if section was cleaned up)
+        let section = try await getSection(id: sectionId)
 
-        // Create the handle with the section's content
+        // Create the handle — always succeeds even if section is empty or missing
         let handle = try await handleRepository.createHandle(
             name: handleName,
-            content: section.content,
-            intent: section.intent
+            content: section?.content ?? "",
+            intent: section?.intent ?? .idea
         )
 
-        // Link the section to the new handle
-        try await linkSectionToHandle(sectionId: sectionId, handleId: handle.id)
+        // Link the section to the new handle (if it still exists)
+        if section != nil {
+            try await linkSectionToHandle(sectionId: sectionId, handleId: handle.id)
+        }
 
         return handle
+    }
+
+    // MARK: - Commit Restore
+
+    /// Restores sections from commit snapshots.
+    /// Used by CommitModule to restore section state from Cold Store.
+    func restoreFromSnapshots(noteId: String, snapshots: [CommitSectionSnapshot]) async throws {
+        try await database.write { db in
+            // Get existing section IDs for this note
+            let existingSections = try Section
+                .filter(Section.Columns.noteId == noteId)
+                .filter(Section.Columns.deletedAt == nil)
+                .fetchAll(db)
+            let existingIds = Set(existingSections.map { $0.id })
+
+            // Track snapshot IDs
+            let snapshotIds = Set(snapshots.map { $0.id })
+
+            // Soft-delete sections that are not in the snapshot
+            for section in existingSections {
+                if !snapshotIds.contains(section.id) {
+                    var deletedSection = section
+                    deletedSection.softDelete()
+                    try deletedSection.update(db)
+                }
+            }
+
+            // Create or update sections from snapshots
+            for snapshot in snapshots {
+                if existingIds.contains(snapshot.id) {
+                    // Update existing section
+                    if var section = try Section.fetchOne(db, key: snapshot.id) {
+                        section.content = snapshot.content
+                        section.contentType = ContentType(rawValue: snapshot.contentType) ?? .text
+                        section.sectionType = SectionType(rawValue: snapshot.sectionType) ?? .fold
+                        section.intent = IntentType(rawValue: snapshot.intent) ?? .idea
+                        section.orderKey = snapshot.orderKey
+                        section.indentLevel = snapshot.indentLevel
+                        section.parentSectionId = snapshot.parentSectionId
+                        section.handleId = snapshot.handleId
+                        section.isCollapsed = snapshot.isCollapsed
+                        section.isLocked = snapshot.isLocked
+                        section.isTemplateContent = snapshot.isTemplateContent
+                        section.templatePrefix = snapshot.templatePrefix
+                        section.contentBefore = snapshot.contentBefore
+                        section.deletedAt = nil  // Ensure not deleted
+                        section.touch()
+                        try section.update(db)
+                    }
+                } else {
+                    // Create new section from snapshot
+                    let section = Section(
+                        id: snapshot.id,
+                        noteId: noteId,
+                        content: snapshot.content,
+                        contentType: ContentType(rawValue: snapshot.contentType) ?? .text,
+                        sectionType: SectionType(rawValue: snapshot.sectionType) ?? .fold,
+                        parentSectionId: snapshot.parentSectionId,
+                        orderKey: snapshot.orderKey,
+                        indentLevel: snapshot.indentLevel,
+                        isCollapsed: snapshot.isCollapsed,
+                        isLocked: snapshot.isLocked,
+                        isTemplateContent: snapshot.isTemplateContent,
+                        templatePrefix: snapshot.templatePrefix,
+                        contentBefore: snapshot.contentBefore,
+                        intent: IntentType(rawValue: snapshot.intent) ?? .idea,
+                        handleId: snapshot.handleId
+                    )
+                    try section.insert(db)
+                }
+            }
+
+            // Touch the parent note
+            if var note = try Note.fetchOne(db, key: noteId) {
+                note.touch()
+                try note.update(db)
+            }
+        }
     }
 }

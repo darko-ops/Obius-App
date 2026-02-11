@@ -88,9 +88,9 @@ struct HandleAutocompleteRow: View {
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 12) {
-                // Intent color indicator
+                // Loop color indicator
                 Circle()
-                    .fill(handle.intent.color)
+                    .fill(Color.purple)
                     .frame(width: 8, height: 8)
 
                 VStack(alignment: .leading, spacing: 2) {

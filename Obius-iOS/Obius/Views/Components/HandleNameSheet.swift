@@ -5,12 +5,14 @@ struct HandleNameSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let existingHandles: [Handle]
-    let onCreateNew: (String) -> Void
+    let onCreateNew: (String, EchoConfig?) -> Void
     let onSelectExisting: (Handle) -> Void
 
     @State private var handleName: String = ""
     @State private var validationError: String?
     @State private var showExisting: Bool = true
+    @State private var echoConfig: EchoConfig?
+    @State private var showingEchoConfig: Bool = false
 
     private var normalizedName: String {
         handleName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -40,25 +42,39 @@ struct HandleNameSheet: View {
             VStack(spacing: 0) {
                 // Handle name input
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 4) {
-                        Text("@")
-                            .font(.title2.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                    HStack(spacing: 10) {
+                        HStack(spacing: 4) {
+                            Text("@")
+                                .font(.title2.weight(.semibold))
+                                .foregroundStyle(.secondary)
 
-                        TextField("HandleName", text: $handleName)
-                            .font(.title2)
-                            #if os(iOS)
-                            .textInputAutocapitalization(.never)
-                            #endif
-                            .autocorrectionDisabled()
-                            .onChange(of: handleName) { _, newValue in
-                                // Real-time validation
-                                validationError = Handle.validateName(newValue)
-                            }
+                            TextField("HandleName", text: $handleName)
+                                .font(.title2)
+                                #if os(iOS)
+                                .textInputAutocapitalization(.never)
+                                #endif
+                                .autocorrectionDisabled()
+                                .onChange(of: handleName) { _, newValue in
+                                    // Real-time validation
+                                    validationError = Handle.validateName(newValue)
+                                }
+                        }
+                        .padding()
+                        .background(Color.gray.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                        Button {
+                            showingEchoConfig = true
+                        } label: {
+                            Image(systemName: echoConfig != nil ? "dot.radiowaves.left.and.right" : "dot.radiowaves.left.and.right")
+                                .font(.title2)
+                                .foregroundStyle(echoConfig != nil ? .yellow : .secondary)
+                                .frame(width: 44, height: 44)
+                                .background(Color.gray.opacity(0.15))
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .padding()
-                    .background(Color.gray.opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
 
                     if let error = validationError, !normalizedName.isEmpty {
                         Text(error)
@@ -130,11 +146,14 @@ struct HandleNameSheet: View {
 
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Create") {
-                        onCreateNew(normalizedName)
+                        onCreateNew(normalizedName, echoConfig)
                         dismiss()
                     }
                     .disabled(!isValidName || nameAlreadyExists)
                 }
+            }
+            .sheet(isPresented: $showingEchoConfig) {
+                EchoConfigSheet(config: $echoConfig)
             }
         }
     }
@@ -148,9 +167,9 @@ struct ExistingHandleRow: View {
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 12) {
-                // Intent indicator
+                // Loop indicator
                 Circle()
-                    .fill(handle.intent.color)
+                    .fill(Color.purple)
                     .frame(width: 8, height: 8)
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -190,8 +209,8 @@ struct ExistingHandleRow: View {
             Handle(name: "todos", displayName: "TODOs", content: "Buy groceries", intent: .task),
             Handle(name: "research", displayName: "Research", content: "According to the study...", intent: .evidence)
         ],
-        onCreateNew: { name in
-            print("Create new handle: @\(name)")
+        onCreateNew: { name, echoConfig in
+            print("Create new handle: @\(name), echo: \(String(describing: echoConfig))")
         },
         onSelectExisting: { handle in
             print("Selected existing: \(handle.formattedName)")

@@ -205,7 +205,7 @@ extension Task where Failure == Never, Success == Void {
         operation: @escaping () async throws -> Void,
         onError: @escaping (Error) -> Void
     ) -> Task<Void, Never> {
-        Task(priority: priority) {
+        Task<Void, Never>(priority: priority) {
             do {
                 try await operation()
             } catch {

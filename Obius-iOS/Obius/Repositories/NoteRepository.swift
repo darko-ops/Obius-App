@@ -128,6 +128,16 @@ final class NoteRepository: ObservableObject {
         }
     }
 
+    func setGroupName(noteId: String, groupName: String?) async throws {
+        try await database.write { db in
+            guard var note = try Note.fetchOne(db, key: noteId) else { return }
+            note.groupName = groupName
+            note.isPinned = groupName != nil  // Grouped notes are always pinned
+            note.touch()
+            try note.update(db)
+        }
+    }
+
     // MARK: - Delete
 
     func deleteNote(_ noteId: String) async throws {
@@ -163,6 +173,41 @@ final class NoteRepository: ObservableObject {
                 .filter(Note.Columns.deletedAt == nil)
                 .order(Note.Columns.updatedAt.desc)
                 .fetchAll(db)
+        }
+    }
+
+    // MARK: - Commit Restore
+
+    /// Restores a note from a commit snapshot.
+    /// Used by CommitModule to restore note state from Cold Store.
+    func restoreFromSnapshot(
+        id: String,
+        title: String?,
+        body: String,
+        intent: IntentType,
+        isPinned: Bool
+    ) async throws {
+        try await database.write { db in
+            guard var note = try Note.fetchOne(db, key: id) else {
+                // Note doesn't exist - create it from snapshot
+                let newNote = Note(
+                    id: id,
+                    title: title,
+                    body: body,
+                    isPinned: isPinned,
+                    intent: intent
+                )
+                try newNote.insert(db)
+                return
+            }
+
+            // Update existing note
+            note.title = title
+            note.body = body
+            note.intent = intent
+            note.isPinned = isPinned
+            note.touch()
+            try note.update(db)
         }
     }
 }

@@ -16,17 +16,7 @@ final class NoteEditorViewModel: ObservableObject {
     @Published var note: Note?
     @Published var sections: [Section] = []
     @Published var isLoading: Bool = true
-    @Published var focusedSectionId: String? {
-        didSet {
-            print("🎯 Focus changed: \(oldValue?.prefix(8) ?? "nil") -> \(focusedSectionId?.prefix(8) ?? "nil")")
-            // Clean up empty section when focus moves away
-            if let previousId = oldValue, previousId != focusedSectionId {
-                Task {
-                    await cleanupEmptySection(previousId)
-                }
-            }
-        }
-    }
+    @Published var focusedSectionId: String?
 
     // Computed hierarchical structure
     var sectionTree: [SectionNode] {
@@ -202,9 +192,6 @@ final class NoteEditorViewModel: ObservableObject {
     }
 
     func deleteSection(_ sectionId: String) async throws {
-        // Don't delete the last section
-        guard sections.count > 1 else { return }
-
         // Also delete all child sections
         let children = getDescendants(of: sectionId)
         for child in children {
@@ -231,8 +218,17 @@ final class NoteEditorViewModel: ObservableObject {
             return
         }
 
-        let isEmpty = section.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        print("   content: '\(section.content.prefix(20))' isEmpty: \(isEmpty)")
+        // Don't delete portal sections (linked to a handle)
+        if section.handleId != nil {
+            print("   ❌ Not deleting - section is a portal (handleId set)")
+            return
+        }
+
+        // Check both content and templatePrefix - don't delete template sections
+        let contentEmpty = section.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let prefixEmpty = (section.templatePrefix ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let isEmpty = contentEmpty && prefixEmpty
+        print("   content: '\(section.content.prefix(20))' templatePrefix: '\(section.templatePrefix?.prefix(20) ?? "nil")' isEmpty: \(isEmpty)")
 
         if isEmpty {
             print("   ✅ Deleting empty section")
@@ -246,7 +242,13 @@ final class NoteEditorViewModel: ObservableObject {
         guard sections.count > 1 else { return }
 
         for section in sections {
-            let isEmpty = section.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            // Don't delete portal sections (linked to a handle)
+            if section.handleId != nil { continue }
+
+            // Check both content and templatePrefix - don't delete template sections
+            let contentEmpty = section.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let prefixEmpty = (section.templatePrefix ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let isEmpty = contentEmpty && prefixEmpty
             if isEmpty && sections.count > 1 {
                 try? await deleteSection(section.id)
             }
@@ -266,9 +268,13 @@ final class NoteEditorViewModel: ObservableObject {
         let hasBody = !note.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if hasBody { return false }
 
-        // Check if any section has content
+        // Check if any section has content (including template prefixes or handle links)
         let hasNonEmptySection = sections.contains { section in
-            !section.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            // Portal sections (linked to a handle) are never empty
+            if section.handleId != nil { return true }
+            let contentEmpty = section.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let prefixEmpty = (section.templatePrefix ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return !contentEmpty || !prefixEmpty
         }
         if hasNonEmptySection { return false }
 
@@ -342,23 +348,32 @@ final class NoteEditorViewModel: ObservableObject {
     }
 
     /// Apply a template by creating sections from the template
+    /// Template content is bold, undeletable, but user can add text around it
     func applyTemplate(_ template: SectionTemplate) async throws {
         // Get the last section to add after
         let lastSectionId = sections.last?.id
 
         var previousSectionId = lastSectionId
+        var firstNewSectionId: String?
 
         for templateSection in template.sections {
             // Map template item type to section type
             let sectionType: SectionType = templateSection.itemType == .line ? .line : .fold
 
-            // Create the section
+            // Create the section with template content in the content field
+            // templatePrefix tracks what portion is protected from deletion
             let newSection = try await sectionRepository.createSection(
                 noteId: noteId,
-                content: templateSection.content,
+                content: templateSection.content,  // Template text is in content
                 sectionType: sectionType,
-                afterSectionId: previousSectionId
+                afterSectionId: previousSectionId,
+                isTemplateContent: true,
+                templatePrefix: templateSection.content  // Tracks protected text
             )
+
+            if firstNewSectionId == nil {
+                firstNewSectionId = newSection.id
+            }
 
             // Set intent if not default (only for folds)
             if sectionType == .fold && templateSection.intent != .idea {
@@ -374,13 +389,13 @@ final class NoteEditorViewModel: ObservableObject {
         }
 
         // Focus the first new section
-        if let firstTemplateSection = template.sections.first,
-           let newFirstSection = sections.first(where: { $0.content == firstTemplateSection.content }) {
-            focusedSectionId = newFirstSection.id
+        if let firstId = firstNewSectionId {
+            focusedSectionId = firstId
         }
     }
 
     /// Apply a template before a specific section (template sections appear above, existing content stays below)
+    /// Template content is bold, undeletable, but user can add text around it
     func applyTemplateToSection(_ template: SectionTemplate, beforeSectionId: String) async throws {
         // Find the section before the target section to insert after
         guard let targetIndex = sections.firstIndex(where: { $0.id == beforeSectionId }) else { return }
@@ -394,12 +409,15 @@ final class NoteEditorViewModel: ObservableObject {
             // Map template item type to section type
             let sectionType: SectionType = templateSection.itemType == .line ? .line : .fold
 
-            // Create the section
+            // Create the section with template content in the content field
+            // templatePrefix tracks what portion is protected from deletion
             let newSection = try await sectionRepository.createSection(
                 noteId: noteId,
-                content: templateSection.content,
+                content: templateSection.content,  // Template text is in content
                 sectionType: sectionType,
-                afterSectionId: previousSectionId
+                afterSectionId: previousSectionId,
+                isTemplateContent: true,
+                templatePrefix: templateSection.content  // Tracks protected text
             )
 
             // Set intent if not default (only for folds)

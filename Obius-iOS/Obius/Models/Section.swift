@@ -18,8 +18,11 @@ struct Section: Codable, Identifiable, Hashable {
 
     // UI state
     var isCollapsed: Bool
-    var isLocked: Bool  // New: Requires biometric to view
-    var intent: IntentType  // Renamed from colorIntent, now required
+    var isLocked: Bool  // Requires biometric to view
+    var isTemplateContent: Bool  // Has template text - template is bold and uneditable
+    var templatePrefix: String?  // Bold, uneditable template text (e.g., "Name:")
+    var contentBefore: String?   // Editable content before template text
+    var intent: IntentType
 
     // Handle Loop - links this section to a global handle (portal mode)
     var handleId: String?
@@ -46,6 +49,9 @@ struct Section: Codable, Identifiable, Hashable {
         indentLevel: Int = 0,
         isCollapsed: Bool = false,
         isLocked: Bool = false,
+        isTemplateContent: Bool = false,
+        templatePrefix: String? = nil,
+        contentBefore: String? = nil,
         intent: IntentType = .idea,
         handleId: String? = nil,
         createdAt: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
@@ -66,6 +72,9 @@ struct Section: Codable, Identifiable, Hashable {
         self.indentLevel = indentLevel
         self.isCollapsed = isCollapsed
         self.isLocked = isLocked
+        self.isTemplateContent = isTemplateContent
+        self.templatePrefix = templatePrefix
+        self.contentBefore = contentBefore
         self.intent = intent
         self.handleId = handleId
         self.createdAt = createdAt
@@ -86,26 +95,32 @@ struct Section: Codable, Identifiable, Hashable {
     }
     
     var isEmpty: Bool {
-        content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let full = (contentBefore ?? "") + (templatePrefix ?? "") + content
+        return full.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
-    
+
+    /// Full display content including contentBefore, template prefix, and content after
+    var fullContent: String {
+        (contentBefore ?? "") + (templatePrefix ?? "") + content
+    }
+
     /// One-line preview for ghost summaries when collapsed
     var preview: String {
-        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = fullContent.trimmingCharacters(in: .whitespacesAndNewlines)
         let firstLine = trimmed.components(separatedBy: .newlines).first ?? trimmed
         if firstLine.count <= 80 {
             return firstLine
         }
         return String(firstLine.prefix(80)) + "…"
     }
-    
+
     /// Display title - uses explicit title, auto-generated from content, or default
     var displayTitle: String {
         if let title = title, !title.isEmpty {
             return title
         }
-        // Auto-generate from first line of content
-        let firstLine = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Auto-generate from first line of content (including template prefix)
+        let firstLine = fullContent.trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: .newlines)
             .first ?? ""
         if firstLine.isEmpty {
@@ -124,7 +139,7 @@ extension Section: FetchableRecord, PersistableRecord {
         case id, noteId, content, contentType, sectionType
         case title
         case parentSectionId, orderKey, indentLevel
-        case isCollapsed, isLocked, intent
+        case isCollapsed, isLocked, isTemplateContent, templatePrefix, contentBefore, intent
         case handleId
         case createdAt, updatedAt, deletedAt
         case localVersion, serverVersion, syncStatus

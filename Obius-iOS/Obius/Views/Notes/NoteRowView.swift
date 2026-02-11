@@ -2,11 +2,48 @@ import SwiftUI
 
 struct NoteRowView: View {
     let note: Note
+    var sectionContent: String?
 
     private var formattedDate: String {
         let formatter = DateFormatter()
         formatter.dateFormat = "M.d.yy"
         return formatter.string(from: note.updatedDate)
+    }
+
+    private var contentPreview: String? {
+        // Try note body first, then fall back to section content
+        let body = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let content = body.isEmpty ? (sectionContent ?? "") : body
+
+        guard !content.isEmpty else { return nil }
+
+        return truncatePreview(content)
+    }
+
+    private func truncatePreview(_ text: String) -> String {
+        let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let maxLength = 80
+
+        // Find first sentence ending
+        if let sentenceEnd = content.firstIndex(where: { $0 == "." || $0 == "!" || $0 == "?" }) {
+            let sentence = String(content[...sentenceEnd])
+            if sentence.count <= maxLength {
+                return sentence
+            }
+        }
+
+        // Truncate to max length
+        if content.count <= maxLength {
+            return content
+        }
+
+        // Find last space before max length for clean break
+        let truncated = String(content.prefix(maxLength))
+        if let lastSpace = truncated.lastIndex(of: " ") {
+            return String(truncated[..<lastSpace]) + "…"
+        }
+
+        return truncated + "…"
     }
 
     var body: some View {
@@ -21,22 +58,22 @@ struct NoteRowView: View {
                     .font(.headline)
                     .lineLimit(1)
 
-                HStack(spacing: 8) {
-                    Text(formattedDate)
-                        .font(.caption)
+                if let preview = contentPreview {
+                    Text(preview)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
-
-                    if note.syncStatus == .pending {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
+                        .lineLimit(1)
                 }
+
+                Text(formattedDate)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
             }
 
             Spacer()
 
-            if note.isPinned {
+            // Only show pin icon for pinned notes that aren't in a group
+            if note.isPinned && note.groupName == nil {
                 Image(systemName: "pin.fill")
                     .font(.caption)
                     .foregroundStyle(.orange)
@@ -50,20 +87,23 @@ struct NoteRowView: View {
     List {
         NoteRowView(note: Note(
             title: "Sample Note",
+            body: "This is the first sentence. And here is more content that follows.",
             isPinned: true,
             intent: .task
         ))
 
         NoteRowView(note: Note(
             title: "Another Note",
+            body: "A quick idea about something interesting that came to mind while working on the project.",
             intent: .idea
         ))
 
         NoteRowView(note: Note(
             aiTitle: "AI Generated Title",
+            body: "What if we tried a different approach?",
             intent: .question
         ))
-        
+
         NoteRowView(note: Note(
             title: "Evidence Note",
             intent: .evidence

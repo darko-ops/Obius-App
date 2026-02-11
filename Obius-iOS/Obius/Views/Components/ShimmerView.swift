@@ -52,28 +52,22 @@ struct ShimmerView: View {
     }
 }
 
-/// A frosted glass overlay that hides locked content
+/// A frosted glass overlay that hides locked content, tinted to match the node color
 struct FrostedGlassOverlay: View {
+    var tintColor: Color = .gray
     @StateObject private var biometricManager = BiometricManager.shared
     @State private var shimmerOffset: CGFloat = -200
 
     var body: some View {
         ZStack {
-            // Strong frosted glass effect
-            #if os(iOS)
-            VisualEffectBlur(blurStyle: .systemUltraThinMaterial)
-            #else
-            VisualEffectBlur(blurStyle: NSVisualEffectView.Material.hudWindow)
-            #endif
+            // Tinted background matching the node's intent color
+            tintColor.opacity(0.3)
 
-            // Additional frosted tint
-            Color.white.opacity(0.1)
-
-            // Subtle animated shimmer
+            // Subtle animated shimmer using the node's color
             LinearGradient(
                 colors: [
                     .clear,
-                    .white.opacity(0.15),
+                    tintColor.opacity(0.2),
                     .clear
                 ],
                 startPoint: .leading,
@@ -87,11 +81,11 @@ struct FrostedGlassOverlay: View {
             VStack(spacing: 8) {
                 Image(systemName: biometricManager.biometricIcon)
                     .font(.system(size: 28, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(tintColor.opacity(0.6))
 
                 Text("Tap to unlock")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(tintColor.opacity(0.5))
             }
         }
         .onAppear {
@@ -152,6 +146,7 @@ struct VisualEffectBlur: NSViewRepresentable {
 struct ShimmerModifier: ViewModifier {
     let isLocked: Bool
     let isAuthenticated: Bool
+    let tintColor: Color
     let onTap: () -> Void
 
     func body(content: Content) -> some View {
@@ -161,7 +156,7 @@ struct ShimmerModifier: ViewModifier {
                 .opacity(isLocked && !isAuthenticated ? 0.3 : 1.0)
 
             if isLocked && !isAuthenticated {
-                FrostedGlassOverlay()
+                FrostedGlassOverlay(tintColor: tintColor)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .onTapGesture {
                         onTap()
@@ -177,11 +172,13 @@ extension View {
     func shimmerLocked(
         isLocked: Bool,
         isAuthenticated: Bool,
+        tintColor: Color = .gray,
         onUnlock: @escaping () -> Void
     ) -> some View {
         modifier(ShimmerModifier(
             isLocked: isLocked,
             isAuthenticated: isAuthenticated,
+            tintColor: tintColor,
             onTap: onUnlock
         ))
     }

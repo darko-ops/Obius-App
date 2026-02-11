@@ -33,6 +33,9 @@ struct SectionView: View {
     let onCreateLoop: () -> Void  // Create a new handle from this section
     let onUnlinkHandle: () -> Void  // Unlink this section from its handle
 
+    // Commit callback
+    let onCommit: () -> Void  // Commit this node
+
     @State private var content: String
     @State private var isEditing = false
     @State private var isProcessingLock = false
@@ -60,7 +63,8 @@ struct SectionView: View {
         onDelete: @escaping () -> Void = {},
         onApplyTemplate: @escaping () -> Void = {},
         onCreateLoop: @escaping () -> Void = {},
-        onUnlinkHandle: @escaping () -> Void = {}
+        onUnlinkHandle: @escaping () -> Void = {},
+        onCommit: @escaping () -> Void = {}
     ) {
         self.section = section
         self.isFocused = isFocused
@@ -82,85 +86,244 @@ struct SectionView: View {
         self.onApplyTemplate = onApplyTemplate
         self.onCreateLoop = onCreateLoop
         self.onUnlinkHandle = onUnlinkHandle
-        _content = State(initialValue: displayContent ?? handle?.content ?? section.content)
+        self.onCommit = onCommit
+
+        // Initialize content, ensuring template prefix is included for template sections
+        var initialContent = displayContent ?? handle?.content ?? section.content
+        if section.isTemplateContent,
+           let templatePrefix = section.templatePrefix,
+           !templatePrefix.isEmpty,
+           !initialContent.contains(templatePrefix) {
+            initialContent = templatePrefix + initialContent
+        }
+        _content = State(initialValue: initialContent)
     }
     
     var body: some View {
+        // Render differently based on section type
         Group {
             if section.sectionType == .line {
-                // Line item - simple text without fold styling
                 lineView
             } else {
-                // Fold - full styling with background
                 foldView
             }
         }
         .padding(.leading, CGFloat(section.indentLevel) * 24)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            handleTap()
-        }
         .onChange(of: isFocused) { _, newValue in
             if newValue && (!section.isLocked || isAuthenticated) {
-                textFieldFocused = true
-                isEditing = true
+                // Small delay to ensure view is ready
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    textFieldFocused = true
+                    isEditing = true
+                }
+            } else if !newValue && section.isLocked {
+                // Auto-lock when focus leaves a locked node
+                biometricManager.lockSection(section.id)
+            }
+        }
+        .onAppear {
+            // Focus immediately if this section is already marked as focused
+            if isFocused && (!section.isLocked || isAuthenticated) {
+                // Use a slight delay to ensure the view hierarchy is ready
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    textFieldFocused = true
+                    isEditing = true
+                    onFocus()
+                }
+            }
+
+            // If template prefix was added to content but not saved, save it now
+            if section.isTemplateContent,
+               let templatePrefix = section.templatePrefix,
+               !templatePrefix.isEmpty,
+               !section.content.contains(templatePrefix),
+               content.contains(templatePrefix) {
+                onContentChange(content)
             }
         }
         .onChange(of: displayContent) { _, newValue in
-            if content != newValue {
+            // Only sync from external source when NOT actively editing
+            // to prevent cursor jumping during typing
+            if !textFieldFocused && content != newValue {
                 content = newValue
             }
         }
-        .contextMenu {
-            contextMenuItems
+        .onChange(of: section.handleId) { _, _ in
+            // When a section is linked/unlinked from a handle,
+            // always sync content regardless of focus state
+            if content != displayContent {
+                content = displayContent
+            }
         }
     }
 
-    // MARK: - Line View (simple text without fold styling)
+    // MARK: - Unified Section View (consistent styling for all section types)
+
+    /// Shape for the node body — rounded on left, flat on right where it meets the lip
+    private var nodeShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: 8,
+            bottomLeadingRadius: 8,
+            bottomTrailingRadius: 0,
+            topTrailingRadius: 0
+        )
+    }
+
+    /// Shape for the lip tab — flat on left, rounded on right
+    private var lipShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: 0,
+            bottomLeadingRadius: 0,
+            bottomTrailingRadius: 8,
+            topTrailingRadius: 8
+        )
+    }
+
+    private var foldView: some View {
+        // Content area with trailing padding to reserve space for the lip
+        contentArea
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .padding(.trailing, 20) // Reserve space for the lip
+            .background(RoundedRectangle(cornerRadius: 8).fill(section.intent.backgroundTint))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            // Overlay controls at corners - don't take up content width
+            .overlay(alignment: .topTrailing) {
+                if section.isLocked {
+                    lockBadge
+                        .padding(6)
+                        .padding(.trailing, 20) // Offset for lip
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if !section.isCollapsed, let handle = handle {
+                    // Handle name (when linked to a loop)
+                    Text(handle.formattedName)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.purple)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.purple.opacity(0.1))
+                        .clipShape(Capsule())
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                onUnlinkHandle()
+                            } label: {
+                                Label("Unlink from Loop", systemImage: "link.badge.minus")
+                            }
+
+                            Button {
+                                #if os(iOS)
+                                UIPasteboard.general.string = handle.formattedName
+                                #endif
+                            } label: {
+                                Label("Copy Handle Name", systemImage: "doc.on.doc")
+                            }
+                        }
+                        .padding(6)
+                        .padding(.trailing, 20) // Offset for lip
+                }
+            }
+            // Only add tap gesture for locked sections - don't interfere with text view gestures
+            .overlay {
+                if section.isLocked && !isAuthenticated {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            handleTap()
+                        }
+                }
+            }
+            // Lip overlay — fills exact node height, positioned at trailing edge
+            .overlay(alignment: .trailing) {
+                collapseLipButton
+            }
+            .overlay(focusBorder)
+            .contextMenu { contextMenuItems }
+            .animation(nil, value: content) // Prevent layout changes from affecting siblings
+    }
+
+    // MARK: - Line View (plain text without node styling)
 
     private var lineView: some View {
         HStack(alignment: .top, spacing: 8) {
-            contentArea
+            // Use same contentArea as foldView for consistent template behavior
+            // but without the collapse button, background, or border
+            lineContentArea
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .contextMenu {
+            contextMenuItems
+        }
+        .animation(nil, value: content) // Prevent layout changes from affecting siblings
     }
 
-    // MARK: - Fold View (full styling with background)
+    @ViewBuilder
+    private var lineContentArea: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            // Content editor (same as foldView's contentArea)
+            contentEditor
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 
-    private var foldView: some View {
-        HStack(alignment: .top, spacing: 8) {
-            // Collapse indicator (only for sections with children)
-            collapseButton
-                .opacity(hasChildren ? 1 : 0.3)
-
-            // Content area with shimmer lock support
-            contentArea
-
-            // Badges
-            VStack(alignment: .trailing, spacing: 4) {
-                // Handle badge (when linked to a handle)
-                if let handle = handle {
-                    HandleBadge(
-                        handle: handle,
-                        showUnlinkAction: true,
-                        onUnlink: onUnlinkHandle
-                    )
-                }
-
-                // Lock badge (when locked)
-                if section.isLocked {
-                    lockBadge
-                }
+    private var lineContentEditor: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            #if os(iOS)
+            if section.isTemplateContent,
+               let templateText = section.templatePrefix,
+               !templateText.isEmpty {
+                // Use template-protected text view with bold template (same as contentEditor)
+                TemplateProtectedTextView(
+                    text: $content,
+                    templatePrefix: templateText,
+                    isFocused: $textFieldFocused,
+                    onContentChange: onContentChange,
+                    onIndent: onIndent,
+                    onOutdent: onOutdent,
+                    currentStatus: section.intent,
+                    onStatusChange: onIntentChange
+                )
+                .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
+            } else {
+                // Regular text editor using UITextView for proper edit menu support
+                EditableTextView(
+                    text: $content,
+                    isFocused: $textFieldFocused,
+                    onContentChange: onContentChange,
+                    onFocusChange: { focused in
+                        if focused {
+                            isEditing = true
+                            onFocus()
+                        }
+                    },
+                    onIndent: onIndent,
+                    onOutdent: onOutdent,
+                    currentStatus: section.intent,
+                    onStatusChange: onIntentChange
+                )
+                .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
             }
+            #else
+            // macOS fallback
+            TextEditor(text: $content)
+                .font(.body)
+                .scrollContentBackground(.hidden)
+                .scrollDisabled(true)
+                .focused($textFieldFocused)
+                .frame(maxWidth: .infinity, minHeight: 32)
+                .frame(maxWidth: .infinity, minHeight: estimatedHeight)
+                .onChange(of: content) { _, newValue in
+                    onContentChange(newValue)
+                }
+            #endif
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(sectionBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(focusBorder)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(nil, value: content)
     }
-    
+
     // MARK: - Tap Handler
     
     private func handleTap() {
@@ -169,13 +332,10 @@ struct SectionView: View {
             HapticFeedback.impact(.light)
             onUnlockRequest()
         } else if section.isCollapsed {
-            // Expand collapsed section
-            withAnimation(.easeInOut(duration: 0.2)) {
-                onToggleCollapse()
-            }
-            HapticFeedback.selection()
+            // Collapsed sections are expanded via the expand button only
+            // Do nothing here to avoid double-toggle with button
         } else {
-            // Focus for editing
+            // Focus for editing (template content is editable after the prefix)
             print("👆 Section tapped, calling onFocus for: \(section.id.prefix(8))")
             textFieldFocused = true
             isEditing = true
@@ -185,29 +345,51 @@ struct SectionView: View {
     
     // MARK: - Subviews
     
-    private var collapseButton: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                onToggleCollapse()
+    /// A thick lip on the outside right edge — darker extension of the node
+    private var collapseLipButton: some View {
+        lipShape
+            .fill(section.intent.backgroundTint)
+            .frame(width: 20)
+            .overlay {
+                Image(systemName: section.isCollapsed ? "chevron.right" : "chevron.left")
+                    .font(.system(size: 10, weight: .heavy))
+                    .foregroundStyle(section.intent.color.opacity(0.6))
             }
-            HapticFeedback.selection()
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    onToggleCollapse()
+                }
+                HapticFeedback.selection()
+            }
+    }
+
+    private var optionsMenuButton: some View {
+        Menu {
+            // All node options available via tap
+            contextMenuItems
         } label: {
-            Image(systemName: section.isCollapsed ? "chevron.right" : "chevron.down")
+            Image(systemName: "ellipsis")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: 20, height: 20)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(Color.gray.opacity(0.15))
+                )
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
     }
-    
+
     private var lockBadge: some View {
         Button {
             if isAuthenticated {
-                // Already authenticated, offer to re-lock
-                onToggleLock()
+                // Already authenticated, re-lock (keep isLocked=true, just remove from authenticated set)
+                biometricManager.lockSection(section.id)
+                HapticFeedback.notification(.success)
             } else {
-                // Need authentication
+                // Need authentication to view content
                 onUnlockRequest()
             }
         } label: {
@@ -233,7 +415,7 @@ struct SectionView: View {
     
     @ViewBuilder
     private var contentArea: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 2) {
             // Show title if set
             if let title = section.title, !title.isEmpty, !section.isCollapsed {
                 HStack {
@@ -258,37 +440,35 @@ struct SectionView: View {
         .shimmerLocked(
             isLocked: section.isLocked,
             isAuthenticated: isAuthenticated,
+            tintColor: section.intent.color,
             onUnlock: onUnlockRequest
         )
     }
     
     private var ghostSummary: some View {
         HStack(spacing: 8) {
-            // Intent icon
-            Image(systemName: section.intent.icon)
-                .font(.caption)
-                .foregroundStyle(section.intent.color)
-
-            // Handle badge (compact) if linked
-            if let handle = handle {
-                HandleBadgeCompact(handle: handle)
-            }
-
-            // Preview text (use displayContent for portals)
+            // Preview text - content already contains template text
             let previewText = displayContent.trimmingCharacters(in: .whitespacesAndNewlines)
                 .components(separatedBy: .newlines).first ?? ""
             let preview = previewText.count > 80 ? String(previewText.prefix(80)) + "..." : previewText
-            Text(preview.isEmpty ? "Empty section" : preview)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+
+            if let templateText = section.templatePrefix, !templateText.isEmpty,
+               let range = preview.range(of: templateText) {
+                // Show with bold template portion
+                let beforeTemplate = String(preview[..<range.lowerBound])
+                let afterTemplate = String(preview[range.upperBound...])
+                (Text(beforeTemplate) + Text(templateText).bold() + Text(afterTemplate))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            } else {
+                Text(preview.isEmpty ? "Empty section" : preview)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
 
             Spacer()
-
-            // Expand indicator
-            Image(systemName: "chevron.right")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
 
             // Child count indicator
             if hasChildren {
@@ -296,182 +476,226 @@ struct SectionView: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
+
+            // Handle name (when linked to a loop)
+            if let handle = handle {
+                Text(handle.formattedName)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.purple)
+            }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
         .contentShape(Rectangle())
     }
-    
-    private var contentEditor: some View {
-        ZStack(alignment: .topLeading) {
-            // Hidden text to calculate proper height
-            Text(content.isEmpty ? " " : content)
-                .font(.body)
-                .opacity(0)
-                .padding(.vertical, 8)
-                .padding(.horizontal, 5)
 
-            // Actual editor
+    /// Calculate estimated height based on content
+    private var estimatedHeight: CGFloat {
+        let lineCount = max(1, content.components(separatedBy: "\n").count)
+        // Estimate wrapped lines: assume ~40 chars per line on average
+        let avgCharsPerLine: CGFloat = 40
+        let totalChars = CGFloat(content.count)
+        let estimatedWrappedLines = max(1, ceil(totalChars / avgCharsPerLine))
+        let visualLines = max(CGFloat(lineCount), estimatedWrappedLines)
+        let lineHeight: CGFloat = 22
+        let padding: CGFloat = 20
+        return visualLines * lineHeight + padding
+    }
+
+    private var contentEditor: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            #if os(iOS)
+            if section.isTemplateContent,
+               let templateText = section.templatePrefix,
+               !templateText.isEmpty {
+                // Use template-protected text view with bold template
+                TemplateProtectedTextView(
+                    text: $content,
+                    templatePrefix: templateText,
+                    isFocused: $textFieldFocused,
+                    onContentChange: onContentChange,
+                    onIndent: onIndent,
+                    onOutdent: onOutdent,
+                    currentStatus: section.intent,
+                    onStatusChange: onIntentChange
+                )
+                .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
+                // Don't add contentShape - let UITextView handle all gestures natively
+            } else {
+                // Regular text editor using UITextView for proper edit menu support
+                EditableTextView(
+                    text: $content,
+                    isFocused: $textFieldFocused,
+                    onContentChange: onContentChange,
+                    onFocusChange: { focused in
+                        if focused {
+                            isEditing = true
+                            onFocus()
+                        }
+                    },
+                    onIndent: onIndent,
+                    onOutdent: onOutdent,
+                    currentStatus: section.intent,
+                    onStatusChange: onIntentChange
+                )
+                .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
+                // Don't add contentShape - let UITextView handle all gestures natively
+            }
+            #else
+            // macOS fallback
             TextEditor(text: $content)
                 .font(.body)
                 .scrollContentBackground(.hidden)
                 .scrollDisabled(true)
                 .focused($textFieldFocused)
-                .onTapGesture {
-                    // Allow TextEditor to handle its own focus
-                    textFieldFocused = true
-                    isEditing = true
-                }
+                .frame(maxWidth: .infinity, minHeight: estimatedHeight)
                 .onChange(of: content) { _, newValue in
-                    // Allow all content including newlines
                     onContentChange(newValue)
                 }
+            #endif
         }
-        .frame(minHeight: 28)
-    }
-    
-    private var sectionBackground: some View {
-        RoundedRectangle(cornerRadius: 8)
-            .fill(section.intent.backgroundTint)
+        .animation(nil, value: content) // Prevent layout animations affecting siblings
     }
     
     @ViewBuilder
     private var focusBorder: some View {
         if isFocused {
+            // Node + lip together form a standard rounded rectangle
             RoundedRectangle(cornerRadius: 8)
                 .stroke(section.intent.color.opacity(0.6), lineWidth: 1.5)
+                .allowsHitTesting(false)
         }
     }
     
     @ViewBuilder
     private var contextMenuItems: some View {
-        // Intent picker section
-        SwiftUI.Section {
-            Menu {
-                ForEach(IntentType.allCases, id: \.self) { intent in
-                    Button {
-                        onIntentChange(intent)
-                        HapticFeedback.selection()
-                    } label: {
-                        Label {
-                            HStack {
-                                Text(intent.displayName)
-                                if section.intent == intent {
-                                    Spacer()
-                                    Image(systemName: "checkmark")
-                                }
+        // 1. Change Status
+        Menu {
+            ForEach(IntentType.allCases, id: \.self) { intent in
+                Button {
+                    onIntentChange(intent)
+                    HapticFeedback.selection()
+                } label: {
+                    Label {
+                        HStack {
+                            Text(intent.displayName)
+                            if section.intent == intent {
+                                Spacer()
+                                Image(systemName: "checkmark")
                             }
-                        } icon: {
-                            Image(systemName: intent.icon)
                         }
+                    } icon: {
+                        Image(systemName: intent.icon)
                     }
                 }
-            } label: {
-                Label("Change Intent", systemImage: section.intent.icon)
             }
+        } label: {
+            Label("Change Status", systemImage: section.intent.icon)
         }
-        
-        // Structure section
-        SwiftUI.Section {
-            Button {
-                onIndent()
-                HapticFeedback.selection()
-            } label: {
-                Label("Indent", systemImage: "arrow.right.to.line")
-            }
-            .disabled(section.indentLevel >= 5)
-            
-            Button {
-                onOutdent()
-                HapticFeedback.selection()
-            } label: {
-                Label("Outdent", systemImage: "arrow.left.to.line")
-            }
-            .disabled(section.indentLevel == 0)
-            
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    onToggleCollapse()
-                }
-                HapticFeedback.selection()
-            } label: {
-                Label(
-                    section.isCollapsed ? "Expand" : "Collapse",
-                    systemImage: section.isCollapsed ? "chevron.down.circle" : "chevron.up.circle"
-                )
-            }
+
+        // 2. Indent
+        Button {
+            onIndent()
+            HapticFeedback.selection()
+        } label: {
+            Label("Indent", systemImage: "arrow.right.to.line")
         }
-        
-        // Security section
-        SwiftUI.Section {
+        .disabled(section.indentLevel >= 5)
+
+        // 3. Outdent
+        Button {
+            onOutdent()
+            HapticFeedback.selection()
+        } label: {
+            Label("Outdent", systemImage: "arrow.left.to.line")
+        }
+        .disabled(section.indentLevel == 0)
+
+        // 4. Lock with Face ID
+        if section.isLocked {
+            // If locked, show unlock or re-lock options
             Button {
                 handleLockToggle()
             } label: {
-                if section.isLocked {
-                    Label(
-                        isAuthenticated ? "Re-lock" : "Unlock with \(biometricManager.biometricTypeName)",
-                        systemImage: isAuthenticated ? "lock.fill" : biometricManager.biometricIcon
-                    )
-                } else {
-                    Label(
-                        "Lock with \(biometricManager.biometricTypeName)",
-                        systemImage: "lock.fill"
-                    )
-                }
-            }
-        }
-
-        // Handle Loop section
-        SwiftUI.Section {
-            if handle != nil {
-                // Already linked to a handle
-                Button(role: .destructive) {
-                    onUnlinkHandle()
-                    HapticFeedback.selection()
-                } label: {
-                    Label("Unlink from Loop", systemImage: "link.badge.minus")
-                }
-            } else {
-                // Not linked - offer to create echo
-                Button {
-                    onCreateLoop()
-                    HapticFeedback.selection()
-                } label: {
-                    Label("Create Loop", systemImage: "link.badge.plus")
-                }
-            }
-        }
-
-        // Copy & Delete section
-        SwiftUI.Section {
-            Button {
-                onApplyTemplate()
-            } label: {
-                Label("Apply Template", systemImage: "doc.on.doc.fill")
+                Label(
+                    isAuthenticated ? "Re-lock" : "Unlock with \(biometricManager.biometricTypeName)",
+                    systemImage: isAuthenticated ? "lock.fill" : biometricManager.biometricIcon
+                )
             }
 
-            Button {
-                #if os(iOS)
-                UIPasteboard.general.string = displayContent
-                #elseif os(macOS)
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(displayContent, forType: .string)
-                #endif
-                HapticFeedback.notification(.success)
-            } label: {
-                Label("Copy", systemImage: "doc.on.doc")
-            }
-
+            // Remove Lock option (requires Face ID)
             Button(role: .destructive) {
-                onDelete()
-                HapticFeedback.notification(.warning)
+                handleRemoveLock()
             } label: {
-                Label("Delete", systemImage: "trash")
+                Label("Remove Lock", systemImage: "lock.slash")
             }
+        } else {
+            // If not locked, show option to lock
+            Button {
+                handleLockToggle()
+            } label: {
+                Label(
+                    "Lock with \(biometricManager.biometricTypeName)",
+                    systemImage: "lock.fill"
+                )
+            }
+        }
+
+        // 5. Create Loop
+        if handle != nil {
+            Button(role: .destructive) {
+                onUnlinkHandle()
+                HapticFeedback.selection()
+            } label: {
+                Label("Unlink from Loop", systemImage: "link.badge.minus")
+            }
+        } else {
+            Button {
+                onCreateLoop()
+                HapticFeedback.selection()
+            } label: {
+                Label("Create Loop", systemImage: "link.badge.plus")
+            }
+        }
+
+        // 6. Commit Node
+        Button {
+            onCommit()
+            HapticFeedback.notification(.success)
+        } label: {
+            Label("Commit Node", systemImage: "arrow.down.doc")
+        }
+
+        // 7. Apply Template
+        Button {
+            onApplyTemplate()
+        } label: {
+            Label("Apply Template", systemImage: "doc.on.doc.fill")
+        }
+
+        // 8. Copy
+        Button {
+            #if os(iOS)
+            UIPasteboard.general.string = displayContent
+            #elseif os(macOS)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(displayContent, forType: .string)
+            #endif
+            HapticFeedback.notification(.success)
+        } label: {
+            Label("Copy", systemImage: "doc.on.doc")
+        }
+
+        // 9. Delete
+        Button(role: .destructive) {
+            onDelete()
+            HapticFeedback.notification(.warning)
+        } label: {
+            Label("Delete", systemImage: "trash")
         }
     }
     
     // MARK: - Lock Toggle Handler
-    
+
     private func handleLockToggle() {
         if section.isLocked {
             if isAuthenticated {
@@ -486,6 +710,39 @@ struct SectionView: View {
             // Lock the section
             onToggleLock()
             HapticFeedback.notification(.success)
+        }
+    }
+
+    private func handleRemoveLock() {
+        // Require Face ID authentication before removing lock
+        Task {
+            let success = await biometricManager.authenticate(for: section.id)
+            if success {
+                // Remove the lock entirely (toggle isLocked from true to false)
+                onToggleLock()
+                // Also remove from authenticated set since it's no longer locked
+                biometricManager.revokeAuthentication(for: section.id)
+                HapticFeedback.notification(.success)
+            }
+        }
+    }
+}
+
+// MARK: - Conditional Context Menu
+
+/// A modifier that only applies context menu when section is collapsed
+/// This prevents the context menu's long-press gesture from interfering with UITextView
+struct ConditionalContextMenu<MenuContent: View>: ViewModifier {
+    let isCollapsed: Bool
+    @ViewBuilder let content: () -> MenuContent
+
+    func body(content view: Content) -> some View {
+        if isCollapsed {
+            view.contextMenu {
+                content()
+            }
+        } else {
+            view
         }
     }
 }
@@ -524,6 +781,855 @@ struct DragIndentFeedback: View {
             .scaleEffect(0.8 + (progress * 0.4))
     }
 }
+
+// MARK: - Single Line Text Field (for inline template editing)
+
+#if os(iOS)
+struct SingleLineTextField: UIViewRepresentable {
+    @Binding var text: String
+    var isFocused: FocusState<Bool>.Binding
+
+    func makeUIView(context: Context) -> UITextField {
+        let textField = UITextField()
+        textField.delegate = context.coordinator
+        textField.font = UIFont.preferredFont(forTextStyle: .body)
+        textField.backgroundColor = .clear
+        textField.borderStyle = .none
+        textField.returnKeyType = .done
+        textField.addTarget(context.coordinator, action: #selector(Coordinator.textChanged(_:)), for: .editingChanged)
+        return textField
+    }
+
+    func updateUIView(_ textField: UITextField, context: Context) {
+        if textField.text != text {
+            textField.text = text
+        }
+        if isFocused.wrappedValue && !textField.isFirstResponder {
+            textField.becomeFirstResponder()
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: SingleLineTextField
+
+        init(_ parent: SingleLineTextField) {
+            self.parent = parent
+        }
+
+        @objc func textChanged(_ textField: UITextField) {
+            parent.text = textField.text ?? ""
+        }
+
+        func textFieldDidBeginEditing(_ textField: UITextField) {
+            parent.isFocused.wrappedValue = true
+        }
+
+        func textFieldDidEndEditing(_ textField: UITextField) {
+            parent.isFocused.wrappedValue = false
+        }
+
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            textField.resignFirstResponder()
+            return true
+        }
+    }
+}
+#endif
+
+// MARK: - Self-Sizing Text View
+
+#if os(iOS)
+/// A UITextView subclass that properly calculates its intrinsic content size
+/// and uses native UIKit text selection (like iMessage composer)
+class SelfSizingTextView: UITextView {
+    private var lastWidth: CGFloat = 0
+
+    override var canBecomeFirstResponder: Bool { true }
+
+    override init(frame: CGRect, textContainer: NSTextContainer?) {
+        super.init(frame: frame, textContainer: textContainer)
+        configureLikeMessages()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureLikeMessages()
+    }
+
+    private func configureLikeMessages() {
+        // Core text view settings
+        isEditable = true
+        isSelectable = true
+        isScrollEnabled = false  // Let parent ScrollView handle scrolling
+
+        // Completely disable the UIScrollView pan gesture so it can't
+        // intercept touches meant for the parent ScrollView
+        panGestureRecognizer.isEnabled = false
+
+        // Disable all automatic text modifications
+        smartInsertDeleteType = .no
+        smartDashesType = .no
+        smartQuotesType = .no
+        autocorrectionType = .no
+
+        // Spellcheck only underlines — no text changes
+        spellCheckingType = .yes
+
+        // Disable data detectors to prevent link detection interference
+        dataDetectorTypes = []
+
+        // IMPORTANT: Don't add custom long-press or double-tap recognizers.
+        // UITextView already has the correct gestures for:
+        // - single tap = position cursor
+        // - double tap = select word + menu
+        // - long press = selection handles
+    }
+
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        // Block any UIPanGestureRecognizer on this view when scrolling is disabled.
+        // UITextView (a UIScrollView subclass) has internal pan gestures beyond just
+        // panGestureRecognizer that can intercept vertical swipes meant for the
+        // parent scroll view. Text selection uses separate gesture types (not pan).
+        if !isScrollEnabled && gestureRecognizer is UIPanGestureRecognizer {
+            return false
+        }
+        return super.gestureRecognizerShouldBegin(gestureRecognizer)
+    }
+
+    override var intrinsicContentSize: CGSize {
+        // Use a reasonable width if bounds isn't set yet
+        let width = bounds.width > 0 ? bounds.width : 300
+        let size = sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        return CGSize(width: UIView.noIntrinsicMetric, height: max(32, ceil(size.height)))
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // Only invalidate if width actually changed to prevent layout loops
+        if bounds.width > 0 && bounds.width != lastWidth {
+            lastWidth = bounds.width
+            invalidateIntrinsicContentSize()
+        }
+    }
+}
+#endif
+
+// MARK: - Keyboard Accessory Toolbar
+
+#if os(iOS)
+/// A toolbar that appears above the keyboard with formatting, indent, status, and dismiss buttons
+class KeyboardAccessoryToolbar: UIToolbar {
+    weak var textView: UITextView?
+    var onDismiss: (() -> Void)?
+    var onIndent: (() -> Void)?
+    var onOutdent: (() -> Void)?
+    var onStatusChange: ((IntentType) -> Void)?
+    var currentStatus: IntentType = .idea
+
+    private var statusButton: UIBarButtonItem?
+    private var titleButton: UIBarButtonItem?
+    private var boldButton: UIBarButtonItem?
+    private var italicButton: UIBarButtonItem?
+    private var underlineButton: UIBarButtonItem?
+
+    // Track active formatting states for typing
+    private var isTitleActive = false
+    private var isBoldActive = false
+    private var isItalicActive = false
+    private var isUnderlineActive = false
+
+    private var normalFontSize: CGFloat {
+        UIFont.preferredFont(forTextStyle: .body).pointSize
+    }
+
+    private var titleFontSize: CGFloat {
+        UIFont.preferredFont(forTextStyle: .body).pointSize * 2
+    }
+
+    init(showIndentButtons: Bool = false, showStatusButton: Bool = false) {
+        super.init(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 44))
+        setupToolbar(showIndentButtons: showIndentButtons, showStatusButton: showStatusButton)
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupToolbar(showIndentButtons: false, showStatusButton: false)
+    }
+
+    private func setupToolbar(showIndentButtons: Bool, showStatusButton: Bool) {
+        barStyle = .default
+        isTranslucent = true
+        sizeToFit()
+
+        var items: [UIBarButtonItem] = []
+
+        // Status button (color picker) - far left
+        if showStatusButton {
+            let button = createStatusButton()
+            statusButton = button
+            items.append(button)
+            items.append(fixedSpace(8))
+        }
+
+        // Indent/Outdent buttons
+        let outdentButton = UIBarButtonItem(
+            image: UIImage(systemName: "decrease.indent"),
+            style: .plain,
+            target: self,
+            action: #selector(outdentTapped)
+        )
+        items.append(outdentButton)
+
+        let indentButton = UIBarButtonItem(
+            image: UIImage(systemName: "increase.indent"),
+            style: .plain,
+            target: self,
+            action: #selector(indentTapped)
+        )
+        items.append(indentButton)
+
+        let flexSpace = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
+        items.append(flexSpace)
+
+        // Title size button
+        let title = UIBarButtonItem(
+            image: UIImage(systemName: "textformat.size"),
+            style: .plain,
+            target: self,
+            action: #selector(titleTapped)
+        )
+        titleButton = title
+        items.append(title)
+
+        // Formatting buttons: Bold, Italic, Underline
+        let bold = UIBarButtonItem(
+            image: UIImage(systemName: "bold"),
+            style: .plain,
+            target: self,
+            action: #selector(boldTapped)
+        )
+        boldButton = bold
+        items.append(bold)
+
+        let italic = UIBarButtonItem(
+            image: UIImage(systemName: "italic"),
+            style: .plain,
+            target: self,
+            action: #selector(italicTapped)
+        )
+        italicButton = italic
+        items.append(italic)
+
+        let underline = UIBarButtonItem(
+            image: UIImage(systemName: "underline"),
+            style: .plain,
+            target: self,
+            action: #selector(underlineTapped)
+        )
+        underlineButton = underline
+        items.append(underline)
+
+        items.append(fixedSpace(12))
+
+        // Dismiss button (far right)
+        let dismissButton = UIBarButtonItem(
+            image: UIImage(systemName: "keyboard.chevron.compact.down"),
+            style: .plain,
+            target: self,
+            action: #selector(dismissTapped)
+        )
+        items.append(dismissButton)
+
+        setItems(items, animated: false)
+    }
+
+    private func fixedSpace(_ width: CGFloat) -> UIBarButtonItem {
+        let space = UIBarButtonItem(barButtonSystemItem: .fixedSpace, target: nil, action: nil)
+        space.width = width
+        return space
+    }
+
+    private func createStatusButton() -> UIBarButtonItem {
+        let menu = UIMenu(title: "Status", children: [
+            UIAction(title: "Blue", image: UIImage(systemName: "circle.fill")?.withTintColor(.systemBlue, renderingMode: .alwaysOriginal)) { [weak self] _ in
+                self?.onStatusChange?(.idea)
+            },
+            UIAction(title: "Yellow", image: UIImage(systemName: "circle.fill")?.withTintColor(.systemYellow, renderingMode: .alwaysOriginal)) { [weak self] _ in
+                self?.onStatusChange?(.question)
+            },
+            UIAction(title: "Green", image: UIImage(systemName: "circle.fill")?.withTintColor(.systemGreen, renderingMode: .alwaysOriginal)) { [weak self] _ in
+                self?.onStatusChange?(.task)
+            },
+            UIAction(title: "Purple", image: UIImage(systemName: "circle.fill")?.withTintColor(.systemPurple, renderingMode: .alwaysOriginal)) { [weak self] _ in
+                self?.onStatusChange?(.evidence)
+            }
+        ])
+
+        let button = UIBarButtonItem(
+            image: UIImage(systemName: "circle.fill"),
+            menu: menu
+        )
+        button.tintColor = currentStatus.uiColor
+        return button
+    }
+
+    func updateStatusColor(_ status: IntentType) {
+        currentStatus = status
+        statusButton?.tintColor = status.uiColor
+    }
+
+    private func updateButtonAppearance() {
+        // Highlight active formatting buttons with purple
+        titleButton?.tintColor = isTitleActive ? .systemPurple : nil
+        boldButton?.tintColor = isBoldActive ? .systemPurple : nil
+        italicButton?.tintColor = isItalicActive ? .systemPurple : nil
+        underlineButton?.tintColor = isUnderlineActive ? .systemPurple : nil
+    }
+
+    /// Sync button states with the text view's current typing attributes
+    func syncWithTypingAttributes() {
+        guard let textView = textView else { return }
+        let attrs = textView.typingAttributes
+        let font = (attrs[.font] as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+        let traits = font.fontDescriptor.symbolicTraits
+
+        isTitleActive = font.pointSize >= titleFontSize && traits.contains(.traitBold)
+        // Bold button only shows active if bold was set independently (not just from title)
+        isBoldActive = traits.contains(.traitBold) && !isTitleActive
+        isItalicActive = traits.contains(.traitItalic)
+        isUnderlineActive = (attrs[.underlineStyle] as? Int) != nil && (attrs[.underlineStyle] as? Int) != 0
+
+        updateButtonAppearance()
+    }
+
+    // MARK: - Formatting Actions
+    // Note: Rich text formatting is not currently supported as the data model uses plain String.
+    // These buttons toggle typing attributes for visual feedback but formatting is not persisted.
+
+    @objc private func titleTapped() {
+        guard let textView = textView else { return }
+        isTitleActive.toggle()
+        let range = textView.selectedRange
+
+        if range.length > 0 {
+            // Apply to selected text
+            let mutableAttrString = NSMutableAttributedString(attributedString: textView.attributedText)
+            mutableAttrString.enumerateAttribute(.font, in: range, options: []) { value, subRange, _ in
+                let currentFont = (value as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+                let size = isTitleActive ? titleFontSize : normalFontSize
+                var traits = currentFont.fontDescriptor.symbolicTraits
+                if isTitleActive { traits.insert(.traitBold) }
+                if let desc = currentFont.fontDescriptor.withSymbolicTraits(traits) {
+                    let newFont = UIFont(descriptor: desc, size: size)
+                    mutableAttrString.addAttribute(.font, value: newFont, range: subRange)
+                }
+            }
+            textView.attributedText = mutableAttrString
+            textView.selectedRange = range
+        } else {
+            // Toggle for future typing
+            var attrs = textView.typingAttributes
+            let currentFont = (attrs[.font] as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+            let size = isTitleActive ? titleFontSize : normalFontSize
+            var traits = currentFont.fontDescriptor.symbolicTraits
+            if isTitleActive { traits.insert(.traitBold) } else if !isBoldActive { traits.remove(.traitBold) }
+            if let desc = currentFont.fontDescriptor.withSymbolicTraits(traits) {
+                attrs[.font] = UIFont(descriptor: desc, size: size)
+                textView.typingAttributes = attrs
+            }
+        }
+
+        updateButtonAppearance()
+    }
+
+    @objc private func boldTapped() {
+        guard let textView = textView else { return }
+        let range = textView.selectedRange
+
+        if range.length > 0 {
+            // Apply to selected text
+            applyFontTraitToSelection(.traitBold, in: textView)
+        } else {
+            // Toggle for future typing
+            isBoldActive.toggle()
+            applyFontTraitToTyping(.traitBold, isActive: isBoldActive, in: textView)
+        }
+        updateButtonAppearance()
+    }
+
+    @objc private func italicTapped() {
+        guard let textView = textView else { return }
+        let range = textView.selectedRange
+
+        if range.length > 0 {
+            // Apply to selected text
+            applyFontTraitToSelection(.traitItalic, in: textView)
+        } else {
+            // Toggle for future typing
+            isItalicActive.toggle()
+            applyFontTraitToTyping(.traitItalic, isActive: isItalicActive, in: textView)
+        }
+        updateButtonAppearance()
+    }
+
+    @objc private func underlineTapped() {
+        guard let textView = textView else { return }
+        let range = textView.selectedRange
+
+        if range.length > 0 {
+            // Apply to selected text
+            let mutableAttrString = NSMutableAttributedString(attributedString: textView.attributedText)
+
+            var isUnderlined = false
+            mutableAttrString.enumerateAttribute(.underlineStyle, in: range, options: []) { value, _, _ in
+                if let style = value as? Int, style != 0 {
+                    isUnderlined = true
+                }
+            }
+
+            if isUnderlined {
+                mutableAttrString.removeAttribute(.underlineStyle, range: range)
+            } else {
+                mutableAttrString.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+            }
+
+            textView.attributedText = mutableAttrString
+            textView.selectedRange = range
+        } else {
+            // Toggle for future typing
+            isUnderlineActive.toggle()
+            var attrs = textView.typingAttributes
+            if isUnderlineActive {
+                attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+            } else {
+                attrs.removeValue(forKey: .underlineStyle)
+            }
+            textView.typingAttributes = attrs
+        }
+        updateButtonAppearance()
+    }
+
+    private func applyFontTraitToSelection(_ trait: UIFontDescriptor.SymbolicTraits, in textView: UITextView) {
+        let range = textView.selectedRange
+        guard range.length > 0 else { return }
+
+        let mutableAttrString = NSMutableAttributedString(attributedString: textView.attributedText)
+
+        mutableAttrString.enumerateAttribute(.font, in: range, options: []) { value, subRange, _ in
+            let currentFont = (value as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+            var newTraits = currentFont.fontDescriptor.symbolicTraits
+
+            // Toggle the trait
+            if newTraits.contains(trait) {
+                newTraits.remove(trait)
+            } else {
+                newTraits.insert(trait)
+            }
+
+            if let newDescriptor = currentFont.fontDescriptor.withSymbolicTraits(newTraits) {
+                let newFont = UIFont(descriptor: newDescriptor, size: currentFont.pointSize)
+                mutableAttrString.addAttribute(.font, value: newFont, range: subRange)
+            }
+        }
+
+        textView.attributedText = mutableAttrString
+        textView.selectedRange = range
+    }
+
+    private func applyFontTraitToTyping(_ trait: UIFontDescriptor.SymbolicTraits, isActive: Bool, in textView: UITextView) {
+        var attrs = textView.typingAttributes
+        let currentFont = (attrs[.font] as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+        var newTraits = currentFont.fontDescriptor.symbolicTraits
+
+        if isActive {
+            newTraits.insert(trait)
+        } else {
+            newTraits.remove(trait)
+        }
+
+        if let newDescriptor = currentFont.fontDescriptor.withSymbolicTraits(newTraits) {
+            let newFont = UIFont(descriptor: newDescriptor, size: currentFont.pointSize)
+            attrs[.font] = newFont
+            textView.typingAttributes = attrs
+        }
+    }
+
+    // MARK: - Other Actions
+
+    @objc private func dismissTapped() {
+        onDismiss?()
+    }
+
+    @objc private func indentTapped() {
+        onIndent?()
+    }
+
+    @objc private func outdentTapped() {
+        onOutdent?()
+    }
+}
+
+// Helper extension to get UIColor from IntentType
+extension IntentType {
+    var uiColor: UIColor {
+        switch self {
+        case .idea:     return .systemBlue
+        case .question: return .systemYellow
+        case .task:     return .systemGreen
+        case .evidence: return .systemPurple
+        }
+    }
+}
+#endif
+
+// MARK: - Editable Text View (supports iOS edit menu)
+
+#if os(iOS)
+/// A UITextView wrapper that properly supports the iOS edit menu (copy/paste/select)
+struct EditableTextView: UIViewRepresentable {
+    @Binding var text: String
+    var isFocused: FocusState<Bool>.Binding
+    let onContentChange: (String) -> Void
+    let onFocusChange: (Bool) -> Void
+    var onIndent: (() -> Void)?
+    var onOutdent: (() -> Void)?
+    var currentStatus: IntentType?
+    var onStatusChange: ((IntentType) -> Void)?
+
+    func makeUIView(context: Context) -> SelfSizingTextView {
+        let textView = SelfSizingTextView()
+        textView.delegate = context.coordinator
+        textView.backgroundColor = .clear
+        textView.isScrollEnabled = false
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.isUserInteractionEnabled = true
+        textView.textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
+        textView.textContainer.lineFragmentPadding = 0
+
+        // Enable proper text wrapping
+        textView.textContainer.lineBreakMode = .byWordWrapping
+        textView.textContainer.widthTracksTextView = true
+
+        // Content hugging and compression
+        textView.setContentHuggingPriority(.required, for: .vertical)
+        textView.setContentCompressionResistancePriority(.required, for: .vertical)
+        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+        textView.font = bodyFont
+        textView.textColor = UIColor.label
+        textView.text = text
+
+        // Add keyboard accessory toolbar with all buttons
+        let toolbar = KeyboardAccessoryToolbar(
+            showIndentButtons: onIndent != nil,
+            showStatusButton: onStatusChange != nil
+        )
+        toolbar.textView = textView
+        toolbar.onDismiss = { [weak textView] in
+            textView?.resignFirstResponder()
+        }
+        toolbar.onIndent = onIndent
+        toolbar.onOutdent = onOutdent
+        toolbar.onStatusChange = onStatusChange
+        if let status = currentStatus {
+            toolbar.updateStatusColor(status)
+        }
+        textView.inputAccessoryView = toolbar
+
+        return textView
+    }
+
+    func updateUIView(_ textView: SelfSizingTextView, context: Context) {
+        // Never push text back into the text view while the user is actively editing —
+        // this prevents cursor jumping and formatting being stripped.
+        if !textView.isFirstResponder, textView.text != text {
+            textView.text = text
+            textView.invalidateIntrinsicContentSize()
+        }
+
+        if isFocused.wrappedValue && !textView.isFirstResponder {
+            DispatchQueue.main.async {
+                textView.becomeFirstResponder()
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject, UITextViewDelegate {
+        var parent: EditableTextView
+
+        init(_ parent: EditableTextView) {
+            self.parent = parent
+        }
+
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            parent.isFocused.wrappedValue = true
+            parent.onFocusChange(true)
+            // Sync toolbar button states with current typing attributes
+            if let toolbar = textView.inputAccessoryView as? KeyboardAccessoryToolbar {
+                toolbar.syncWithTypingAttributes()
+            }
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            parent.isFocused.wrappedValue = false
+            parent.onFocusChange(false)
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            let newText = textView.text ?? ""
+            // Only update binding if text actually changed (prevents loop when only formatting changes)
+            if parent.text != newText {
+                parent.text = newText
+                parent.onContentChange(newText)
+            }
+            textView.invalidateIntrinsicContentSize()
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            // Sync toolbar button states when cursor moves
+            if let toolbar = textView.inputAccessoryView as? KeyboardAccessoryToolbar {
+                toolbar.syncWithTypingAttributes()
+            }
+        }
+    }
+}
+#endif
+
+// MARK: - Template Protected Text View
+
+#if os(iOS)
+/// A UITextView that displays template text as bold and prevents editing within the template
+struct TemplateProtectedTextView: UIViewRepresentable {
+    @Binding var text: String
+    let templatePrefix: String
+    var isFocused: FocusState<Bool>.Binding
+    let onContentChange: (String) -> Void
+    var onIndent: (() -> Void)?
+    var onOutdent: (() -> Void)?
+    var currentStatus: IntentType?
+    var onStatusChange: ((IntentType) -> Void)?
+
+    func makeUIView(context: Context) -> SelfSizingTextView {
+        let textView = SelfSizingTextView()
+        textView.delegate = context.coordinator
+        textView.backgroundColor = .clear
+        textView.isScrollEnabled = false
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.isUserInteractionEnabled = true
+        textView.textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
+        textView.textContainer.lineFragmentPadding = 0
+
+        // Enable proper text wrapping
+        textView.textContainer.lineBreakMode = .byWordWrapping
+        textView.textContainer.widthTracksTextView = true
+
+        // Content hugging and compression
+        textView.setContentHuggingPriority(.required, for: .vertical)
+        textView.setContentCompressionResistancePriority(.required, for: .vertical)
+        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        // Set typing attributes to regular font so new text isn't bold, with adaptive color
+        let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+        textView.typingAttributes = [.font: bodyFont, .foregroundColor: UIColor.label]
+
+        // Add keyboard accessory toolbar with all buttons
+        let toolbar = KeyboardAccessoryToolbar(
+            showIndentButtons: onIndent != nil,
+            showStatusButton: onStatusChange != nil
+        )
+        toolbar.textView = textView
+        toolbar.onDismiss = { [weak textView] in
+            textView?.resignFirstResponder()
+        }
+        toolbar.onIndent = onIndent
+        toolbar.onOutdent = onOutdent
+        toolbar.onStatusChange = onStatusChange
+        if let status = currentStatus {
+            toolbar.updateStatusColor(status)
+        }
+        textView.inputAccessoryView = toolbar
+
+        // Check if all template segments are present (not the whole template as one block)
+        var initialText = text
+        let templateSegments = templatePrefix.components(separatedBy: "\n").filter { !$0.isEmpty }
+        let allSegmentsPresent = templateSegments.allSatisfy { initialText.contains($0) }
+
+        if !allSegmentsPresent {
+            // Only prepend if segments are actually missing
+            initialText = templatePrefix + initialText
+            DispatchQueue.main.async {
+                self.text = initialText
+                self.onContentChange(initialText)
+            }
+        }
+
+        // Set initial attributed text
+        updateAttributedText(textView, with: initialText)
+
+        // Position cursor at end of first template segment (or at end if no segments)
+        DispatchQueue.main.async {
+            if let firstSegment = templateSegments.first,
+               let range = initialText.range(of: firstSegment) {
+                let nsRange = NSRange(range, in: initialText)
+                let cursorPosition = nsRange.location + nsRange.length
+                textView.selectedRange = NSRange(location: cursorPosition, length: 0)
+            }
+        }
+
+        return textView
+    }
+
+    func updateUIView(_ textView: SelfSizingTextView, context: Context) {
+        // Never push text back while the user is actively editing —
+        // prevents cursor jumping and formatting being stripped.
+        if !textView.isFirstResponder {
+            let currentPlainText = textView.text ?? ""
+            if currentPlainText != text {
+                updateAttributedText(textView, with: text)
+                textView.invalidateIntrinsicContentSize()
+            }
+        }
+
+        // Handle focus
+        if isFocused.wrappedValue && !textView.isFirstResponder {
+            DispatchQueue.main.async {
+                textView.becomeFirstResponder()
+            }
+        }
+    }
+
+    private func updateAttributedText(_ textView: UITextView, with text: String) {
+        let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+        let boldFont = UIFont.boldSystemFont(ofSize: bodyFont.pointSize)
+        let textColor = UIColor.label  // Adapts to light/dark mode
+
+        // Start with all text as regular
+        let attributedString = NSMutableAttributedString(
+            string: text,
+            attributes: [.font: bodyFont, .foregroundColor: textColor]
+        )
+
+        // Find and bold each template segment individually
+        let templateSegments = templatePrefix.components(separatedBy: "\n").filter { !$0.isEmpty }
+
+        for segment in templateSegments {
+            // Find all occurrences of this segment and make them bold
+            var searchRange = text.startIndex..<text.endIndex
+            while let foundRange = text.range(of: segment, range: searchRange) {
+                let nsRange = NSRange(foundRange, in: text)
+                attributedString.addAttribute(.font, value: boldFont, range: nsRange)
+
+                // Move search range forward
+                searchRange = foundRange.upperBound..<text.endIndex
+            }
+        }
+
+        textView.attributedText = attributedString
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject, UITextViewDelegate {
+        var parent: TemplateProtectedTextView
+        weak var textView: UITextView?
+
+        init(_ parent: TemplateProtectedTextView) {
+            self.parent = parent
+        }
+
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            parent.isFocused.wrappedValue = true
+            // Sync toolbar button states with current typing attributes
+            if let toolbar = textView.inputAccessoryView as? KeyboardAccessoryToolbar {
+                toolbar.syncWithTypingAttributes()
+            }
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            parent.isFocused.wrappedValue = false
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            // Allow cursor to be positioned anywhere
+            // Protection happens in shouldChangeTextIn when user tries to delete/modify
+            // Sync toolbar button states when cursor moves
+            if let toolbar = textView.inputAccessoryView as? KeyboardAccessoryToolbar {
+                toolbar.syncWithTypingAttributes()
+            }
+        }
+
+        func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            let currentText = textView.text ?? ""
+            let templatePrefix = parent.templatePrefix
+
+            // Pure insertions (no deletion) are always allowed
+            // This lets users add newlines and content anywhere
+            if range.length == 0 {
+                return true
+            }
+
+            // For deletions/replacements, check if any protected template segment is affected
+            // Split template into individual segments (by newlines) to protect each separately
+            let templateSegments = templatePrefix.components(separatedBy: "\n").filter { !$0.isEmpty }
+
+            let editStart = range.location
+            let editEnd = range.location + range.length
+
+            // Check each template segment
+            for segment in templateSegments {
+                // Find all occurrences of this segment in current text
+                var searchRange = currentText.startIndex..<currentText.endIndex
+                while let foundRange = currentText.range(of: segment, range: searchRange) {
+                    let nsFoundRange = NSRange(foundRange, in: currentText)
+                    let segmentStart = nsFoundRange.location
+                    let segmentEnd = nsFoundRange.location + nsFoundRange.length
+
+                    // Check if the edit overlaps with this segment
+                    let overlapsSegment = !(editEnd <= segmentStart || editStart >= segmentEnd)
+
+                    if overlapsSegment {
+                        // Edit would modify a protected template segment - reject it
+                        let generator = UINotificationFeedbackGenerator()
+                        generator.notificationOccurred(.warning)
+                        return false
+                    }
+
+                    // Move search range forward
+                    searchRange = foundRange.upperBound..<currentText.endIndex
+                }
+            }
+
+            return true
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            let newText = textView.text ?? ""
+
+            // Only update binding if text actually changed (prevents loop when only formatting changes)
+            if parent.text != newText {
+                parent.text = newText
+                parent.onContentChange(newText)
+            }
+            textView.invalidateIntrinsicContentSize()
+        }
+    }
+}
+#endif
 
 // MARK: - Preview
 

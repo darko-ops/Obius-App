@@ -72,56 +72,90 @@ struct SwipeableSectionView: View {
     }
 
     private var mainContent: some View {
-        HStack(alignment: .top, spacing: 8) {
-            // Collapse indicator
-            Button {
-                onToggleCollapse()
-            } label: {
-                Image(systemName: section.isCollapsed ? "chevron.right" : "chevron.down")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16, height: 16)
-            }
-            .buttonStyle(.plain)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 8) {
+                // Intent indicator (using the new IntentType)
+                Circle()
+                    .fill(section.intent.color)
+                    .frame(width: 6, height: 6)
+                    .padding(.top, 6)
 
-            // Intent indicator (using the new IntentType)
-            Circle()
-                .fill(section.intent.color)
-                .frame(width: 6, height: 6)
-                .padding(.top, 6)
+                // Content
+                VStack(alignment: .leading, spacing: 0) {
+                    if section.isCollapsed {
+                        HStack {
+                            Text(section.preview)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
 
-            // Content
-            VStack(alignment: .leading, spacing: 0) {
-                if section.isCollapsed {
-                    Text(section.preview)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .onTapGesture {
-                            onToggleCollapse()
+                            Spacer()
+
+                            // Expand button on the right
+                            Button {
+                                onToggleCollapse()
+                                HapticFeedback.selection()
+                            } label: {
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        Capsule()
+                                            .fill(Color.gray.opacity(0.15))
+                                    )
+                            }
+                            .buttonStyle(.plain)
                         }
-                } else {
-                    TextEditor(text: $content)
-                        .font(.body)
-                        .scrollContentBackground(.hidden)
-                        .frame(minHeight: 24)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .onChange(of: content) { _, newValue in
-                            // Allow all content including newlines
-                            onContentChange(newValue)
-                        }
-                        .onTapGesture {
-                            onFocus()
-                        }
+                        // Expand is handled by the expand button only to avoid double-toggle
+                    } else {
+                        TextEditor(text: $content)
+                            .font(.body)
+                            .scrollContentBackground(.hidden)
+                            .frame(minHeight: 24)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .onChange(of: content) { _, newValue in
+                                // Allow all content including newlines
+                                onContentChange(newValue)
+                            }
+                            .onTapGesture {
+                                onFocus()
+                            }
+                    }
                 }
+
+                Spacer(minLength: 0)
             }
 
-            Spacer(minLength: 0)
+            // Collapse button at bottom right (only when expanded)
+            if !section.isCollapsed {
+                HStack {
+                    Spacer()
+
+                    Button {
+                        onToggleCollapse()
+                        HapticFeedback.selection()
+                    } label: {
+                        Image(systemName: "chevron.up")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule()
+                                    .fill(Color.gray.opacity(0.15))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.top, 4)
+            }
         }
         .padding(.leading, CGFloat(section.indentLevel) * 20)
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(isFocused ? Color.accentColor.opacity(0.08) : section.intent.backgroundTint)
+                .fill(isFocused ? Color.focusedBackground : section.intent.backgroundTint)
         )
         .contentShape(Rectangle())
         .onLongPressGesture {

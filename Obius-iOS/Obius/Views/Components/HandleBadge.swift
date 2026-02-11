@@ -6,6 +6,8 @@ struct HandleBadge: View {
     var showUnlinkAction: Bool = false
     var onUnlink: (() -> Void)?
 
+    private let loopColor: Color = .purple
+
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: "link")
@@ -14,16 +16,16 @@ struct HandleBadge: View {
             Text(handle.formattedName)
                 .font(.caption2.weight(.medium))
         }
-        .foregroundStyle(handle.intent.color)
+        .foregroundStyle(loopColor)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(
             Capsule()
-                .fill(handle.intent.color.opacity(0.15))
+                .fill(loopColor.opacity(0.15))
         )
         .overlay(
             Capsule()
-                .stroke(handle.intent.color.opacity(0.3), lineWidth: 0.5)
+                .stroke(loopColor.opacity(0.3), lineWidth: 0.5)
         )
         .contextMenu {
             if showUnlinkAction, let onUnlink = onUnlink {
@@ -53,6 +55,8 @@ struct HandleBadge: View {
 struct HandleBadgeCompact: View {
     let handle: Handle
 
+    private let loopColor: Color = .purple
+
     var body: some View {
         HStack(spacing: 2) {
             Image(systemName: "link")
@@ -61,12 +65,12 @@ struct HandleBadgeCompact: View {
             Text("@")
                 .font(.system(size: 9, weight: .medium))
         }
-        .foregroundStyle(handle.intent.color)
+        .foregroundStyle(loopColor)
         .padding(.horizontal, 5)
         .padding(.vertical, 2)
         .background(
             Capsule()
-                .fill(handle.intent.color.opacity(0.15))
+                .fill(loopColor.opacity(0.15))
         )
     }
 }

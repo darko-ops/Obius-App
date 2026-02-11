@@ -19,16 +19,66 @@ enum IntentType: String, Codable, DatabaseValueConvertible, CaseIterable {
         }
     }
     
-    /// A lighter background tint for section backgrounds
+    /// A lighter background tint for section backgrounds (opaque, adapts to light/dark mode)
     var backgroundTint: Color {
         switch self {
-        case .idea:     return Color.blue.opacity(0.08)
-        case .question: return Color.yellow.opacity(0.08)
-        case .task:     return Color.green.opacity(0.08)
-        case .evidence: return Color.purple.opacity(0.08)
+        case .idea:
+            return Color(UIColor { traitCollection in
+                traitCollection.userInterfaceStyle == .dark
+                    ? UIColor(red: 0.10, green: 0.15, blue: 0.25, alpha: 1.0)  // Dark blue-gray
+                    : UIColor(red: 0.92, green: 0.95, blue: 1.0, alpha: 1.0)   // Light blue
+            })
+        case .question:
+            return Color(UIColor { traitCollection in
+                traitCollection.userInterfaceStyle == .dark
+                    ? UIColor(red: 0.20, green: 0.18, blue: 0.10, alpha: 1.0)  // Dark yellow-brown
+                    : UIColor(red: 1.0, green: 0.98, blue: 0.90, alpha: 1.0)   // Light yellow
+            })
+        case .task:
+            return Color(UIColor { traitCollection in
+                traitCollection.userInterfaceStyle == .dark
+                    ? UIColor(red: 0.10, green: 0.20, blue: 0.15, alpha: 1.0)  // Dark green
+                    : UIColor(red: 0.92, green: 1.0, blue: 0.95, alpha: 1.0)   // Light green
+            })
+        case .evidence:
+            return Color(UIColor { traitCollection in
+                traitCollection.userInterfaceStyle == .dark
+                    ? UIColor(red: 0.18, green: 0.12, blue: 0.22, alpha: 1.0)  // Dark purple
+                    : UIColor(red: 0.96, green: 0.94, blue: 1.0, alpha: 1.0)   // Light purple
+            })
         }
     }
     
+    /// A darker tint for the collapse lip tab on the right edge of nodes
+    var lipTint: Color {
+        switch self {
+        case .idea:
+            return Color(UIColor { traitCollection in
+                traitCollection.userInterfaceStyle == .dark
+                    ? UIColor(red: 0.14, green: 0.22, blue: 0.38, alpha: 1.0)
+                    : UIColor(red: 0.78, green: 0.85, blue: 0.98, alpha: 1.0)
+            })
+        case .question:
+            return Color(UIColor { traitCollection in
+                traitCollection.userInterfaceStyle == .dark
+                    ? UIColor(red: 0.30, green: 0.26, blue: 0.14, alpha: 1.0)
+                    : UIColor(red: 0.96, green: 0.92, blue: 0.74, alpha: 1.0)
+            })
+        case .task:
+            return Color(UIColor { traitCollection in
+                traitCollection.userInterfaceStyle == .dark
+                    ? UIColor(red: 0.14, green: 0.30, blue: 0.20, alpha: 1.0)
+                    : UIColor(red: 0.80, green: 0.94, blue: 0.85, alpha: 1.0)
+            })
+        case .evidence:
+            return Color(UIColor { traitCollection in
+                traitCollection.userInterfaceStyle == .dark
+                    ? UIColor(red: 0.26, green: 0.18, blue: 0.32, alpha: 1.0)
+                    : UIColor(red: 0.88, green: 0.84, blue: 0.96, alpha: 1.0)
+            })
+        }
+    }
+
     /// SF Symbol icon for this intent type
     var icon: String {
         switch self {
@@ -42,10 +92,10 @@ enum IntentType: String, Codable, DatabaseValueConvertible, CaseIterable {
     /// Human-readable display name
     var displayName: String {
         switch self {
-        case .idea:     return "Idea"
-        case .question: return "Question"
-        case .task:     return "Task"
-        case .evidence: return "Evidence"
+        case .idea:     return "Blue"
+        case .question: return "Yellow"
+        case .task:     return "Green"
+        case .evidence: return "Purple"
         }
     }
     
@@ -57,6 +107,19 @@ enum IntentType: String, Codable, DatabaseValueConvertible, CaseIterable {
         case .task:     return "⌘3"
         case .evidence: return "⌘4"
         }
+    }
+}
+
+// MARK: - Color Extensions
+
+extension Color {
+    /// Opaque focused background color that adapts to light/dark mode
+    static var focusedBackground: Color {
+        Color(UIColor { traitCollection in
+            traitCollection.userInterfaceStyle == .dark
+                ? UIColor(red: 0.15, green: 0.20, blue: 0.30, alpha: 1.0)  // Dark accent blue
+                : UIColor(red: 0.90, green: 0.94, blue: 1.0, alpha: 1.0)   // Light accent blue
+        })
     }
 }
 

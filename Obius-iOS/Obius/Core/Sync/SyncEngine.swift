@@ -390,7 +390,7 @@ actor SyncEngine {
         guard let userId = supabase.currentUser?.id else { return }
 
         #if os(iOS)
-        let deviceName = await UIDevice.current.name
+        let deviceName = UIDevice.current.name
         #else
         let deviceName = Host.current().localizedName ?? "Mac"
         #endif

@@ -108,20 +108,12 @@ struct MainTabView: View {
             .tag(0)
 
             NavigationStack {
-                IntelligenceView()
-            }
-            .tabItem {
-                Image(systemName: "brain")
-            }
-            .tag(1)
-
-            NavigationStack {
                 LibraryView()
             }
             .tabItem {
-                Image(systemName: "square.stack.3d.up")
+                Image(systemName: "person.crop.circle")
             }
-            .tag(2)
+            .tag(1)
         }
     }
 }

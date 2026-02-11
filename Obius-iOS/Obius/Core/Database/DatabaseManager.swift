@@ -3,14 +3,17 @@ import GRDB
 import Combine
 
 final class DatabaseManager {
-    private let dbQueue: DatabaseQueue
     private let migrator: DatabaseMigrator
 
-    static let schemaVersion = 6
+    static let schemaVersion = 17
+
+    // Expose dbQueue for repositories that need direct observation
+    var dbQueue: DatabaseQueue { _dbQueue }
+    private let _dbQueue: DatabaseQueue
 
     init(inMemory: Bool = false) throws {
         if inMemory {
-            dbQueue = try DatabaseQueue()
+            _dbQueue = try DatabaseQueue()
         } else {
             let fileManager = FileManager.default
             let appSupport = try fileManager.url(
@@ -20,7 +23,7 @@ final class DatabaseManager {
                 create: true
             )
             let dbPath = appSupport.appendingPathComponent("obius.sqlite")
-            dbQueue = try DatabaseQueue(path: dbPath.path)
+            _dbQueue = try DatabaseQueue(path: dbPath.path)
         }
 
         var migrator = DatabaseMigrator()
@@ -251,8 +254,209 @@ final class DatabaseManager {
             """)
         }
 
+        // Migration v7: Add Split-Storage Engine tables (commits, media, note_media)
+        migrator.registerMigration("v7_split_storage") { db in
+            // Commits table - index of commits in Cold Store
+            try db.create(table: "commits") { t in
+                t.column("id", .text).primaryKey()
+                t.column("noteId", .text).notNull()
+                    .references("notes", onDelete: .cascade)
+                t.column("hash", .text).notNull().unique()
+                t.column("parentHash", .text)
+                t.column("filePath", .text).notNull()
+                t.column("createdAt", .integer).notNull()
+            }
+
+            // Create indexes for commits
+            try db.create(index: "idx_commits_note", on: "commits", columns: ["noteId"])
+            try db.create(index: "idx_commits_hash", on: "commits", columns: ["hash"])
+            try db.create(index: "idx_commits_parent", on: "commits", columns: ["parentHash"])
+
+            // Media table - content-addressable media metadata
+            try db.create(table: "media") { t in
+                t.column("hash", .text).primaryKey()
+                t.column("filename", .text).notNull()
+                t.column("mimeType", .text).notNull()
+                t.column("size", .integer).notNull()
+                t.column("createdAt", .integer).notNull()
+            }
+
+            // Create index for media
+            try db.create(index: "idx_media_filename", on: "media", columns: ["filename"])
+
+            // Note-Media junction table
+            try db.create(table: "note_media") { t in
+                t.column("noteId", .text).notNull()
+                    .references("notes", onDelete: .cascade)
+                t.column("mediaHash", .text).notNull()
+                    .references("media", column: "hash", onDelete: .cascade)
+                t.primaryKey(["noteId", "mediaHash"])
+            }
+
+            // Update schema version in metadata
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 7
+            """)
+        }
+
+        // v8: Add isTemplateContent column to sections
+        migrator.registerMigration("v8_template_content") { db in
+            // Add isTemplateContent column to sections table
+            try db.execute(sql: """
+                ALTER TABLE sections ADD COLUMN isTemplateContent INTEGER NOT NULL DEFAULT 0
+            """)
+
+            // Update schema version in metadata
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 8
+            """)
+        }
+
+        // v9: Add templatePrefix column to sections for inline template editing
+        migrator.registerMigration("v9_template_prefix") { db in
+            // Add templatePrefix column to sections table
+            try db.execute(sql: """
+                ALTER TABLE sections ADD COLUMN templatePrefix TEXT
+            """)
+
+            // Update schema version in metadata
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 9
+            """)
+        }
+
+        // v10: Add contentBefore column to sections for editing before template text
+        migrator.registerMigration("v10_content_before") { db in
+            // Add contentBefore column to sections table
+            try db.execute(sql: """
+                ALTER TABLE sections ADD COLUMN contentBefore TEXT
+            """)
+
+            // Update schema version in metadata
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 10
+            """)
+        }
+
+        // v11: Add groupName column to notes for grouping pages
+        migrator.registerMigration("v11_note_groups") { db in
+            // Add groupName column to notes table
+            try db.execute(sql: """
+                ALTER TABLE notes ADD COLUMN groupName TEXT
+            """)
+
+            // Update schema version in metadata
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 11
+            """)
+        }
+
+        // v12: Add echoes table for Echo alert/reminder system
+        migrator.registerMigration("v12_echoes") { db in
+            try db.create(table: "echoes") { t in
+                t.column("id", .text).primaryKey()
+                t.column("handleId", .text).notNull()
+                    .references("handles", onDelete: .cascade)
+                t.column("echoType", .text).notNull()
+                t.column("intervalValue", .integer)
+                t.column("intervalUnit", .text)
+                t.column("fireDate", .integer)
+                t.column("isActive", .boolean).notNull().defaults(to: true)
+                t.column("nextFireDate", .integer)
+                t.column("createdAt", .integer).notNull()
+                t.column("updatedAt", .integer).notNull()
+            }
+
+            try db.create(index: "idx_echoes_handle", on: "echoes", columns: ["handleId"])
+            try db.create(index: "idx_echoes_active", on: "echoes", columns: ["isActive"])
+            try db.create(index: "idx_echoes_next_fire", on: "echoes", columns: ["nextFireDate"])
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 12
+            """)
+        }
+
+        // v13: Echo redesign — drop and recreate echoes with new schema
+        migrator.registerMigration("v13_echo_redesign") { db in
+            try db.drop(table: "echoes")
+            try db.create(table: "echoes") { t in
+                t.column("id", .text).primaryKey()
+                t.column("handleId", .text).notNull()
+                    .references("handles", onDelete: .cascade)
+                t.column("isRecurring", .boolean).notNull().defaults(to: false)
+                t.column("intervalsJSON", .text)
+                t.column("fireDate", .integer).notNull()
+                t.column("isActive", .boolean).notNull().defaults(to: true)
+                t.column("nextFireDate", .integer)
+                t.column("createdAt", .integer).notNull()
+                t.column("updatedAt", .integer).notNull()
+            }
+
+            try db.create(index: "idx_echoes_handle", on: "echoes", columns: ["handleId"])
+            try db.create(index: "idx_echoes_active", on: "echoes", columns: ["isActive"])
+            try db.create(index: "idx_echoes_next_fire", on: "echoes", columns: ["nextFireDate"])
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 13
+            """)
+        }
+
+        // v14: Add isAlerted column to echoes for alert state tracking
+        migrator.registerMigration("v14_echo_alert_state") { db in
+            try db.alter(table: "echoes") { t in
+                t.add(column: "isAlerted", .boolean).notNull().defaults(to: false)
+            }
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 14
+            """)
+        }
+
+        // v15: Add lastAcknowledgedAt to echoes so acknowledged echoes don't re-alert
+        migrator.registerMigration("v15_echo_last_acknowledged") { db in
+            try db.alter(table: "echoes") { t in
+                t.add(column: "lastAcknowledgedAt", .integer)
+            }
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 15
+            """)
+        }
+
+        // v16: Add name column to commits for user-provided page commit names
+        migrator.registerMigration("v16_commit_name") { db in
+            try db.alter(table: "commits") { t in
+                t.add(column: "name", .text)
+            }
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 16
+            """)
+        }
+
+        // v17: Add shortId column to commits for human-readable reference
+        migrator.registerMigration("v17_commit_short_id") { db in
+            try db.alter(table: "commits") { t in
+                t.add(column: "shortId", .text).notNull().defaults(to: "")
+            }
+
+            // Backfill existing commits with generated short IDs
+            let rows = try Row.fetchAll(db, sql: "SELECT id FROM commits")
+            let chars = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+            for row in rows {
+                let id: String = row["id"]
+                let block = { (0..<4).map { _ in chars.randomElement()! } }
+                let shortId = "OBX-\(String(block()))-\(String(block()))"
+                try db.execute(sql: "UPDATE commits SET shortId = ? WHERE id = ?", arguments: [shortId, id])
+            }
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 17
+            """)
+        }
+
         self.migrator = migrator
-        try migrator.migrate(dbQueue)
+        try migrator.migrate(_dbQueue)
     }
 
     // MARK: - Read Operations
@@ -346,6 +550,20 @@ final class DatabaseManager {
         ValueObservation
             .tracking { db in
                 try Handle.fetchOne(db, key: id)
+            }
+            .publisher(in: dbQueue, scheduling: .immediate)
+            .eraseToAnyPublisher()
+    }
+
+    // MARK: - Echo Observation
+
+    func observeActiveEchoes() -> AnyPublisher<[Echo], Error> {
+        ValueObservation
+            .tracking { db in
+                try Echo
+                    .filter(Echo.Columns.isActive == true)
+                    .order(Echo.Columns.nextFireDate)
+                    .fetchAll(db)
             }
             .publisher(in: dbQueue, scheduling: .immediate)
             .eraseToAnyPublisher()

@@ -11,6 +11,7 @@ struct Note: Codable, Identifiable, Hashable {
     var updatedAt: Int64
     var deletedAt: Int64?
     var isPinned: Bool
+    var groupName: String?  // Name of the group this note belongs to (nil = ungrouped)
     var intent: IntentType  // Renamed from colorIntent
 
     // Sync fields
@@ -29,6 +30,7 @@ struct Note: Codable, Identifiable, Hashable {
         updatedAt: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
         deletedAt: Int64? = nil,
         isPinned: Bool = false,
+        groupName: String? = nil,
         intent: IntentType = .idea,
         localVersion: Int = 1,
         serverVersion: Int? = nil,
@@ -44,6 +46,7 @@ struct Note: Codable, Identifiable, Hashable {
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
         self.isPinned = isPinned
+        self.groupName = groupName
         self.intent = intent
         self.localVersion = localVersion
         self.serverVersion = serverVersion
@@ -85,7 +88,7 @@ extension Note: FetchableRecord, PersistableRecord {
     
     enum Columns: String, ColumnExpression {
         case id, title, aiTitle, body, interstitialContent, createdAt, updatedAt, deletedAt
-        case isPinned, intent, localVersion, serverVersion
+        case isPinned, groupName, intent, localVersion, serverVersion
         case syncStatus, lastSyncedAt
     }
     
