@@ -171,3 +171,5 @@ struct ChatMessageView: View {
     }
     .environmentObject(AppState())
 }
+
+

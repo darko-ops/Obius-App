@@ -9,7 +9,7 @@ struct DraggableSectionList: View {
     let getHandle: (String) -> Handle?  // Get handle for section (Handle Loop support)
     let getDisplayContent: (Section) -> String  // Get display content (handle content if portal)
     let onMove: (Int, Int) -> Void
-    let onContentChange: (String, String) -> Void
+    let onContentChange: (String, String, String?) -> Void
     let onReturn: (String) -> Void
     let onBackspaceEmpty: (String) -> Void
     let onIndent: (String) -> Void
@@ -26,8 +26,11 @@ struct DraggableSectionList: View {
     let onCreateLoop: (String) -> Void  // Handle Loop: Create new handle from section
     let onUnlinkHandle: (String) -> Void  // Handle Loop: Unlink section from handle
     let onCommit: (String) -> Void  // Commit the note containing this container
+    let onImageTap: (String) -> Void  // Open image picker for section
+    let mediaRepository: MediaRepository?  // For loading image data in image nodes
     let getInterstitialContent: (String?) -> String  // Get text after section (nil = end)
-    let onInterstitialContentChange: (String?, String) -> Void  // Update text after section
+    let getInterstitialRichContent: (String?) -> String?  // Get rich text after section (nil = end)
+    let onInterstitialContentChange: (String?, String, String?) -> Void  // Update text after section (id, content, richText)
     let onInterstitialBackspaceEmpty: (String?) -> Void  // Backspace on empty interstitial
 
     @State private var draggingSection: Section?
@@ -57,7 +60,7 @@ struct DraggableSectionList: View {
                             handleDragChanged(section: section, index: index, translation: translation)
                         },
                         onDragEnd: { endDragging(section: section, at: index) },
-                        onContentChange: { content in onContentChange(section.id, content) },
+                        onContentChange: { content, richText in onContentChange(section.id, content, richText) },
                         onReturn: { onReturn(section.id) },
                         onBackspaceEmpty: { onBackspaceEmpty(section.id) },
                         onIndent: { onIndent(section.id) },
@@ -72,7 +75,9 @@ struct DraggableSectionList: View {
                         onApplyTemplate: { onApplyTemplate(section.id) },
                         onCreateLoop: { onCreateLoop(section.id) },
                         onUnlinkHandle: { onUnlinkHandle(section.id) },
-                        onCommit: { onCommit(section.id) }
+                        onCommit: { onCommit(section.id) },
+                        onImageTap: { onImageTap(section.id) },
+                        mediaRepository: mediaRepository
                     )
                     .id(section.id)  // For ScrollViewReader
                     .zIndex(draggingSection?.id == section.id ? 1 : 0)
@@ -81,6 +86,7 @@ struct DraggableSectionList: View {
                     InterstitialTextField(
                         afterSectionId: section.id,
                         getContent: getInterstitialContent,
+                        getRichContent: getInterstitialRichContent,
                         onContentChange: onInterstitialContentChange,
                         onBackspaceEmpty: onInterstitialBackspaceEmpty
                     )
@@ -145,7 +151,7 @@ struct DraggableSectionRow: View {
     let onDragStart: () -> Void
     let onDragChanged: (CGSize) -> Void
     let onDragEnd: () -> Void
-    let onContentChange: (String) -> Void
+    let onContentChange: (String, String?) -> Void
     let onReturn: () -> Void
     let onBackspaceEmpty: () -> Void
     let onIndent: () -> Void
@@ -161,13 +167,14 @@ struct DraggableSectionRow: View {
     let onCreateLoop: () -> Void  // Handle Loop support
     let onUnlinkHandle: () -> Void  // Handle Loop support
     let onCommit: () -> Void  // Commit container
+    let onImageTap: () -> Void  // Image node tap
+    let mediaRepository: MediaRepository?  // For image nodes
 
     @State private var dragAmount = CGSize.zero
     @GestureState private var isLongPressing = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
-            // Section content using SectionView (centered)
             SectionView(
                 section: section,
                 isFocused: isFocused,
@@ -189,14 +196,15 @@ struct DraggableSectionRow: View {
                 onApplyTemplate: onApplyTemplate,
                 onCreateLoop: onCreateLoop,
                 onUnlinkHandle: onUnlinkHandle,
-                onCommit: onCommit
+                onCommit: onCommit,
+                onImageTap: onImageTap,
+                mediaRepository: mediaRepository
             )
 
-            // Drill-in button for sections with children
             if hasChildren {
                 DrillInButton(
                     hasChildren: true,
-                    childCount: 0,  // Count will be determined by parent
+                    childCount: 0,
                     onDrillIn: onDrillIn
                 )
                 .padding(.trailing, 8)
@@ -204,6 +212,8 @@ struct DraggableSectionRow: View {
         }
         .background(rowBackground)
         .overlay(dropIndicator)
+        .clipped()  // Prevent gesture recognizers from extending beyond row bounds
+        .contentShape(Rectangle())  // Constrain hit-testing to the row's frame
         .offset(y: isDragging ? dragAmount.height : 0)
         .scaleEffect(isDragging ? 1.02 : 1.0)
         .opacity(isDragging ? 0.9 : 1.0)
@@ -217,10 +227,8 @@ struct DraggableSectionRow: View {
                 .onChanged { value in
                     switch value {
                     case .first(true):
-                        // Long press recognized, but not yet completed
                         break
                     case .second(true, let drag):
-                        // Long press completed, now dragging
                         if !isDragging {
                             onDragStart()
                             HapticFeedback.impact(.medium)
@@ -241,7 +249,6 @@ struct DraggableSectionRow: View {
                 }
         )
         .transaction { transaction in
-            // Only allow animations for dragging state changes
             if !isDragging {
                 transaction.animation = nil
             }
@@ -276,7 +283,8 @@ struct DraggableSectionRow: View {
 struct InterstitialTextField: View {
     let afterSectionId: String?  // nil means "at end"
     let getContent: (String?) -> String
-    let onContentChange: (String?, String) -> Void
+    let getRichContent: (String?) -> String?
+    let onContentChange: (String?, String, String?) -> Void
     let onBackspaceEmpty: (String?) -> Void  // Called when backspace on empty field
 
     @State private var text: String = ""
@@ -286,15 +294,17 @@ struct InterstitialTextField: View {
         InterstitialTextView(
             text: $text,
             isFocused: $isFocused,
-            onContentChange: { newValue in
-                onContentChange(afterSectionId, newValue)
+            richText: getRichContent(afterSectionId),
+            onContentChange: { newValue, richText in
+                onContentChange(afterSectionId, newValue, richText)
             },
             onBackspaceEmpty: {
                 onBackspaceEmpty(afterSectionId)
             }
         )
-        .frame(minHeight: 22)
+        .frame(minHeight: 36)
         .fixedSize(horizontal: false, vertical: true)  // Take natural height
+        .contentShape(Rectangle())  // Ensure entire area is tappable
         .padding(.horizontal, 10)
         .animation(nil, value: text)  // Prevent layout animations
         .onAppear {
@@ -467,6 +477,7 @@ private class InterstitialKeyboardToolbar: UIToolbar {
             }
             textView.attributedText = mutableAttrString
             textView.selectedRange = range
+            notifyContentChanged()
         } else {
             var attrs = textView.typingAttributes
             let currentFont = (attrs[.font] as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
@@ -530,6 +541,7 @@ private class InterstitialKeyboardToolbar: UIToolbar {
 
             textView.attributedText = mutableAttrString
             textView.selectedRange = range
+            notifyContentChanged()
         } else {
             isUnderlineActive.toggle()
             var attrs = textView.typingAttributes
@@ -567,6 +579,7 @@ private class InterstitialKeyboardToolbar: UIToolbar {
 
         textView.attributedText = mutableAttrString
         textView.selectedRange = range
+        notifyContentChanged()
     }
 
     private func applyFontTraitToTyping(_ trait: UIFontDescriptor.SymbolicTraits, isActive: Bool, in textView: UITextView) {
@@ -587,6 +600,14 @@ private class InterstitialKeyboardToolbar: UIToolbar {
         }
     }
 
+    /// Notify the delegate that content changed so rich text formatting is persisted.
+    /// UIKit does NOT call textViewDidChange when attributedText is set programmatically,
+    /// so we must trigger the save manually after formatting changes.
+    private func notifyContentChanged() {
+        guard let textView = textView else { return }
+        textView.delegate?.textViewDidChange?(textView)
+    }
+
     @objc private func dismissTapped() {
         onDismiss?()
     }
@@ -596,7 +617,8 @@ private class InterstitialKeyboardToolbar: UIToolbar {
 struct InterstitialTextView: UIViewRepresentable {
     @Binding var text: String
     var isFocused: FocusState<Bool>.Binding
-    let onContentChange: (String) -> Void
+    var richText: String?
+    let onContentChange: (String, String?) -> Void
     let onBackspaceEmpty: () -> Void
 
     func makeUIView(context: Context) -> SelfSizingTextView {
@@ -610,6 +632,12 @@ struct InterstitialTextView: UIViewRepresentable {
         textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
         textView.setContentCompressionResistancePriority(.required, for: .vertical)
 
+        // Load rich text if available, otherwise plain text
+        if let richText = richText,
+           let attrText = RichTextHelper.deserialize(richText) {
+            textView.attributedText = attrText
+        }
+
         // Add keyboard accessory toolbar with formatting and dismiss buttons
         let toolbar = InterstitialKeyboardToolbar()
         toolbar.textView = textView
@@ -622,8 +650,13 @@ struct InterstitialTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: SelfSizingTextView, context: Context) {
-        if textView.text != text {
-            textView.text = text
+        if !textView.isFirstResponder, textView.text != text {
+            if let richText = richText,
+               let attrText = RichTextHelper.deserialize(richText) {
+                textView.attributedText = attrText
+            } else {
+                textView.text = text
+            }
         }
         textView.invalidateIntrinsicContentSize()
 
@@ -653,6 +686,9 @@ struct InterstitialTextView: UIViewRepresentable {
 
         func textViewDidEndEditing(_ textView: UITextView) {
             parent.isFocused.wrappedValue = false
+            // Save rich text formatting when focus leaves
+            let richText = RichTextHelper.serialize(textView.attributedText)
+            parent.onContentChange(textView.text ?? "", richText)
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
@@ -664,11 +700,11 @@ struct InterstitialTextView: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             let newText = textView.text ?? ""
-            // Only update binding if text actually changed (prevents loop when only formatting changes)
+            let richText = RichTextHelper.serialize(textView.attributedText)
             if parent.text != newText {
                 parent.text = newText
-                parent.onContentChange(newText)
             }
+            parent.onContentChange(newText, richText)
             textView.invalidateIntrinsicContentSize()
         }
 
@@ -688,7 +724,8 @@ struct InterstitialTextView: UIViewRepresentable {
 struct InterstitialTextView: View {
     @Binding var text: String
     var isFocused: FocusState<Bool>.Binding
-    let onContentChange: (String) -> Void
+    var richText: String?
+    let onContentChange: (String, String?) -> Void
     let onBackspaceEmpty: () -> Void
 
     var body: some View {
@@ -697,7 +734,7 @@ struct InterstitialTextView: View {
             .scrollContentBackground(.hidden)
             .focused(isFocused)
             .onChange(of: text) { _, newValue in
-                onContentChange(newValue)
+                onContentChange(newValue, nil)
             }
     }
 }
@@ -760,7 +797,7 @@ enum HapticFeedback {
                     onMove: { from, to in
                         sections.move(fromOffsets: IndexSet(integer: from), toOffset: to)
                     },
-                    onContentChange: { _, _ in },
+                    onContentChange: { _, _, _ in },
                     onReturn: { _ in },
                     onBackspaceEmpty: { _ in },
                     onIndent: { _ in },
@@ -777,8 +814,11 @@ enum HapticFeedback {
                     onCreateLoop: { _ in },
                     onUnlinkHandle: { _ in },
                     onCommit: { _ in },
+                    onImageTap: { _ in },
+                    mediaRepository: nil,
                     getInterstitialContent: { _ in "" },
-                    onInterstitialContentChange: { _, _ in },
+                    getInterstitialRichContent: { _ in nil },
+                    onInterstitialContentChange: { _, _, _ in },
                     onInterstitialBackspaceEmpty: { _ in }
                 )
                 .padding()

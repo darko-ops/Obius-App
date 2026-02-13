@@ -91,10 +91,11 @@ final class SectionRepository: ObservableObject {
 
     // MARK: - Update
 
-    func updateContent(_ sectionId: String, content: String) async throws {
+    func updateContent(_ sectionId: String, content: String, richText: String? = nil) async throws {
         try await database.write { db in
             guard var section = try Section.fetchOne(db, key: sectionId) else { return }
             section.content = content
+            section.richContent = richText
             section.touch()
             try section.update(db)
 

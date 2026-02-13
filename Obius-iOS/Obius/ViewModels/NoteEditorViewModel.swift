@@ -29,7 +29,7 @@ final class NoteEditorViewModel: ObservableObject {
     }
 
     var displayTitle: String {
-        note?.displayTitle ?? "Untitled"
+        note?.displayTitle(sections: sections) ?? "Untitled"
     }
 
     init(noteId: String, noteRepository: NoteRepository, sectionRepository: SectionRepository, handleRepository: HandleRepository) {
@@ -142,17 +142,46 @@ final class NoteEditorViewModel: ObservableObject {
         try await noteRepository.setIntent(noteId, intent: intent)
     }
 
-    func updateBody(_ body: String) async throws {
-        try await noteRepository.updateNoteBody(noteId, body: body)
+    func updateBody(_ body: String, richText: String? = nil) async throws {
+        try await noteRepository.updateNoteBody(noteId, body: body, richText: richText)
     }
 
-    func updateInterstitialContent(afterSectionId: String?, content: String) async throws {
-        try await noteRepository.updateInterstitialContent(noteId, afterSectionId: afterSectionId, content: content)
+    func updateInterstitialContent(afterSectionId: String?, content: String, richText: String? = nil) async throws {
+        try await noteRepository.updateInterstitialContent(noteId, afterSectionId: afterSectionId, content: content, richText: richText)
     }
 
     func getInterstitialContent(afterSectionId: String?) -> String {
         let key = afterSectionId.map { "after_\($0)" } ?? "end"
         return note?.interstitialContent[key] ?? ""
+    }
+
+    func getInterstitialRichContent(afterSectionId: String?) -> String? {
+        let key = afterSectionId.map { "after_\($0)" } ?? "end"
+        return note?.interstitialRichContent[key]
+    }
+
+    // MARK: - Image Section Support
+
+    func addImageSection(after sectionId: String? = nil) async throws -> Section {
+        let section = try await sectionRepository.createSection(
+            noteId: noteId,
+            content: "",
+            contentType: .image,
+            afterSectionId: sectionId
+        )
+        return section
+    }
+
+    // MARK: - Audio Section Support
+
+    func addAudioSection(after sectionId: String? = nil) async throws -> Section {
+        let section = try await sectionRepository.createSection(
+            noteId: noteId,
+            content: "",
+            contentType: .audio,
+            afterSectionId: sectionId
+        )
+        return section
     }
 
     // MARK: - Section Actions
@@ -187,8 +216,8 @@ final class NoteEditorViewModel: ObservableObject {
         focusedSectionId = section.id
     }
 
-    func updateSectionContent(_ sectionId: String, content: String) async throws {
-        try await sectionRepository.updateContent(sectionId, content: content)
+    func updateSectionContent(_ sectionId: String, content: String, richText: String? = nil) async throws {
+        try await sectionRepository.updateContent(sectionId, content: content, richText: richText)
     }
 
     func deleteSection(_ sectionId: String) async throws {
@@ -201,56 +230,100 @@ final class NoteEditorViewModel: ObservableObject {
         try await sectionRepository.deleteSection(sectionId)
     }
     
-    /// Automatically delete a section if it's empty (called when focus moves away)
-    private func cleanupEmptySection(_ sectionId: String) async {
-        print("🧹 cleanupEmptySection called for: \(sectionId.prefix(8))")
-        print("   sections.count = \(sections.count)")
+    /// Check whether a section is "dangling" — empty with no content anywhere after it.
+    /// Only dangling sections should be auto-deleted; empty sections that hold space
+    /// between content (interstitial text, subsequent non-empty sections) must be kept.
+    private func isSectionDangling(_ sectionId: String) -> Bool {
+        guard let index = sections.firstIndex(where: { $0.id == sectionId }) else { return false }
 
-        // Don't delete the last section
-        guard sections.count > 1 else {
-            print("   ❌ Not deleting - only 1 section left")
-            return
+        // Check the interstitial content immediately after this section
+        let interstitialKey = "after_\(sectionId)"
+        if let text = note?.interstitialContent[interstitialKey],
+           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return false // Has interstitial content right after it
         }
+
+        // Check all subsequent sections and their interstitials
+        for i in (index + 1)..<sections.count {
+            let later = sections[i]
+
+            // Any non-empty section means this section is not dangling
+            if later.handleId != nil { return false }
+            if later.contentType == .image || later.contentType == .audio { return false }
+            let laterContentEmpty = later.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let laterPrefixEmpty = (later.templatePrefix ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if !laterContentEmpty || !laterPrefixEmpty { return false }
+
+            // Check interstitial after this later section
+            let laterKey = "after_\(later.id)"
+            if let text = note?.interstitialContent[laterKey],
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return false
+            }
+        }
+
+        // Check the "end" interstitial (after all sections)
+        if let text = note?.interstitialContent["end"],
+           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return false
+        }
+
+        return true // Nothing after this section has content — it's dangling
+    }
+
+    /// Automatically delete a section if it's empty and dangling (called when focus moves away)
+    private func cleanupEmptySection(_ sectionId: String) async {
+        // Don't delete the last section
+        guard sections.count > 1 else { return }
 
         // Fetch fresh section data from repository to avoid stale data race condition
-        guard let section = try? await sectionRepository.getSection(id: sectionId) else {
-            print("   ❌ Section not found in repository")
-            return
-        }
+        guard let section = try? await sectionRepository.getSection(id: sectionId) else { return }
 
         // Don't delete portal sections (linked to a handle)
-        if section.handleId != nil {
-            print("   ❌ Not deleting - section is a portal (handleId set)")
-            return
-        }
+        if section.handleId != nil { return }
+
+        // Don't delete image or audio sections (they have no text content by design)
+        if section.contentType == .image { return }
+        if section.contentType == .audio { return }
 
         // Check both content and templatePrefix - don't delete template sections
         let contentEmpty = section.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let prefixEmpty = (section.templatePrefix ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let isEmpty = contentEmpty && prefixEmpty
-        print("   content: '\(section.content.prefix(20))' templatePrefix: '\(section.templatePrefix?.prefix(20) ?? "nil")' isEmpty: \(isEmpty)")
 
-        if isEmpty {
-            print("   ✅ Deleting empty section")
+        // Only delete if empty AND dangling (no content after it)
+        if isEmpty && isSectionDangling(sectionId) {
             try? await deleteSection(sectionId)
         }
     }
 
-    /// Clean up all empty sections (called when leaving the note editor)
+    /// Clean up dangling empty sections (called when leaving the note editor).
+    /// Only removes trailing empty sections that have no content after them.
     func cleanupAllEmptySections() async {
         // Don't delete if only 1 section
         guard sections.count > 1 else { return }
 
-        for section in sections {
-            // Don't delete portal sections (linked to a handle)
-            if section.handleId != nil { continue }
+        // Work backwards — only delete consecutive dangling empty sections from the tail
+        for section in sections.reversed() {
+            guard sections.count > 1 else { break }
 
-            // Check both content and templatePrefix - don't delete template sections
+            // Don't delete portal sections (linked to a handle)
+            if section.handleId != nil { break }
+
+            // Don't delete image or audio sections
+            if section.contentType == .image { break }
+            if section.contentType == .audio { break }
+
+            // Check both content and templatePrefix
             let contentEmpty = section.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             let prefixEmpty = (section.templatePrefix ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             let isEmpty = contentEmpty && prefixEmpty
-            if isEmpty && sections.count > 1 {
+
+            if isEmpty && isSectionDangling(section.id) {
                 try? await deleteSection(section.id)
+            } else {
+                // Hit a non-empty or anchored section — stop
+                break
             }
         }
     }
@@ -268,10 +341,13 @@ final class NoteEditorViewModel: ObservableObject {
         let hasBody = !note.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if hasBody { return false }
 
-        // Check if any section has content (including template prefixes or handle links)
+        // Check if any section has content (including template prefixes, handle links, or images)
         let hasNonEmptySection = sections.contains { section in
             // Portal sections (linked to a handle) are never empty
             if section.handleId != nil { return true }
+            // Image/audio sections are never empty (they represent media content)
+            if section.contentType == .image { return true }
+            if section.contentType == .audio { return true }
             let contentEmpty = section.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             let prefixEmpty = (section.templatePrefix ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             return !contentEmpty || !prefixEmpty
@@ -486,9 +562,31 @@ final class NoteEditorViewModel: ObservableObject {
 
     func handleBackspace(sectionId: String, isEmpty: Bool) async throws {
         if isEmpty && sections.count > 1 {
-            // Delete empty section and focus previous
-            if let index = sections.firstIndex(where: { $0.id == sectionId }), index > 0 {
-                focusedSectionId = sections[index - 1].id
+            // Preserve interstitial content after the deleted section by merging it
+            // into the previous section's interstitial (or the previous section's content)
+            if let index = sections.firstIndex(where: { $0.id == sectionId }) {
+                let deletedKey = "after_\(sectionId)"
+                let orphanedText = note?.interstitialContent[deletedKey] ?? ""
+                let orphanedRich = note?.interstitialRichContent[deletedKey]
+
+                if !orphanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    if index > 0 {
+                        // Merge into the previous section's interstitial
+                        let prevId = sections[index - 1].id
+                        let prevKey = "after_\(prevId)"
+                        let existingText = note?.interstitialContent[prevKey] ?? ""
+                        let merged = existingText.isEmpty ? orphanedText : existingText + "\n" + orphanedText
+                        // Use the orphaned rich text if there's no existing content, otherwise drop rich (plain merge)
+                        let mergedRich = existingText.isEmpty ? orphanedRich : nil
+                        try? await noteRepository.updateInterstitialContent(noteId, afterSectionId: prevId, content: merged, richText: mergedRich)
+                    }
+                }
+                // Clean up the orphaned interstitial key
+                try? await noteRepository.updateInterstitialContent(noteId, afterSectionId: sectionId, content: "")
+
+                if index > 0 {
+                    focusedSectionId = sections[index - 1].id
+                }
             }
             try await deleteSection(sectionId)
         }
@@ -564,7 +662,7 @@ final class NoteEditorViewModel: ObservableObject {
     }
 
     /// Update content - either handle content if portal, or section content
-    func updateDisplayContent(_ sectionId: String, content: String) async throws {
+    func updateDisplayContent(_ sectionId: String, content: String, richText: String? = nil) async throws {
         guard let section = getSection(sectionId) else { return }
 
         if let handleId = section.handleId {
@@ -572,7 +670,7 @@ final class NoteEditorViewModel: ObservableObject {
             try await handleManager.updateContent(handleId: handleId, content: content)
         } else {
             // Normal section - update section content
-            try await sectionRepository.updateContent(sectionId, content: content)
+            try await sectionRepository.updateContent(sectionId, content: content, richText: richText)
         }
     }
 

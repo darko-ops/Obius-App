@@ -26,6 +26,7 @@ private struct NotesListContent: View {
     @State private var searchQuery = ""
     @State private var selectedNote: Note?
     @State private var sectionPreviews: [String: String] = [:]
+    @State private var autoTitles: [String: String] = [:]
     @State private var showingTemplates = false
     @State private var templateTargetNoteId: String?
     @State private var showingCommitConfirmation = false
@@ -47,7 +48,8 @@ private struct NotesListContent: View {
             return notes
         }
         return notes.filter { note in
-            note.displayTitle.localizedCaseInsensitiveContains(searchQuery)
+            let title = autoTitles[note.id] ?? note.displayTitle
+            return title.localizedCaseInsensitiveContains(searchQuery)
         }
     }
 
@@ -348,7 +350,7 @@ private struct NotesListContent: View {
                     .foregroundStyle(selectedNoteIds.contains(note.id) ? Color.accentColor : .secondary)
             }
 
-            NoteRowView(note: note, sectionContent: sectionPreviews[note.id])
+            NoteRowView(note: note, sectionContent: sectionPreviews[note.id], autoTitle: autoTitles[note.id])
         }
         .contentShape(Rectangle())
         .onTapGesture {
@@ -478,16 +480,47 @@ private struct NotesListContent: View {
         let body = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard body.isEmpty else {
             sectionPreviews.removeValue(forKey: note.id)
+            autoTitles.removeValue(forKey: note.id)
             return
         }
 
         do {
             let sections = try await sectionRepository.getSections(noteId: note.id)
-            // Find first section with content
-            if let firstContent = sections
-                .sorted(by: { $0.orderKey < $1.orderKey })
+            let sorted = sections.sorted(by: { $0.orderKey < $1.orderKey })
+
+            // Compute auto-title with full section context
+            let computed = note.displayTitle(sections: sorted)
+            let hasUserTitle = note.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            let hasAiTitle = note.aiTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            if !hasUserTitle && !hasAiTitle {
+                autoTitles[note.id] = computed
+            } else {
+                autoTitles.removeValue(forKey: note.id)
+            }
+
+            // Find first section with content for the preview subtitle
+            if let firstContent = sorted
                 .first(where: { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
-                sectionPreviews[note.id] = firstContent.content
+                if firstContent.contentType == .audio {
+                    // Parse "hash|duration" format
+                    let parts = firstContent.content.split(separator: "|", maxSplits: 1)
+                    if parts.count > 1, let seconds = Double(parts[1]) {
+                        let mins = Int(seconds) / 60
+                        let secs = Int(seconds) % 60
+                        sectionPreviews[note.id] = String(format: "Audio %d:%02d", mins, secs)
+                    } else {
+                        sectionPreviews[note.id] = "Audio recording"
+                    }
+                } else if firstContent.contentType == .image {
+                    // Count photos from "hash|assetId,hash|assetId,..." format
+                    let count = firstContent.content
+                        .split(separator: ",")
+                        .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                        .count
+                    sectionPreviews[note.id] = count == 1 ? "1 photo" : "\(count) photos"
+                } else {
+                    sectionPreviews[note.id] = firstContent.content
+                }
             } else {
                 sectionPreviews.removeValue(forKey: note.id)
             }

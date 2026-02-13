@@ -5,6 +5,7 @@ struct Section: Codable, Identifiable, Hashable {
     var id: String
     var noteId: String
     var content: String
+    var richContent: String?  // Base64-encoded RTF data for rich text content
     var contentType: ContentType
     var sectionType: SectionType  // fold or line
 
@@ -41,6 +42,7 @@ struct Section: Codable, Identifiable, Hashable {
         id: String = UUID().uuidString,
         noteId: String,
         content: String = "",
+        richContent: String? = nil,
         contentType: ContentType = .text,
         sectionType: SectionType = .fold,
         title: String? = nil,
@@ -64,6 +66,7 @@ struct Section: Codable, Identifiable, Hashable {
         self.id = id
         self.noteId = noteId
         self.content = content
+        self.richContent = richContent
         self.contentType = contentType
         self.sectionType = sectionType
         self.title = title
@@ -136,7 +139,7 @@ extension Section: FetchableRecord, PersistableRecord {
     static let databaseTableName = "sections"
     
     enum Columns: String, ColumnExpression {
-        case id, noteId, content, contentType, sectionType
+        case id, noteId, content, richContent, contentType, sectionType
         case title
         case parentSectionId, orderKey, indentLevel
         case isCollapsed, isLocked, isTemplateContent, templatePrefix, contentBefore, intent

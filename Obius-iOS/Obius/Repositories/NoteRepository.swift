@@ -45,23 +45,30 @@ final class NoteRepository: ObservableObject {
         return note
     }
 
-    func updateNoteBody(_ noteId: String, body: String) async throws {
+    func updateNoteBody(_ noteId: String, body: String, richText: String? = nil) async throws {
         try await database.write { db in
             guard var note = try Note.fetchOne(db, key: noteId) else { return }
             note.body = body
+            note.bodyRichText = richText
             note.touch()
             try note.update(db)
         }
     }
 
-    func updateInterstitialContent(_ noteId: String, afterSectionId: String?, content: String) async throws {
+    func updateInterstitialContent(_ noteId: String, afterSectionId: String?, content: String, richText: String? = nil) async throws {
         try await database.write { db in
             guard var note = try Note.fetchOne(db, key: noteId) else { return }
             let key = afterSectionId.map { "after_\($0)" } ?? "end"
             if content.isEmpty {
                 note.interstitialContent.removeValue(forKey: key)
+                note.interstitialRichContent.removeValue(forKey: key)
             } else {
                 note.interstitialContent[key] = content
+                if let richText = richText {
+                    note.interstitialRichContent[key] = richText
+                } else {
+                    note.interstitialRichContent.removeValue(forKey: key)
+                }
             }
             note.touch()
             try note.update(db)

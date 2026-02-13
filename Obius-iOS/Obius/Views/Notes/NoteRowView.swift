@@ -3,6 +3,7 @@ import SwiftUI
 struct NoteRowView: View {
     let note: Note
     var sectionContent: String?
+    var autoTitle: String?
 
     private var formattedDate: String {
         let formatter = DateFormatter()
@@ -54,7 +55,7 @@ struct NoteRowView: View {
                 .frame(width: 8, height: 8)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(note.displayTitle)
+                Text(autoTitle ?? note.displayTitle)
                     .font(.headline)
                     .lineLimit(1)
 

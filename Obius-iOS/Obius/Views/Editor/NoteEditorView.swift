@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 
 struct NoteEditorView: View {
     @EnvironmentObject var appState: AppState
@@ -11,6 +12,36 @@ struct NoteEditorView: View {
             sectionRepository: appState.sectionRepository,
             handleRepository: appState.handleRepository
         )
+    }
+}
+
+// MARK: - Placeholder Rotation
+
+/// Cycles through placeholders evenly using a round-robin counter.
+private enum PlaceholderProvider {
+    static let options = [
+        "Catch it before it escapes\u{2026}",
+        "I note, therefore I am\u{2026}",
+        "The mind wanders. Pages don\u{2019}t\u{2026}",
+        "From chaos, clarity\u{2026}",
+        "Footnote your existence\u{2026}",
+        "Archive the fleeting\u{2026}",
+        "To note, or not to note\u{2026}",
+        "Before it becomes myth\u{2026}",
+        "The labyrinth begins here\u{2026}",
+        "Memory not found\u{2026}",
+        "Insert profound thought\u{2026}",
+        "Dream it into ink\u{2026}",
+        "Brave new note\u{2026}",
+        "Et tu, Brain?\u{2026}",
+    ]
+
+    private static var counter = Int.random(in: 0..<options.count)
+
+    static func next() -> String {
+        let index = counter % options.count
+        counter += 1
+        return options[index]
     }
 }
 
@@ -33,9 +64,19 @@ private struct NoteEditorContent: View {
     @State private var lastCommitName: String?
     @State private var nodeCommitSectionId: NodeCommitItem?
     @State private var pageCommitItem: PageCommitItem?
+    @State private var showingAudioRecorder = false
+    @State private var audioRecorderTargetSectionId: String?
+    @State private var audioRecorderID = UUID()
+    @State private var showingImagePicker = false
+    @State private var imagePickerTargetSectionId: String?
+    @State private var imagePickerPreselectedAssetIds: [String] = []
+    @State private var imagePickerID = UUID()
+    @State private var fullscreenImageItem: FullscreenImageItem?
     @FocusState private var focusedSectionId: String?
     @FocusState private var bodyFocused: Bool
     @FocusState private var titleFocused: Bool
+    @State private var emptyPlaceholder: String = PlaceholderProvider.next()
+    @State private var titleVisible = true
 
     let noteId: String
 
@@ -51,10 +92,11 @@ private struct NoteEditorContent: View {
 
     var body: some View {
         mainContent
-            .navigationTitle(viewModel.displayTitle)
+            .navigationTitle(titleVisible ? "" : viewModel.displayTitle)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
+            .animation(.easeInOut(duration: 0.2), value: titleVisible)
             .toolbar { toolbarContent }
             .onChange(of: viewModel.focusedSectionId) { _, newValue in
                 focusedSectionId = newValue
@@ -165,6 +207,65 @@ private struct NoteEditorContent: View {
                     }
                 )
             }
+            #if os(iOS)
+            .sheet(isPresented: $showingAudioRecorder) {
+                AudioRecorderView(
+                    onSave: { data, duration in
+                        guard let sectionId = audioRecorderTargetSectionId else { return }
+                        // Clear immediately so onChange cleanup doesn't delete the section
+                        audioRecorderTargetSectionId = nil
+                        Task {
+                            await saveRecordedAudio(data, duration: duration, toSectionId: sectionId)
+                        }
+                    },
+                    onDismiss: {
+                        showingAudioRecorder = false
+                    }
+                )
+                .id(audioRecorderID)
+            }
+            .onChange(of: showingAudioRecorder) { _, isShowing in
+                if !isShowing, let sectionId = audioRecorderTargetSectionId {
+                    // Clean up empty audio section if recorder was cancelled
+                    if let section = viewModel.getSection(sectionId),
+                       section.content.trimmingCharacters(in: .whitespaces).isEmpty {
+                        Task { try? await viewModel.deleteSection(sectionId) }
+                    }
+                    audioRecorderTargetSectionId = nil
+                }
+            }
+            .sheet(isPresented: $showingImagePicker) {
+                ImagePickerView(
+                    preselectedAssetIdentifiers: imagePickerPreselectedAssetIds,
+                    onImagesPicked: { results in
+                        guard let sectionId = imagePickerTargetSectionId else { return }
+                        Task {
+                            await savePickedImages(results, toSectionId: sectionId)
+                            imagePickerTargetSectionId = nil
+                        }
+                    }
+                )
+                .id(imagePickerID)
+            }
+            .fullScreenCover(item: $fullscreenImageItem) { item in
+                let entries = parseImageEntries(from: viewModel.getSection(item.sectionId)?.content ?? "")
+                FullscreenImageViewer(
+                    imageEntries: entries,
+                    mediaRepository: appState.mediaRepository,
+                    onEditSave: { keptEntries, newPicks in
+                        Task {
+                            await saveEditedImages(keptEntries: keptEntries, newPicks: newPicks, sectionId: item.sectionId)
+                        }
+                    }
+                )
+            }
+            #endif
+            .onChange(of: showingImagePicker) { _, isShowing in
+                if !isShowing {
+                    imagePickerTargetSectionId = nil
+                    imagePickerPreselectedAssetIds = []
+                }
+            }
             .onChange(of: showingTemplates) { _, isShowing in
                 if !isShowing {
                     templateTargetSectionId = nil
@@ -209,20 +310,23 @@ private struct NoteEditorContent: View {
             }
             .scrollDismissesKeyboard(.never)
             .onChange(of: viewModel.focusedSectionId) { _, newId in
-                // When focus changes, scroll to show the top of the focused section
-                if let sectionId = newId {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(sectionId, anchor: .top)
-                    }
+                // When focus changes, scroll to show the focused section — but not for image/audio sections,
+                // so the title and body stay visible and remain tappable after adding a media node.
+                guard let sectionId = newId,
+                      let section = viewModel.getSection(sectionId),
+                      section.contentType != .image && section.contentType != .audio else { return }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(sectionId, anchor: .top)
                 }
             }
             .onChange(of: viewModel.sections.count) { _, _ in
-                // When a new section appears, scroll to it if it's the focus target
-                if let sectionId = viewModel.focusedSectionId {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo(sectionId, anchor: .top)
-                        }
+                // When a new section appears, scroll to it if it's the focus target (text sections only).
+                guard let sectionId = viewModel.focusedSectionId,
+                      let section = viewModel.getSection(sectionId),
+                      section.contentType != .image && section.contentType != .audio else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(sectionId, anchor: .top)
                     }
                 }
             }
@@ -237,11 +341,12 @@ private struct NoteEditorContent: View {
     @ViewBuilder
     private func headerContent(currentParent: Section?, nonEmptySectionsEmpty: Bool) -> some View {
         if möbiusNavigation.isAtRoot {
-            titleView
-                .padding(.horizontal)
-
-            noteBodyEditor
-                .padding(.horizontal)
+            VStack(alignment: .leading, spacing: 0) {
+                titleView
+                noteBodyEditor
+            }
+            .padding(.horizontal)
+            .zIndex(1)  // Keep header above section list for hit testing so title/body stay tappable when image nodes exist
         } else if let parent = currentParent {
             MöbiusSectionHeader(section: parent) {
                 withAnimation(.möbiusUnfold) {
@@ -268,8 +373,8 @@ private struct NoteEditorContent: View {
             onMove: { from, to in
                 Task { try? await viewModel.moveSection(visibleSections[from].id, to: to) }
             },
-            onContentChange: { id, content in
-                Task { try? await viewModel.updateDisplayContent(id, content: content) }
+            onContentChange: { id, content, richText in
+                Task { try? await viewModel.updateDisplayContent(id, content: content, richText: richText) }
             },
             onReturn: { id in
                 Task { try? await viewModel.handleReturn(sectionId: id) }
@@ -329,9 +434,30 @@ private struct NoteEditorContent: View {
             onCommit: { sectionId in
                 nodeCommitSectionId = NodeCommitItem(sectionId: sectionId)
             },
+            onImageTap: { sectionId in
+                guard let section = viewModel.getSection(sectionId) else { return }
+
+                if section.contentType == .audio {
+                    // Audio section: open recorder if empty, otherwise do nothing (playback handled by AudioNodeView)
+                    if section.content.trimmingCharacters(in: .whitespaces).isEmpty {
+                        audioRecorderTargetSectionId = sectionId
+                        audioRecorderID = UUID()
+                        showingAudioRecorder = true
+                    }
+                } else if !section.content.trimmingCharacters(in: .whitespaces).isEmpty {
+                    // Has images — open fullscreen viewer
+                    fullscreenImageItem = FullscreenImageItem(sectionId: sectionId)
+                } else {
+                    // Empty — open picker directly
+                    imagePickerTargetSectionId = sectionId
+                    prepareAndShowImagePicker(for: sectionId)
+                }
+            },
+            mediaRepository: appState.mediaRepository,
             getInterstitialContent: { viewModel.getInterstitialContent(afterSectionId: $0) },
-            onInterstitialContentChange: { afterSectionId, content in
-                Task { try? await viewModel.updateInterstitialContent(afterSectionId: afterSectionId, content: content) }
+            getInterstitialRichContent: { viewModel.getInterstitialRichContent(afterSectionId: $0) },
+            onInterstitialContentChange: { afterSectionId, content, richText in
+                Task { try? await viewModel.updateInterstitialContent(afterSectionId: afterSectionId, content: content, richText: richText) }
             },
             onInterstitialBackspaceEmpty: { afterSectionId in
                 // When backspace on empty interstitial, focus the section it's after
@@ -347,7 +473,7 @@ private struct NoteEditorContent: View {
 
     @ViewBuilder
     private func addSectionButton(visibleSections: [Section]) -> some View {
-        Button {
+        AddContentBar(onAddText: {
             Task {
                 let parentId = möbiusNavigation.currentParentId
                 let lastSection = visibleSections.last
@@ -358,13 +484,29 @@ private struct NoteEditorContent: View {
                     try? await viewModel.setParentSection(newSection.id, parentId: parentId)
                 }
             }
-        } label: {
-            Image(systemName: "plus.circle.fill")
-                .font(.title2)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 4)
+        }, onAddAudio: {
+            Task {
+                let parentId = möbiusNavigation.currentParentId
+                let lastSection = visibleSections.last
+                if let section = try? await viewModel.addAudioSection(after: lastSection?.id) {
+                    if let parentId = parentId {
+                        try? await viewModel.setParentSection(section.id, parentId: parentId)
+                    }
+                    audioRecorderTargetSectionId = section.id
+                    audioRecorderID = UUID()
+                    showingAudioRecorder = true
+                }
+            }
+        }, onAddImage: {
+            Task {
+                let lastSection = visibleSections.last
+                if let section = try? await viewModel.addImageSection(after: lastSection?.id) {
+                    imagePickerTargetSectionId = section.id
+                    imagePickerPreselectedAssetIds = []
+                    showingImagePicker = true
+                }
+            }
+        })
     }
 
     // MARK: - Toolbar
@@ -552,6 +694,153 @@ private struct NoteEditorContent: View {
         }
     }
 
+    #if os(iOS)
+    /// Compute preselected asset IDs and show the picker.
+    /// PHPicker runs out-of-process and handles its own photo library access,
+    /// so no app-level authorization is needed for preselection.
+    private func prepareAndShowImagePicker(for sectionId: String) {
+        if let section = viewModel.getSection(sectionId) {
+            let ids = parseImageEntries(from: section.content)
+                .compactMap { $0.assetId.isEmpty ? nil : $0.assetId }
+            print("[ImagePicker] Preselecting \(ids.count) asset IDs: \(ids)")
+            imagePickerPreselectedAssetIds = ids
+        } else {
+            imagePickerPreselectedAssetIds = []
+        }
+
+        // Force a fresh PHPickerViewController so makeUIViewController runs with new config
+        imagePickerID = UUID()
+        showingImagePicker = true
+    }
+
+    /// Extract just the image hashes for a section (for fullscreen viewer).
+    private func parseImageHashes(forSectionId sectionId: String) -> [String] {
+        guard let section = viewModel.getSection(sectionId) else { return [] }
+        return section.content
+            .split(separator: ",")
+            .map { entry -> String in
+                let parts = entry.split(separator: "|", maxSplits: 1)
+                return String(parts[0]).trimmingCharacters(in: .whitespaces)
+            }
+            .filter { !$0.isEmpty }
+    }
+
+    /// Parse "hash|assetId,hash|assetId,..." into structured entries.
+    private func parseImageEntries(from content: String) -> [(hash: String, assetId: String)] {
+        content.split(separator: ",")
+            .map { entry in
+                let parts = entry.split(separator: "|", maxSplits: 1)
+                let hash = String(parts[0]).trimmingCharacters(in: .whitespaces)
+                let assetId = parts.count > 1 ? String(parts[1]) : ""
+                return (hash: hash, assetId: assetId)
+            }
+            .filter { !$0.hash.isEmpty }
+    }
+
+    private func savePickedImages(_ results: [(UIImage, String?)], toSectionId sectionId: String) async {
+        // Keep all existing entries, then append genuinely new picks
+        let existingEntries = parseImageEntries(
+            from: viewModel.getSection(sectionId)?.content ?? ""
+        )
+
+        // Build a set of existing asset IDs and hashes for dedup
+        var existingAssetIds = Set<String>()
+        var existingHashes = Set<String>()
+        for entry in existingEntries {
+            existingHashes.insert(entry.hash)
+            if !entry.assetId.isEmpty {
+                existingAssetIds.insert(entry.assetId)
+            }
+        }
+
+        // Start with all existing entries
+        var newEntries = existingEntries
+
+        for (image, assetId) in results {
+            // Skip if this asset is already in the node
+            if let assetId, existingAssetIds.contains(assetId) {
+                continue
+            }
+
+            // New image — store it
+            guard let data = image.jpegData(compressionQuality: 0.85) else { continue }
+            do {
+                let media = try await appState.mediaRepository.addMedia(
+                    data: data,
+                    filename: "image_\(UUID().uuidString).jpg",
+                    mimeType: "image/jpeg"
+                )
+                // Skip if this exact hash already exists (same image picked without asset ID)
+                guard !existingHashes.contains(media.hash) else { continue }
+                try await appState.mediaRepository.linkMediaToNote(
+                    noteId: noteId,
+                    mediaHash: media.hash
+                )
+                newEntries.append((hash: media.hash, assetId: assetId ?? ""))
+                existingHashes.insert(media.hash)
+                if let assetId {
+                    existingAssetIds.insert(assetId)
+                }
+            } catch {
+                print("Failed to save image: \(error)")
+            }
+        }
+
+        // Build content string in "hash|assetId" format
+        let content = newEntries
+            .map { "\($0.hash)|\($0.assetId)" }
+            .joined(separator: ",")
+        print("[ImagePicker] Saving content: \(content)")
+        try? await viewModel.updateSectionContent(sectionId, content: content)
+    }
+
+    /// Save after edit sheet — keeps selected existing entries and stores new picks.
+    private func saveEditedImages(keptEntries: [(hash: String, assetId: String)], newPicks: [(UIImage, String?)], sectionId: String) async {
+        var allEntries = keptEntries
+
+        for (image, assetId) in newPicks {
+            guard let data = image.jpegData(compressionQuality: 0.85) else { continue }
+            do {
+                let media = try await appState.mediaRepository.addMedia(
+                    data: data,
+                    filename: "image_\(UUID().uuidString).jpg",
+                    mimeType: "image/jpeg"
+                )
+                try await appState.mediaRepository.linkMediaToNote(
+                    noteId: noteId,
+                    mediaHash: media.hash
+                )
+                allEntries.append((hash: media.hash, assetId: assetId ?? ""))
+            } catch {
+                print("Failed to save image: \(error)")
+            }
+        }
+
+        let content = allEntries
+            .map { "\($0.hash)|\($0.assetId)" }
+            .joined(separator: ",")
+        try? await viewModel.updateSectionContent(sectionId, content: content)
+    }
+    private func saveRecordedAudio(_ data: Data, duration: TimeInterval, toSectionId sectionId: String) async {
+        do {
+            let media = try await appState.mediaRepository.addMedia(
+                data: data,
+                filename: "audio_\(UUID().uuidString).m4a",
+                mimeType: "audio/mp4"
+            )
+            try await appState.mediaRepository.linkMediaToNote(
+                noteId: noteId,
+                mediaHash: media.hash
+            )
+            // Store as "hash|duration"
+            let content = "\(media.hash)|\(String(format: "%.1f", duration))"
+            try await viewModel.updateSectionContent(sectionId, content: content)
+        } catch {
+            print("Failed to save audio: \(error)")
+        }
+    }
+    #endif
+
     @ViewBuilder
     private var titleView: some View {
         HStack(spacing: 12) {
@@ -584,6 +873,8 @@ private struct NoteEditorContent: View {
             } else {
                 Text(viewModel.displayTitle)
                     .font(.title.bold())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                     .onTapGesture {
                         titleText = viewModel.note?.title ?? ""
                         editingTitle = true
@@ -595,6 +886,18 @@ private struct NoteEditorContent: View {
             if viewModel.note?.isPinned == true {
                 Image(systemName: "pin.fill")
                     .foregroundStyle(.orange)
+            }
+        }
+        .background {
+            GeometryReader { geo in
+                let frame = geo.frame(in: .global)
+                Color.clear
+                    .onChange(of: frame.minY) { _, minY in
+                        let isVisible = minY > -frame.height
+                        if titleVisible != isVisible {
+                            titleVisible = isVisible
+                        }
+                    }
             }
         }
     }
@@ -615,17 +918,19 @@ private struct NoteEditorContent: View {
         BodyTextView(
             text: $bodyText,
             isFocused: $bodyFocused,
-            minHeight: isPageEmpty ? 100 : 22,
-            onContentChange: { newValue in
+            richText: viewModel.note?.bodyRichText,
+            minHeight: isPageEmpty ? 100 : 44,
+            onContentChange: { newValue, richText in
                 Task {
-                    try? await viewModel.updateBody(newValue)
+                    try? await viewModel.updateBody(newValue, richText: richText)
                 }
             }
         )
+        .frame(minHeight: isPageEmpty ? 100 : 44)
         .padding(.horizontal, 10)
         .overlay(alignment: .topLeading) {
             if isPageEmpty && !bodyFocused {
-                Text("Start typing...")
+                Text(emptyPlaceholder)
                     .font(.body)
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 10)
@@ -652,7 +957,7 @@ private struct NoteEditorContent: View {
             .focused($bodyFocused)
             .overlay(alignment: .topLeading) {
                 if isPageEmpty && !bodyFocused {
-                    Text("Start typing...")
+                    Text(emptyPlaceholder)
                         .font(.body)
                         .foregroundStyle(.tertiary)
                         .padding(.horizontal, 10)
@@ -843,6 +1148,7 @@ private class BodyKeyboardToolbar: UIToolbar {
             }
             textView.attributedText = mutableAttrString
             textView.selectedRange = range
+            notifyContentChanged()
         } else {
             var attrs = textView.typingAttributes
             let currentFont = (attrs[.font] as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
@@ -906,6 +1212,7 @@ private class BodyKeyboardToolbar: UIToolbar {
 
             textView.attributedText = mutableAttrString
             textView.selectedRange = range
+            notifyContentChanged()
         } else {
             isUnderlineActive.toggle()
             var attrs = textView.typingAttributes
@@ -943,6 +1250,7 @@ private class BodyKeyboardToolbar: UIToolbar {
 
         textView.attributedText = mutableAttrString
         textView.selectedRange = range
+        notifyContentChanged()
     }
 
     private func applyFontTraitToTyping(_ trait: UIFontDescriptor.SymbolicTraits, isActive: Bool, in textView: UITextView) {
@@ -963,6 +1271,14 @@ private class BodyKeyboardToolbar: UIToolbar {
         }
     }
 
+    /// Notify the delegate that content changed so rich text formatting is persisted.
+    /// UIKit does NOT call textViewDidChange when attributedText is set programmatically,
+    /// so we must trigger the save manually after formatting changes.
+    private func notifyContentChanged() {
+        guard let textView = textView else { return }
+        textView.delegate?.textViewDidChange?(textView)
+    }
+
     @objc private func dismissTapped() {
         onDismiss?()
     }
@@ -972,8 +1288,9 @@ private class BodyKeyboardToolbar: UIToolbar {
 struct BodyTextView: UIViewRepresentable {
     @Binding var text: String
     var isFocused: FocusState<Bool>.Binding
+    var richText: String?
     let minHeight: CGFloat
-    let onContentChange: (String) -> Void
+    let onContentChange: (String, String?) -> Void
 
     func makeUIView(context: Context) -> SelfSizingTextView {
         // Use SelfSizingTextView which has proper single-tap handling
@@ -994,12 +1311,23 @@ struct BodyTextView: UIViewRepresentable {
         }
         textView.inputAccessoryView = toolbar
 
+        // Load rich text if available on initial creation
+        if let richText = richText,
+           let attrText = RichTextHelper.deserialize(richText) {
+            textView.attributedText = attrText
+        }
+
         return textView
     }
 
     func updateUIView(_ textView: SelfSizingTextView, context: Context) {
-        if textView.text != text {
-            textView.text = text
+        if !textView.isFirstResponder, textView.text != text {
+            if let richText = richText,
+               let attrText = RichTextHelper.deserialize(richText) {
+                textView.attributedText = attrText
+            } else {
+                textView.text = text
+            }
         }
         textView.invalidateIntrinsicContentSize()
 
@@ -1029,6 +1357,9 @@ struct BodyTextView: UIViewRepresentable {
 
         func textViewDidEndEditing(_ textView: UITextView) {
             parent.isFocused.wrappedValue = false
+            // Save rich text formatting when focus leaves
+            let richText = RichTextHelper.serialize(textView.attributedText)
+            parent.onContentChange(textView.text ?? "", richText)
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
@@ -1040,11 +1371,11 @@ struct BodyTextView: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             let newText = textView.text ?? ""
-            // Only update binding if text actually changed (prevents loop when only formatting changes)
+            let richText = RichTextHelper.serialize(textView.attributedText)
             if parent.text != newText {
                 parent.text = newText
-                parent.onContentChange(newText)
             }
+            parent.onContentChange(newText, richText)
             textView.invalidateIntrinsicContentSize()
         }
     }
@@ -1245,6 +1576,80 @@ struct PageCommitSheet: View {
 
         onCommit(trimmedName)
         dismiss()
+    }
+}
+
+// MARK: - Add Content Bar
+
+struct AddContentBar: View {
+    let onAddText: () -> Void
+    let onAddAudio: () -> Void
+    let onAddImage: () -> Void
+
+    @State private var isExpanded = false
+
+    var body: some View {
+        Group {
+            if isExpanded {
+                HStack(spacing: 24) {
+                    Button {
+                        onAddAudio()
+                        withAnimation(.easeOut(duration: 0.2)) { isExpanded = false }
+                    } label: {
+                        Image(systemName: "waveform")
+                            .font(.title3)
+                            .foregroundStyle(Color(.systemBackground))
+                            .frame(width: 44, height: 44)
+                            .background(Color.gray.opacity(0.5))
+                            .clipShape(Circle())
+                    }
+
+                    Button {
+                        onAddText()
+                        withAnimation(.easeOut(duration: 0.2)) { isExpanded = false }
+                    } label: {
+                        Image(systemName: "character.textbox")
+                            .font(.title3)
+                            .foregroundStyle(Color(.systemBackground))
+                            .frame(width: 44, height: 44)
+                            .background(Color.gray.opacity(0.5))
+                            .clipShape(Circle())
+                    }
+
+                    Button {
+                        onAddImage()
+                        withAnimation(.easeOut(duration: 0.2)) { isExpanded = false }
+                    } label: {
+                        Image(systemName: "photo")
+                            .font(.title3)
+                            .foregroundStyle(Color(.systemBackground))
+                            .frame(width: 44, height: 44)
+                            .background(Color.gray.opacity(0.5))
+                            .clipShape(Circle())
+                    }
+                }
+                .transition(.scale.combined(with: .opacity))
+            } else {
+                Button {
+                    withAnimation(.easeOut(duration: 0.2)) { isExpanded = true }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color(.systemBackground))
+                        .frame(width: 28, height: 28)
+                        .background(Color.gray.opacity(0.5))
+                        .clipShape(Circle())
+                }
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 4)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            if isExpanded {
+                withAnimation(.easeOut(duration: 0.2)) { isExpanded = false }
+            }
+        }
     }
 }
 

@@ -5,6 +5,33 @@ import UIKit
 import AppKit
 #endif
 
+// MARK: - Rich Text Serialization
+
+#if os(iOS)
+/// Helper for serializing/deserializing NSAttributedString to/from base64-encoded RTF
+enum RichTextHelper {
+    /// Serialize NSAttributedString to base64-encoded RTF
+    static func serialize(_ attributedText: NSAttributedString) -> String? {
+        guard attributedText.length > 0 else { return nil }
+        guard let data = try? attributedText.data(
+            from: NSRange(location: 0, length: attributedText.length),
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
+        ) else { return nil }
+        return data.base64EncodedString()
+    }
+
+    /// Deserialize base64-encoded RTF to NSAttributedString
+    static func deserialize(_ base64String: String) -> NSAttributedString? {
+        guard let data = Data(base64Encoded: base64String) else { return nil }
+        return try? NSAttributedString(
+            data: data,
+            options: [.documentType: NSAttributedString.DocumentType.rtf],
+            documentAttributes: nil
+        )
+    }
+}
+#endif
+
 /// The main section view component with Intent Rail, background tinting, and shimmer lock support
 struct SectionView: View {
     let section: Section
@@ -16,7 +43,7 @@ struct SectionView: View {
     let handle: Handle?  // The handle this section is linked to (if portal)
     let displayContent: String  // Content to display (handle content if portal, section content otherwise)
 
-    let onContentChange: (String) -> Void
+    let onContentChange: (String, String?) -> Void
     let onReturn: () -> Void
     let onBackspaceEmpty: () -> Void
     let onIndent: () -> Void
@@ -36,9 +63,15 @@ struct SectionView: View {
     // Commit callback
     let onCommit: () -> Void  // Commit this node
 
+    // Image node callback
+    let onImageTap: () -> Void  // Open image picker for this section
+    let mediaRepository: MediaRepository?  // For loading image data
+
     @State private var content: String
     @State private var isEditing = false
     @State private var isProcessingLock = false
+    @State private var imageDominantColor: Color?
+    @State private var imageNodeBackground: UIImage?
     @FocusState private var textFieldFocused: Bool
 
     @StateObject private var biometricManager = BiometricManager.shared
@@ -50,7 +83,7 @@ struct SectionView: View {
         hasChildren: Bool = false,
         handle: Handle? = nil,
         displayContent: String? = nil,
-        onContentChange: @escaping (String) -> Void,
+        onContentChange: @escaping (String, String?) -> Void,
         onReturn: @escaping () -> Void,
         onBackspaceEmpty: @escaping () -> Void,
         onIndent: @escaping () -> Void,
@@ -64,7 +97,9 @@ struct SectionView: View {
         onApplyTemplate: @escaping () -> Void = {},
         onCreateLoop: @escaping () -> Void = {},
         onUnlinkHandle: @escaping () -> Void = {},
-        onCommit: @escaping () -> Void = {}
+        onCommit: @escaping () -> Void = {},
+        onImageTap: @escaping () -> Void = {},
+        mediaRepository: MediaRepository? = nil
     ) {
         self.section = section
         self.isFocused = isFocused
@@ -87,6 +122,8 @@ struct SectionView: View {
         self.onCreateLoop = onCreateLoop
         self.onUnlinkHandle = onUnlinkHandle
         self.onCommit = onCommit
+        self.onImageTap = onImageTap
+        self.mediaRepository = mediaRepository
 
         // Initialize content, ensuring template prefix is included for template sections
         var initialContent = displayContent ?? handle?.content ?? section.content
@@ -102,7 +139,11 @@ struct SectionView: View {
     var body: some View {
         // Render differently based on section type
         Group {
-            if section.sectionType == .line {
+            if section.contentType == .audio {
+                audioNodeFoldView
+            } else if section.contentType == .image {
+                imageNodeFoldView
+            } else if section.sectionType == .line {
                 lineView
             } else {
                 foldView
@@ -110,6 +151,9 @@ struct SectionView: View {
         }
         .padding(.leading, CGFloat(section.indentLevel) * 24)
         .onChange(of: isFocused) { _, newValue in
+            // Image/audio sections have no text field — skip focus handling
+            guard section.contentType != .image && section.contentType != .audio else { return }
+
             if newValue && (!section.isLocked || isAuthenticated) {
                 // Small delay to ensure view is ready
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -123,7 +167,8 @@ struct SectionView: View {
         }
         .onAppear {
             // Focus immediately if this section is already marked as focused
-            if isFocused && (!section.isLocked || isAuthenticated) {
+            // Image/audio sections have no text field — skip focus handling
+            if isFocused && (!section.isLocked || isAuthenticated) && section.contentType != .image && section.contentType != .audio {
                 // Use a slight delay to ensure the view hierarchy is ready
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                     textFieldFocused = true
@@ -138,7 +183,7 @@ struct SectionView: View {
                !templatePrefix.isEmpty,
                !section.content.contains(templatePrefix),
                content.contains(templatePrefix) {
-                onContentChange(content)
+                onContentChange(content, nil)
             }
         }
         .onChange(of: displayContent) { _, newValue in
@@ -243,6 +288,119 @@ struct SectionView: View {
             .animation(nil, value: content) // Prevent layout changes from affecting siblings
     }
 
+    // MARK: - Audio Node View (fold-styled container for audio)
+
+    #if os(iOS)
+    @ViewBuilder
+    private var audioNodeFoldView: some View {
+        // Content format: "hash|duration" — extract hash and duration
+        let parts = section.content.split(separator: "|", maxSplits: 1)
+        let audioHash = parts.count > 0 ? String(parts[0]).trimmingCharacters(in: .whitespaces) : ""
+        let audioDuration: TimeInterval = parts.count > 1 ? (Double(parts[1]) ?? 0) : 0
+
+        Group {
+            if audioHash.isEmpty {
+                // Empty state — tap to record
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.orange.opacity(0.15))
+                    .frame(height: 48)
+                    .overlay {
+                        HStack(spacing: 8) {
+                            Image(systemName: "waveform")
+                                .font(.title3)
+                                .foregroundStyle(.orange)
+                            Text("Tap to record")
+                                .font(.subheadline)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { onImageTap() }
+            } else if let mediaRepo = mediaRepository {
+                // Filled state — playback node
+                AudioNodeView(
+                    audioHash: audioHash,
+                    duration: audioDuration,
+                    mediaRepository: mediaRepo
+                )
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.orange.opacity(0.15))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())  // Constrain interaction area to prevent touch bleed into adjacent views
+        .overlay(focusBorder)
+        .contextMenu { contextMenuItems }
+    }
+    #else
+    private var audioNodeFoldView: some View {
+        Text("Audio nodes are only supported on iOS")
+            .foregroundStyle(.secondary)
+    }
+    #endif
+
+    // MARK: - Image Node View (fold-styled container for images)
+
+    #if os(iOS)
+    @ViewBuilder
+    private var imageNodeFoldView: some View {
+        // Content format: "hash|assetId,hash|assetId,..." — extract just the hash part
+        let hashes = section.content
+            .split(separator: ",")
+            .map { entry -> String in
+                let parts = entry.split(separator: "|", maxSplits: 1)
+                return String(parts[0]).trimmingCharacters(in: .whitespaces)
+            }
+            .filter { !$0.isEmpty }
+
+        if let mediaRepo = mediaRepository {
+            ImageNodeView(
+                imageHashes: hashes,
+                mediaRepository: mediaRepo,
+                onTap: onImageTap,
+                onDominantColorChanged: { color in
+                    imageDominantColor = color
+                },
+                onCurrentImageChanged: { image in
+                    imageNodeBackground = image
+                }
+            )
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background {
+                // Blurred copy of the current photo fills the entire node container
+                GeometryReader { geo in
+                    if let bgImage = imageNodeBackground {
+                        Image(uiImage: bgImage)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: geo.size.width, height: geo.size.height)
+                            .blur(radius: 16)
+                            .saturation(1.2)
+                            .clipped()
+                    } else {
+                        (imageDominantColor ?? Color(.systemGray5))
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())  // Constrain interaction area to prevent touch bleed into adjacent views
+            .overlay(focusBorder)
+            .contextMenu { contextMenuItems }
+        }
+    }
+
+    #else
+    private var imageNodeFoldView: some View {
+        Text("Image nodes are only supported on iOS")
+            .foregroundStyle(.secondary)
+    }
+    #endif
+
     // MARK: - Line View (plain text without node styling)
 
     private var lineView: some View {
@@ -280,6 +438,7 @@ struct SectionView: View {
                     text: $content,
                     templatePrefix: templateText,
                     isFocused: $textFieldFocused,
+                    richText: section.richContent,
                     onContentChange: onContentChange,
                     onIndent: onIndent,
                     onOutdent: onOutdent,
@@ -292,6 +451,7 @@ struct SectionView: View {
                 EditableTextView(
                     text: $content,
                     isFocused: $textFieldFocused,
+                    richText: section.richContent,
                     onContentChange: onContentChange,
                     onFocusChange: { focused in
                         if focused {
@@ -512,6 +672,7 @@ struct SectionView: View {
                     text: $content,
                     templatePrefix: templateText,
                     isFocused: $textFieldFocused,
+                    richText: section.richContent,
                     onContentChange: onContentChange,
                     onIndent: onIndent,
                     onOutdent: onOutdent,
@@ -525,6 +686,7 @@ struct SectionView: View {
                 EditableTextView(
                     text: $content,
                     isFocused: $textFieldFocused,
+                    richText: section.richContent,
                     onContentChange: onContentChange,
                     onFocusChange: { focused in
                         if focused {
@@ -1107,8 +1269,7 @@ class KeyboardAccessoryToolbar: UIToolbar {
     }
 
     // MARK: - Formatting Actions
-    // Note: Rich text formatting is not currently supported as the data model uses plain String.
-    // These buttons toggle typing attributes for visual feedback but formatting is not persisted.
+    // Rich text formatting is persisted via base64-encoded RTF in the richContent/bodyRichText fields.
 
     @objc private func titleTapped() {
         guard let textView = textView else { return }
@@ -1130,6 +1291,7 @@ class KeyboardAccessoryToolbar: UIToolbar {
             }
             textView.attributedText = mutableAttrString
             textView.selectedRange = range
+            notifyContentChanged()
         } else {
             // Toggle for future typing
             var attrs = textView.typingAttributes
@@ -1199,6 +1361,7 @@ class KeyboardAccessoryToolbar: UIToolbar {
 
             textView.attributedText = mutableAttrString
             textView.selectedRange = range
+            notifyContentChanged()
         } else {
             // Toggle for future typing
             isUnderlineActive.toggle()
@@ -1238,6 +1401,7 @@ class KeyboardAccessoryToolbar: UIToolbar {
 
         textView.attributedText = mutableAttrString
         textView.selectedRange = range
+        notifyContentChanged()
     }
 
     private func applyFontTraitToTyping(_ trait: UIFontDescriptor.SymbolicTraits, isActive: Bool, in textView: UITextView) {
@@ -1256,6 +1420,14 @@ class KeyboardAccessoryToolbar: UIToolbar {
             attrs[.font] = newFont
             textView.typingAttributes = attrs
         }
+    }
+
+    /// Notify the delegate that content changed so rich text formatting is persisted.
+    /// UIKit does NOT call textViewDidChange when attributedText is set programmatically,
+    /// so we must trigger the save manually after formatting changes.
+    private func notifyContentChanged() {
+        guard let textView = textView else { return }
+        textView.delegate?.textViewDidChange?(textView)
     }
 
     // MARK: - Other Actions
@@ -1293,7 +1465,8 @@ extension IntentType {
 struct EditableTextView: UIViewRepresentable {
     @Binding var text: String
     var isFocused: FocusState<Bool>.Binding
-    let onContentChange: (String) -> Void
+    var richText: String?
+    let onContentChange: (String, String?) -> Void
     let onFocusChange: (Bool) -> Void
     var onIndent: (() -> Void)?
     var onOutdent: (() -> Void)?
@@ -1324,7 +1497,14 @@ struct EditableTextView: UIViewRepresentable {
         let bodyFont = UIFont.preferredFont(forTextStyle: .body)
         textView.font = bodyFont
         textView.textColor = UIColor.label
-        textView.text = text
+
+        // Load rich text if available, otherwise plain text
+        if let richText = richText,
+           let attrText = RichTextHelper.deserialize(richText) {
+            textView.attributedText = attrText
+        } else {
+            textView.text = text
+        }
 
         // Add keyboard accessory toolbar with all buttons
         let toolbar = KeyboardAccessoryToolbar(
@@ -1350,7 +1530,12 @@ struct EditableTextView: UIViewRepresentable {
         // Never push text back into the text view while the user is actively editing —
         // this prevents cursor jumping and formatting being stripped.
         if !textView.isFirstResponder, textView.text != text {
-            textView.text = text
+            if let richText = richText,
+               let attrText = RichTextHelper.deserialize(richText) {
+                textView.attributedText = attrText
+            } else {
+                textView.text = text
+            }
             textView.invalidateIntrinsicContentSize()
         }
 
@@ -1384,15 +1569,18 @@ struct EditableTextView: UIViewRepresentable {
         func textViewDidEndEditing(_ textView: UITextView) {
             parent.isFocused.wrappedValue = false
             parent.onFocusChange(false)
+            // Save rich text formatting when focus leaves
+            let richText = RichTextHelper.serialize(textView.attributedText)
+            parent.onContentChange(textView.text ?? "", richText)
         }
 
         func textViewDidChange(_ textView: UITextView) {
             let newText = textView.text ?? ""
-            // Only update binding if text actually changed (prevents loop when only formatting changes)
+            let richText = RichTextHelper.serialize(textView.attributedText)
             if parent.text != newText {
                 parent.text = newText
-                parent.onContentChange(newText)
             }
+            parent.onContentChange(newText, richText)
             textView.invalidateIntrinsicContentSize()
         }
 
@@ -1414,7 +1602,8 @@ struct TemplateProtectedTextView: UIViewRepresentable {
     @Binding var text: String
     let templatePrefix: String
     var isFocused: FocusState<Bool>.Binding
-    let onContentChange: (String) -> Void
+    var richText: String?
+    let onContentChange: (String, String?) -> Void
     var onIndent: (() -> Void)?
     var onOutdent: (() -> Void)?
     var currentStatus: IntentType?
@@ -1462,28 +1651,34 @@ struct TemplateProtectedTextView: UIViewRepresentable {
         }
         textView.inputAccessoryView = toolbar
 
-        // Check if all template segments are present (not the whole template as one block)
-        var initialText = text
         let templateSegments = templatePrefix.components(separatedBy: "\n").filter { !$0.isEmpty }
-        let allSegmentsPresent = templateSegments.allSatisfy { initialText.contains($0) }
 
-        if !allSegmentsPresent {
-            // Only prepend if segments are actually missing
-            initialText = templatePrefix + initialText
-            DispatchQueue.main.async {
-                self.text = initialText
-                self.onContentChange(initialText)
+        // Load from saved RTF if available (preserves template bolding + user formatting)
+        if let richText = richText,
+           let attrText = RichTextHelper.deserialize(richText) {
+            textView.attributedText = attrText
+        } else {
+            // No saved RTF — apply template formatting
+            var initialText = text
+            let allSegmentsPresent = templateSegments.allSatisfy { initialText.contains($0) }
+
+            if !allSegmentsPresent {
+                initialText = templatePrefix + initialText
+                DispatchQueue.main.async {
+                    self.text = initialText
+                    self.onContentChange(initialText, nil)
+                }
             }
+
+            updateAttributedText(textView, with: initialText)
         }
 
-        // Set initial attributed text
-        updateAttributedText(textView, with: initialText)
-
         // Position cursor at end of first template segment (or at end if no segments)
+        let currentText = textView.text ?? ""
         DispatchQueue.main.async {
             if let firstSegment = templateSegments.first,
-               let range = initialText.range(of: firstSegment) {
-                let nsRange = NSRange(range, in: initialText)
+               let range = currentText.range(of: firstSegment) {
+                let nsRange = NSRange(range, in: currentText)
                 let cursorPosition = nsRange.location + nsRange.length
                 textView.selectedRange = NSRange(location: cursorPosition, length: 0)
             }
@@ -1498,7 +1693,12 @@ struct TemplateProtectedTextView: UIViewRepresentable {
         if !textView.isFirstResponder {
             let currentPlainText = textView.text ?? ""
             if currentPlainText != text {
-                updateAttributedText(textView, with: text)
+                if let richText = richText,
+                   let attrText = RichTextHelper.deserialize(richText) {
+                    textView.attributedText = attrText
+                } else {
+                    updateAttributedText(textView, with: text)
+                }
                 textView.invalidateIntrinsicContentSize()
             }
         }
@@ -1562,6 +1762,9 @@ struct TemplateProtectedTextView: UIViewRepresentable {
 
         func textViewDidEndEditing(_ textView: UITextView) {
             parent.isFocused.wrappedValue = false
+            // Save rich text formatting when focus leaves
+            let richText = RichTextHelper.serialize(textView.attributedText)
+            parent.onContentChange(textView.text ?? "", richText)
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
@@ -1619,12 +1822,12 @@ struct TemplateProtectedTextView: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             let newText = textView.text ?? ""
+            let richText = RichTextHelper.serialize(textView.attributedText)
 
-            // Only update binding if text actually changed (prevents loop when only formatting changes)
             if parent.text != newText {
                 parent.text = newText
-                parent.onContentChange(newText)
             }
+            parent.onContentChange(newText, richText)
             textView.invalidateIntrinsicContentSize()
         }
     }
@@ -1645,7 +1848,7 @@ struct TemplateProtectedTextView: UIViewRepresentable {
                     intent: .idea
                 ),
                 isFocused: false,
-                onContentChange: { _ in },
+                onContentChange: { _, _ in },
                 onReturn: {},
                 onBackspaceEmpty: {},
                 onIndent: {},
@@ -1662,7 +1865,7 @@ struct TemplateProtectedTextView: UIViewRepresentable {
                     intent: .question
                 ),
                 isFocused: true,
-                onContentChange: { _ in },
+                onContentChange: { _, _ in },
                 onReturn: {},
                 onBackspaceEmpty: {},
                 onIndent: {},
@@ -1680,7 +1883,7 @@ struct TemplateProtectedTextView: UIViewRepresentable {
                     intent: .task
                 ),
                 isFocused: false,
-                onContentChange: { _ in },
+                onContentChange: { _, _ in },
                 onReturn: {},
                 onBackspaceEmpty: {},
                 onIndent: {},
@@ -1699,7 +1902,7 @@ struct TemplateProtectedTextView: UIViewRepresentable {
                     intent: .evidence
                 ),
                 isFocused: false,
-                onContentChange: { _ in },
+                onContentChange: { _, _ in },
                 onReturn: {},
                 onBackspaceEmpty: {},
                 onIndent: {},
@@ -1718,7 +1921,7 @@ struct TemplateProtectedTextView: UIViewRepresentable {
                 ),
                 isFocused: false,
                 hasChildren: true,
-                onContentChange: { _ in },
+                onContentChange: { _, _ in },
                 onReturn: {},
                 onBackspaceEmpty: {},
                 onIndent: {},
@@ -1737,7 +1940,7 @@ struct TemplateProtectedTextView: UIViewRepresentable {
                 ),
                 isFocused: false,
                 isAuthenticated: false,
-                onContentChange: { _ in },
+                onContentChange: { _, _ in },
                 onReturn: {},
                 onBackspaceEmpty: {},
                 onIndent: {},
@@ -1757,7 +1960,7 @@ struct TemplateProtectedTextView: UIViewRepresentable {
                 ),
                 isFocused: false,
                 isAuthenticated: true,
-                onContentChange: { _ in },
+                onContentChange: { _, _ in },
                 onReturn: {},
                 onBackspaceEmpty: {},
                 onIndent: {},

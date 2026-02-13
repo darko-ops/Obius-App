@@ -66,6 +66,10 @@
 		B8A1D0010000000000000057 /* EchoRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000057 /* EchoRepository.swift */; };
 		B8A1D0010000000000000058 /* EchoManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000058 /* EchoManager.swift */; };
 		B8A1D0010000000000000059 /* EchoConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000059 /* EchoConfigSheet.swift */; };
+		B8A1D0010000000000000060 /* ImageNodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000060 /* ImageNodeView.swift */; };
+		B8A1D0010000000000000061 /* ImagePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000061 /* ImagePickerView.swift */; };
+		B8A1D0010000000000000062 /* AudioNodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000062 /* AudioNodeView.swift */; };
+		B8A1D0010000000000000063 /* AudioRecorderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000063 /* AudioRecorderView.swift */; };
 		B8A1D0010000000000000090 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000090 /* Assets.xcassets */; };
 		B8A1D0010000000000000091 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = B8A1E0010000000000000091 /* GRDB */; };
 		B8A1D0010000000000000092 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = B8A1E0010000000000000092 /* Supabase */; };
@@ -132,6 +136,10 @@
 		B8A1F0010000000000000057 /* EchoRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoRepository.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000058 /* EchoManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoManager.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000059 /* EchoConfigSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoConfigSheet.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000060 /* ImageNodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageNodeView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000061 /* ImagePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePickerView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000062 /* AudioNodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioNodeView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000063 /* AudioRecorderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorderView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000088 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B8A1F0010000000000000090 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -326,11 +334,15 @@
 		B8A1G0010000000000000016 /* Components */ = {
 			isa = PBXGroup;
 			children = (
+				B8A1F0010000000000000062 /* AudioNodeView.swift */,
+				B8A1F0010000000000000063 /* AudioRecorderView.swift */,
 				B8A1F0010000000000000035 /* DraggableSectionList.swift */,
 				B8A1F0010000000000000059 /* EchoConfigSheet.swift */,
 				B8A1F0010000000000000036 /* HandleAutocomplete.swift */,
 				B8A1F0010000000000000037 /* HandleBadge.swift */,
 				B8A1F0010000000000000038 /* HandleNameSheet.swift */,
+				B8A1F0010000000000000060 /* ImageNodeView.swift */,
+				B8A1F0010000000000000061 /* ImagePickerView.swift */,
 				B8A1F0010000000000000039 /* IntentTypePicker.swift */,
 				B8A1F0010000000000000040 /* LoadingStates.swift */,
 				B8A1F0010000000000000041 /* MoebiusNavigation.swift */,
@@ -528,10 +540,14 @@
 				B8A1D0010000000000000032 /* NoteEditorViewModel.swift in Sources */,
 				B8A1D0010000000000000033 /* NotesListViewModel.swift in Sources */,
 				B8A1D0010000000000000034 /* AuthView.swift in Sources */,
+				B8A1D0010000000000000062 /* AudioNodeView.swift in Sources */,
+				B8A1D0010000000000000063 /* AudioRecorderView.swift in Sources */,
 				B8A1D0010000000000000035 /* DraggableSectionList.swift in Sources */,
 				B8A1D0010000000000000036 /* HandleAutocomplete.swift in Sources */,
 				B8A1D0010000000000000037 /* HandleBadge.swift in Sources */,
 				B8A1D0010000000000000038 /* HandleNameSheet.swift in Sources */,
+				B8A1D0010000000000000060 /* ImageNodeView.swift in Sources */,
+				B8A1D0010000000000000061 /* ImagePickerView.swift in Sources */,
 				B8A1D0010000000000000039 /* IntentTypePicker.swift in Sources */,
 				B8A1D0010000000000000040 /* LoadingStates.swift in Sources */,
 				B8A1D0010000000000000041 /* MoebiusNavigation.swift in Sources */,

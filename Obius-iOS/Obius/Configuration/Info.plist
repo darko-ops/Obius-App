@@ -97,6 +97,10 @@
     <!-- Privacy Usage Descriptions -->
     <key>NSFaceIDUsageDescription</key>
     <string>Use Face ID to secure your notes</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Record audio notes with your microphone</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Access your photo library to add images to notes</string>
 
     <!-- Status Bar -->
     <key>UIStatusBarStyle</key>

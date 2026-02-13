@@ -5,7 +5,7 @@ import Combine
 final class DatabaseManager {
     private let migrator: DatabaseMigrator
 
-    static let schemaVersion = 17
+    static let schemaVersion = 19
 
     // Expose dbQueue for repositories that need direct observation
     var dbQueue: DatabaseQueue { _dbQueue }
@@ -452,6 +452,32 @@ final class DatabaseManager {
 
             try db.execute(sql: """
                 UPDATE syncMetadata SET schemaVersion = 17
+            """)
+        }
+
+        // v18: Add rich text columns for persistent formatting
+        migrator.registerMigration("v18_rich_text") { db in
+            try db.alter(table: "notes") { t in
+                t.add(column: "bodyRichText", .text)
+            }
+
+            try db.alter(table: "sections") { t in
+                t.add(column: "richContent", .text)
+            }
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 18
+            """)
+        }
+
+        // Migration v19: Add interstitialRichContent for rich text in interstitial lines
+        migrator.registerMigration("v19_interstitial_rich_text") { db in
+            try db.alter(table: "notes") { t in
+                t.add(column: "interstitialRichContent", .text).notNull().defaults(to: "{}")
+            }
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 19
             """)
         }
 

@@ -164,6 +164,8 @@ enum ContentType: String, Codable, DatabaseValueConvertible {
     case checklist
     case code
     case quote
+    case image
+    case audio
 }
 
 // MARK: - SyncStatus

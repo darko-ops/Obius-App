@@ -1,0 +1,669 @@
+import SwiftUI
+#if os(iOS)
+import UIKit
+
+/// Renders an image node's content: empty state, single image, or swipeable images.
+/// Feathered edges blend into whatever background the parent provides.
+struct ImageNodeView: View {
+    let imageHashes: [String]
+    let mediaRepository: MediaRepository
+    let onTap: () -> Void
+    var onDominantColorChanged: ((Color) -> Void)? = nil
+    var onPageChanged: ((Int) -> Void)? = nil
+    var onCurrentImageChanged: ((UIImage?) -> Void)? = nil
+
+    @State private var loadedImages: [String: UIImage] = [:]
+    @State private var currentPage = 0
+    @State private var showDots = false
+    @State private var dotsHideTask: Task<Void, Never>?
+    @State private var dominantColor: Color?
+
+    var body: some View {
+        Group {
+            if imageHashes.isEmpty {
+                emptyState
+            } else if imageHashes.count == 1 {
+                singleImageView
+            } else {
+                multiImageView
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())  // Constrain touch area to the clipped frame
+        .onAppear { loadImages() }
+        .onChange(of: imageHashes) { _, _ in loadImages() }
+    }
+
+    // MARK: - Empty State
+
+    private var emptyState: some View {
+        RoundedRectangle(cornerRadius: 8)
+            .fill(Color(.systemGray5))
+            .frame(height: 160)
+            .overlay {
+                Image(systemName: "photo")
+                    .font(.system(size: 36))
+                    .foregroundStyle(.gray)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { onTap() }
+    }
+
+    // MARK: - Single Image
+
+    private var singleImageView: some View {
+        Group {
+            if let hash = imageHashes.first, let image = loadedImages[hash] {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 240)
+                    .clipped()
+                    .mask(edgeFeatherGradient)
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 240)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
+    }
+
+    // MARK: - Multi Image (Swipeable)
+
+    private var multiImageView: some View {
+        TabView(selection: $currentPage) {
+            ForEach(Array(imageHashes.enumerated()), id: \.element) { index, hash in
+                Group {
+                    if let image = loadedImages[hash] {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(maxWidth: .infinity)
+                            .clipped()
+                    } else {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { onTap() }
+                .tag(index)
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .frame(height: 240)
+        .mask(edgeFeatherGradient)
+        .overlay(alignment: .bottom) {
+            // Custom page dots — only visible during swipe
+            if imageHashes.count > 1 && showDots {
+                pageDotsView
+                    .transition(.opacity)
+            }
+        }
+        .onChange(of: currentPage) { _, newPage in
+            flashDots()
+            onPageChanged?(newPage)
+            notifyCurrentImage()
+        }
+    }
+
+    /// Custom page indicator dots
+    private var pageDotsView: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<imageHashes.count, id: \.self) { index in
+                Circle()
+                    .fill(index == currentPage ? Color.white : Color.white.opacity(0.4))
+                    .frame(width: 7, height: 7)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(Color.black.opacity(0.35)))
+        .padding(.bottom, 8)
+    }
+
+    /// Show dots briefly then fade them out
+    private func flashDots() {
+        dotsHideTask?.cancel()
+        withAnimation(.easeIn(duration: 0.15)) { showDots = true }
+        dotsHideTask = Task {
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.4)) { showDots = false }
+        }
+    }
+
+    // MARK: - Edge Feather Mask
+
+    /// Thin gradient mask that softly feathers image edges into the dominant color background.
+    private var edgeFeatherGradient: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .clear, location: 0),
+                .init(color: .white, location: 0.02),
+                .init(color: .white, location: 0.98),
+                .init(color: .clear, location: 1)
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+        .mask {
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .white, location: 0.03),
+                    .init(color: .white, location: 0.97),
+                    .init(color: .clear, location: 1)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+    }
+
+    // MARK: - Image Loading
+
+    private func loadImages() {
+        var didLoadNew = false
+        for hash in imageHashes where loadedImages[hash] == nil {
+            if let data = try? mediaRepository.getMediaData(hash: hash),
+               let image = UIImage(data: data) {
+                loadedImages[hash] = image
+                didLoadNew = true
+            }
+        }
+        if didLoadNew {
+            computeDominantColor()
+            notifyCurrentImage()
+        }
+    }
+
+    private func computeDominantColor() {
+        let colors: [UIColor] = imageHashes.compactMap { hash in
+            loadedImages[hash]?.averageColor
+        }
+        guard !colors.isEmpty else { return }
+
+        // Average all image colors
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
+        for color in colors {
+            var cr: CGFloat = 0, cg: CGFloat = 0, cb: CGFloat = 0, ca: CGFloat = 0
+            color.getRed(&cr, green: &cg, blue: &cb, alpha: &ca)
+            r += cr; g += cg; b += cb
+        }
+        let count = CGFloat(colors.count)
+        let avgColor = Color(UIColor(red: r / count, green: g / count, blue: b / count, alpha: 1.0))
+        dominantColor = avgColor
+        onDominantColorChanged?(avgColor)
+    }
+
+    private func notifyCurrentImage() {
+        let hash = imageHashes.indices.contains(currentPage) ? imageHashes[currentPage] : imageHashes.first
+        if let hash, let image = loadedImages[hash] {
+            onCurrentImageChanged?(image)
+        }
+    }
+}
+
+// MARK: - Fullscreen Image Viewer
+
+/// Identifiable wrapper for presenting the fullscreen viewer via `.fullScreenCover(item:)`.
+struct FullscreenImageItem: Identifiable {
+    let id = UUID()
+    let sectionId: String
+}
+
+/// Fullscreen swipeable image viewer with close and edit buttons.
+struct FullscreenImageViewer: View {
+    let imageEntries: [(hash: String, assetId: String)]
+    let mediaRepository: MediaRepository
+    let onEditSave: (_ keptEntries: [(hash: String, assetId: String)], _ newPicks: [(UIImage, String?)]) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var currentPage: Int
+    @State private var loadedImages: [String: UIImage] = [:]
+    @State private var showingEditSheet = false
+    @State private var dragOffset: CGFloat = 0
+
+    /// How far through the dismiss gesture (0 = idle, 1 = fully dragged)
+    private var dragProgress: Double {
+        Double(min(abs(dragOffset) / 300.0, 1.0))
+    }
+
+    private var imageHashes: [String] { imageEntries.map(\.hash) }
+
+    init(imageEntries: [(hash: String, assetId: String)], mediaRepository: MediaRepository, startPage: Int = 0, onEditSave: @escaping (_ keptEntries: [(hash: String, assetId: String)], _ newPicks: [(UIImage, String?)]) -> Void) {
+        self.imageEntries = imageEntries
+        self.mediaRepository = mediaRepository
+        self.onEditSave = onEditSave
+        _currentPage = State(initialValue: startPage)
+    }
+
+    var body: some View {
+        ZStack {
+            // Background fades as user drags
+            Color.black.opacity(1.0 - dragProgress * 0.5)
+                .ignoresSafeArea()
+
+            // Image content moves with drag and scales down slightly
+            Group {
+                if imageHashes.isEmpty {
+                    Text("No images")
+                        .foregroundStyle(.white.opacity(0.5))
+                } else if imageHashes.count == 1 {
+                    singleImage
+                } else {
+                    swipeableImages
+                }
+            }
+            .offset(y: dragOffset)
+            .scaleEffect(1.0 - dragProgress * 0.1)
+        }
+        // Controls fade out during drag
+        .overlay(alignment: .topLeading) {
+            if imageHashes.count > 1 {
+                Text("\(currentPage + 1) / \(imageHashes.count)")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(Color.white.opacity(0.15)))
+                    .padding()
+                    .opacity(1.0 - dragProgress * 2) // Fade quickly
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(10)
+                    .background(Circle().fill(Color.white.opacity(0.15)))
+            }
+            .padding()
+            .opacity(1.0 - dragProgress * 2)
+        }
+        .overlay(alignment: .bottomTrailing) {
+            Button {
+                showingEditSheet = true
+            } label: {
+                Text("Edit")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(Color.white.opacity(0.15)))
+            }
+            .padding()
+            .opacity(1.0 - dragProgress * 2)
+        }
+        // Drag-to-dismiss gesture
+        .simultaneousGesture(
+            DragGesture()
+                .onChanged { value in
+                    // Only track primarily vertical drags so horizontal
+                    // page swipes still work for multi-image views
+                    if abs(value.translation.height) > abs(value.translation.width) {
+                        dragOffset = value.translation.height
+                    }
+                }
+                .onEnded { value in
+                    if abs(value.translation.height) > 150 {
+                        dismiss()
+                    } else {
+                        withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.8)) {
+                            dragOffset = 0
+                        }
+                    }
+                }
+        )
+        .sheet(isPresented: $showingEditSheet) {
+            ImageEditSheet(
+                entries: imageEntries,
+                mediaRepository: mediaRepository,
+                onSave: { keptEntries, newPicks in
+                    onEditSave(keptEntries, newPicks)
+                    dismiss()
+                }
+            )
+        }
+        .onAppear { loadImages() }
+        .statusBarHidden()
+    }
+
+    private var singleImage: some View {
+        Group {
+            if let hash = imageHashes.first, let image = loadedImages[hash] {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ProgressView().tint(.white)
+            }
+        }
+    }
+
+    private var swipeableImages: some View {
+        TabView(selection: $currentPage) {
+            ForEach(Array(imageHashes.enumerated()), id: \.element) { index, hash in
+                Group {
+                    if let image = loadedImages[hash] {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ProgressView().tint(.white)
+                    }
+                }
+                .tag(index)
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .automatic))
+    }
+
+    private func loadImages() {
+        for hash in imageHashes where loadedImages[hash] == nil {
+            if let data = try? mediaRepository.getMediaData(hash: hash),
+               let image = UIImage(data: data) {
+                loadedImages[hash] = image
+            }
+        }
+    }
+}
+
+// MARK: - Image Edit Sheet
+
+/// Grid sheet for managing node images — toggle selection to remove, add new from library.
+/// Uses ordered selection so badges show position numbers instead of checkmarks.
+struct ImageEditSheet: View {
+    let entries: [(hash: String, assetId: String)]
+    let mediaRepository: MediaRepository
+    let onSave: (_ keptEntries: [(hash: String, assetId: String)], _ newPicks: [(UIImage, String?)]) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    /// Tracks selection order. Each item is either an existing entry (by hash) or a new pick (by UUID).
+    @State private var selectionOrder: [SelectionItem]
+    @State private var loadedImages: [String: UIImage] = [:]
+    @State private var newPicks: [NewPick] = []
+    @State private var showingPicker = false
+    @State private var pickerID = UUID()
+
+    enum SelectionItem: Equatable, Hashable {
+        case existing(hash: String)
+        case newPick(id: UUID)
+    }
+
+    struct NewPick: Identifiable {
+        let id = UUID()
+        let image: UIImage
+        let assetId: String?
+    }
+
+    init(entries: [(hash: String, assetId: String)], mediaRepository: MediaRepository, onSave: @escaping (_ keptEntries: [(hash: String, assetId: String)], _ newPicks: [(UIImage, String?)]) -> Void) {
+        self.entries = entries
+        self.mediaRepository = mediaRepository
+        self.onSave = onSave
+        // Initialize with all existing entries selected in their current order
+        _selectionOrder = State(initialValue: entries.map { .existing(hash: $0.hash) })
+    }
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 2),
+        GridItem(.flexible(), spacing: 2),
+        GridItem(.flexible(), spacing: 2)
+    ]
+
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 2) {
+                    // Existing images
+                    ForEach(entries, id: \.hash) { entry in
+                        existingCell(entry: entry)
+                    }
+
+                    // Newly picked images
+                    ForEach(newPicks) { pick in
+                        newPickCell(pick: pick)
+                    }
+
+                    // Add from library button
+                    addCell
+                }
+                .padding(2)
+            }
+            .navigationTitle("Edit Photos")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { save() }
+                        .fontWeight(.semibold)
+                }
+            }
+        }
+        .sheet(isPresented: $showingPicker) {
+            ImagePickerView(
+                preselectedAssetIdentifiers: allPreselectedAssetIds(),
+                onImagesPicked: { results in
+                    reconcilePickerResults(results)
+                }
+            )
+            .id(pickerID)
+        }
+        .onAppear { loadImages() }
+    }
+
+    // MARK: - Cells
+
+    @ViewBuilder
+    private func existingCell(entry: (hash: String, assetId: String)) -> some View {
+        let item = SelectionItem.existing(hash: entry.hash)
+        let orderIndex = selectionOrder.firstIndex(of: item)
+        let isSelected = orderIndex != nil
+
+        if let image = loadedImages[entry.hash] {
+            Color(.systemGray6)
+                .aspectRatio(1, contentMode: .fit)
+                .overlay {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .overlay(alignment: .topTrailing) {
+                    selectionBadge(isSelected: isSelected, orderNumber: orderIndex.map { $0 + 1 })
+                }
+                .opacity(isSelected ? 1.0 : 0.4)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        if isSelected {
+                            selectionOrder.removeAll { $0 == item }
+                        } else {
+                            selectionOrder.append(item)
+                        }
+                    }
+                }
+        } else {
+            Color(.systemGray5)
+                .aspectRatio(1, contentMode: .fit)
+        }
+    }
+
+    @ViewBuilder
+    private func newPickCell(pick: NewPick) -> some View {
+        let item = SelectionItem.newPick(id: pick.id)
+        let orderIndex = selectionOrder.firstIndex(of: item)
+        let isSelected = orderIndex != nil
+
+        Color(.systemGray6)
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                Image(uiImage: pick.image)
+                    .resizable()
+                    .scaledToFit()
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .overlay(alignment: .topTrailing) {
+                selectionBadge(isSelected: isSelected, orderNumber: orderIndex.map { $0 + 1 })
+            }
+            .opacity(isSelected ? 1.0 : 0.4)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    if isSelected {
+                        selectionOrder.removeAll { $0 == item }
+                    } else {
+                        selectionOrder.append(item)
+                    }
+                }
+            }
+    }
+
+    private func selectionBadge(isSelected: Bool, orderNumber: Int?) -> some View {
+        ZStack {
+            Circle()
+                .fill(isSelected ? Color.blue : Color.black.opacity(0.3))
+                .frame(width: 26, height: 26)
+            Circle()
+                .stroke(Color.white, lineWidth: 2)
+                .frame(width: 26, height: 26)
+            if isSelected, let number = orderNumber {
+                Text("\(number)")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+        }
+        .padding(6)
+    }
+
+    private var addCell: some View {
+        Button {
+            pickerID = UUID()
+            showingPicker = true
+        } label: {
+            Color(.systemGray5)
+                .aspectRatio(1, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .overlay {
+                    VStack(spacing: 4) {
+                        Image(systemName: "plus")
+                            .font(.title3)
+                        Text("Add")
+                            .font(.caption)
+                    }
+                    .foregroundStyle(.gray)
+                }
+        }
+    }
+
+    // MARK: - Helpers
+
+    /// All asset IDs that should appear pre-checked in the photo picker, in selection order
+    private func allPreselectedAssetIds() -> [String] {
+        var ids: [String] = []
+        for item in selectionOrder {
+            switch item {
+            case .existing(let hash):
+                if let entry = entries.first(where: { $0.hash == hash }), !entry.assetId.isEmpty {
+                    ids.append(entry.assetId)
+                }
+            case .newPick(let id):
+                if let pick = newPicks.first(where: { $0.id == id }),
+                   let assetId = pick.assetId, !assetId.isEmpty {
+                    ids.append(assetId)
+                }
+            }
+        }
+        return ids
+    }
+
+    /// Add new picks from the photo picker without modifying existing selections.
+    /// Existing photos keep their selection state — user deselects manually in the grid.
+    private func reconcilePickerResults(_ results: [(UIImage, String?)]) {
+        // Build set of all known asset IDs to avoid adding duplicates
+        let allKnownAssetIds = Set(
+            entries.map(\.assetId).filter { !$0.isEmpty } +
+            newPicks.compactMap(\.assetId)
+        )
+
+        // Only add genuinely new picks (asset IDs not already tracked)
+        for (image, pickedAssetId) in results {
+            if let pickedAssetId, allKnownAssetIds.contains(pickedAssetId) {
+                continue
+            }
+            let pick = NewPick(image: image, assetId: pickedAssetId)
+            newPicks.append(pick)
+            selectionOrder.append(.newPick(id: pick.id))
+        }
+    }
+
+    private func loadImages() {
+        for entry in entries where loadedImages[entry.hash] == nil {
+            if let data = try? mediaRepository.getMediaData(hash: entry.hash),
+               let image = UIImage(data: data) {
+                loadedImages[entry.hash] = image
+            }
+        }
+    }
+
+    private func save() {
+        // Build ordered results respecting selection order
+        var keptEntries: [(hash: String, assetId: String)] = []
+        var keptNewPicks: [(UIImage, String?)] = []
+
+        for item in selectionOrder {
+            switch item {
+            case .existing(let hash):
+                if let entry = entries.first(where: { $0.hash == hash }) {
+                    keptEntries.append(entry)
+                }
+            case .newPick(let id):
+                if let pick = newPicks.first(where: { $0.id == id }) {
+                    keptNewPicks.append((pick.image, pick.assetId))
+                }
+            }
+        }
+
+        onSave(keptEntries, keptNewPicks)
+        dismiss()
+    }
+}
+
+// MARK: - UIImage Average Color
+
+extension UIImage {
+    /// Computes the average color of the image using CIAreaAverage filter.
+    var averageColor: UIColor? {
+        guard let ciImage = CIImage(image: self) else { return nil }
+        let extent = ciImage.extent
+        let extentVector = CIVector(x: extent.origin.x, y: extent.origin.y,
+                                     z: extent.size.width, w: extent.size.height)
+        guard let filter = CIFilter(name: "CIAreaAverage",
+                                     parameters: [kCIInputImageKey: ciImage,
+                                                  kCIInputExtentKey: extentVector]),
+              let outputImage = filter.outputImage else { return nil }
+
+        var bitmap = [UInt8](repeating: 0, count: 4)
+        let context = CIContext(options: [.workingColorSpace: kCFNull as Any])
+        context.render(outputImage, toBitmap: &bitmap, rowBytes: 4,
+                      bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                      format: .RGBA8, colorSpace: nil)
+
+        return UIColor(red: CGFloat(bitmap[0]) / 255.0,
+                       green: CGFloat(bitmap[1]) / 255.0,
+                       blue: CGFloat(bitmap[2]) / 255.0,
+                       alpha: 1.0)
+    }
+}
+#endif
