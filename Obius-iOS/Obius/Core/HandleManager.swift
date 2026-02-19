@@ -126,11 +126,11 @@ final class HandleManager: ObservableObject {
     // MARK: - Repository Actions (Async)
 
     /// Update handle content (updates the handle, all portals see it instantly via observation)
-    func updateContent(handleId: String, content: String) async throws {
+    func updateContent(handleId: String, content: String, richText: String? = nil) async throws {
         guard let repository = handleRepository else {
             throw HandleError.notFound("HandleManager not initialized")
         }
-        try await repository.updateHandleContent(id: handleId, content: content)
+        try await repository.updateHandleContent(id: handleId, content: content, richText: richText)
     }
 
     /// Create a new handle

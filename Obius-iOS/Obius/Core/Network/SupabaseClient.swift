@@ -26,7 +26,15 @@ final class SupabaseManager {
 
         self.client = SupabaseClient(
             supabaseURL: url,
-            supabaseKey: AppConfiguration.supabaseAnonKey
+            supabaseKey: AppConfiguration.supabaseAnonKey,
+            options: .init(
+                auth: .init(
+                    storage: KeychainLocalStorage(
+                        service: "supabase.gotrue.swift",
+                        accessGroup: "W276447S6T.app.obius.shared"
+                    )
+                )
+            )
         )
     }
 
@@ -44,12 +52,12 @@ final class SupabaseManager {
         currentSession != nil
     }
 
-    func signUp(email: String, password: String) async throws -> User {
+    func signUp(email: String, password: String, data: [String: AnyJSON]? = nil) async throws -> User {
         let response = try await client.auth.signUp(
             email: email,
-            password: password
+            password: password,
+            data: data
         )
-        // In newer Supabase versions, user is not optional
         return response.user
     }
 
@@ -119,5 +127,13 @@ enum AuthError: LocalizedError {
 extension User {
     var displayName: String? {
         userMetadata["display_name"]?.stringValue
+    }
+
+    var bio: String? {
+        userMetadata["bio"]?.stringValue
+    }
+
+    var phoneNumber: String? {
+        userMetadata["phone_number"]?.stringValue
     }
 }

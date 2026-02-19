@@ -50,7 +50,7 @@ class ProfileScanner: ObservableObject {
 
             do {
                 let data = try Data(contentsOf: fileURL)
-                let content = try JSONDecoder().decode(CommitContent.self, from: data)
+                let content = try OBXArchiver.decodeCommitContent(from: data)
 
                 // Extract relative path
                 let relativePath = extractRelativePath(from: fileURL)
@@ -112,7 +112,7 @@ class ProfileScanner: ObservableObject {
             // Index this commit
             do {
                 let data = try Data(contentsOf: fileURL)
-                let content = try JSONDecoder().decode(CommitContent.self, from: data)
+                let content = try OBXArchiver.decodeCommitContent(from: data)
 
                 let relativePath = extractRelativePath(from: fileURL)
 
@@ -183,7 +183,7 @@ class ProfileScanner: ObservableObject {
 
             do {
                 let data = try Data(contentsOf: fileURL)
-                let content = try JSONDecoder().decode(CommitContent.self, from: data)
+                let content = try OBXArchiver.decodeCommitContent(from: data)
 
                 // Verify hash matches content
                 let computedHash = coldStore.computeCommitHash(
@@ -202,6 +202,19 @@ class ProfileScanner: ObservableObject {
                     ))
                 } else {
                     validCount += 1
+                }
+
+                // Verify manifest hashes for zip-format archives
+                if OBXArchiver.isZipArchive(data) {
+                    do {
+                        _ = try OBXArchiver.verifyArchive(data: data)
+                    } catch {
+                        errors.append(IntegrityError(
+                            hash: content.hash,
+                            type: .hashMismatch,
+                            message: "Archive manifest verification failed: \(error.localizedDescription)"
+                        ))
+                    }
                 }
 
                 // Check for missing parent

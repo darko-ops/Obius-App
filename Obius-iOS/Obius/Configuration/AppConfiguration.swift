@@ -58,7 +58,7 @@ enum AppConfiguration {
     // MARK: - API
 
     static var apiBaseURL: String {
-        Bundle.main.infoDictionary?["OBIUS_API_BASE_URL"] as? String ?? "https://api.obius.app"
+        Bundle.main.infoDictionary?["OBIUS_API_BASE_URL"] as? String ?? "https://api.obius.io"
     }
 
     // MARK: - Logging

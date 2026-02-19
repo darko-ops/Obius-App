@@ -5,25 +5,53 @@ import Combine
 final class DatabaseManager {
     private let migrator: DatabaseMigrator
 
-    static let schemaVersion = 19
+    static let schemaVersion = 23
+
+    /// The App Group container path for the shared database
+    static var appGroupDatabaseURL: URL? {
+        FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: "group.app.obius.shared")?
+            .appendingPathComponent("obius.sqlite")
+    }
 
     // Expose dbQueue for repositories that need direct observation
     var dbQueue: DatabaseQueue { _dbQueue }
     private let _dbQueue: DatabaseQueue
 
-    init(inMemory: Bool = false) throws {
+    /// Whether this manager was opened in read-only mode (for extensions)
+    let isReadOnly: Bool
+
+    /// - Parameters:
+    ///   - inMemory: Use an in-memory database (for testing)
+    ///   - readOnly: Open the database in read-only mode (for extensions). Skips migrations.
+    init(inMemory: Bool = false, readOnly: Bool = false) throws {
+        self.isReadOnly = readOnly
+
         if inMemory {
             _dbQueue = try DatabaseQueue()
         } else {
-            let fileManager = FileManager.default
-            let appSupport = try fileManager.url(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask,
-                appropriateFor: nil,
-                create: true
-            )
-            let dbPath = appSupport.appendingPathComponent("obius.sqlite")
-            _dbQueue = try DatabaseQueue(path: dbPath.path)
+            let dbURL: URL
+            if let appGroupURL = Self.appGroupDatabaseURL {
+                // Ensure the directory exists
+                let dir = appGroupURL.deletingLastPathComponent()
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                dbURL = appGroupURL
+            } else {
+                // Fallback to legacy path if App Group unavailable
+                let appSupport = try FileManager.default.url(
+                    for: .applicationSupportDirectory,
+                    in: .userDomainMask,
+                    appropriateFor: nil,
+                    create: true
+                )
+                dbURL = appSupport.appendingPathComponent("obius.sqlite")
+            }
+
+            var config = Configuration()
+            if readOnly {
+                config.readonly = true
+            }
+            _dbQueue = try DatabaseQueue(path: dbURL.path, configuration: config)
         }
 
         var migrator = DatabaseMigrator()
@@ -481,8 +509,99 @@ final class DatabaseManager {
             """)
         }
 
+        // v20: Add shareLinks table for sharing system
+        migrator.registerMigration("v20_share_links") { db in
+            try db.create(table: "shareLinks") { t in
+                t.column("id", .text).primaryKey()
+                t.column("slug", .text).notNull().unique()
+                t.column("userId", .text).notNull()
+                t.column("shareType", .text).notNull()
+                t.column("noteId", .text)
+                t.column("commitHash", .text)
+                t.column("commitName", .text)
+                t.column("isActive", .boolean).notNull().defaults(to: true)
+                t.column("viewCount", .integer).notNull().defaults(to: 0)
+                t.column("createdAt", .integer).notNull()
+                t.column("updatedAt", .integer).notNull()
+                t.column("expiresAt", .integer)
+                t.column("deletedAt", .integer)
+                t.column("localVersion", .integer).notNull().defaults(to: 1)
+                t.column("serverVersion", .integer)
+                t.column("syncStatus", .text).notNull().defaults(to: "pending")
+            }
+
+            try db.create(index: "idx_shareLinks_slug", on: "shareLinks", columns: ["slug"], unique: true)
+            try db.create(index: "idx_shareLinks_noteId", on: "shareLinks", columns: ["noteId"])
+            try db.create(index: "idx_shareLinks_userId", on: "shareLinks", columns: ["userId"])
+            try db.create(index: "idx_shareLinks_commitHash", on: "shareLinks", columns: ["commitHash"])
+            try db.create(index: "idx_shareLinks_sync", on: "shareLinks", columns: ["syncStatus"])
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 20
+            """)
+        }
+
+        // v21: Add comments table for shared content discussions (Handshakes)
+        migrator.registerMigration("v21_comments") { db in
+            try db.create(table: "comments") { t in
+                t.column("id", .text).primaryKey()
+                t.column("shareLinkId", .text).notNull()
+                    .references("shareLinks", onDelete: .cascade)
+                t.column("userId", .text).notNull()
+                t.column("userDisplayName", .text)
+                t.column("parentCommentId", .text)
+                    .references("comments", onDelete: .setNull)
+                t.column("body", .text).notNull()
+                t.column("createdAt", .integer).notNull()
+                t.column("updatedAt", .integer).notNull()
+                t.column("deletedAt", .integer)
+                t.column("sealedCommitHash", .text)
+            }
+
+            try db.create(index: "idx_comments_shareLink", on: "comments", columns: ["shareLinkId"])
+            try db.create(index: "idx_comments_userId", on: "comments", columns: ["userId"])
+            try db.create(index: "idx_comments_parent", on: "comments", columns: ["parentCommentId"])
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 21
+            """)
+        }
+
+        migrator.registerMigration("v22_resolve_portal_content") { db in
+            // Copy handle content into portal sections so Supabase has the resolved display content
+            try db.execute(sql: """
+                UPDATE sections SET
+                    content = (SELECT h.content FROM handles h WHERE h.id = sections.handleId),
+                    updatedAt = ?,
+                    localVersion = localVersion + 1,
+                    syncStatus = 'pending'
+                WHERE handleId IS NOT NULL
+                    AND deletedAt IS NULL
+                    AND handleId IN (SELECT id FROM handles WHERE deletedAt IS NULL)
+            """, arguments: [Int64(Date().timeIntervalSince1970 * 1000)])
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 22
+            """)
+        }
+
+        // v23: Add isHidden column to commits
+        migrator.registerMigration("v23_commit_hidden") { db in
+            try db.alter(table: "commits") { t in
+                t.add(column: "isHidden", .boolean).notNull().defaults(to: false)
+            }
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 23
+            """)
+        }
+
         self.migrator = migrator
-        try migrator.migrate(_dbQueue)
+
+        // Extensions open read-only and must not run migrations
+        if !readOnly {
+            try migrator.migrate(_dbQueue)
+        }
     }
 
     // MARK: - Read Operations

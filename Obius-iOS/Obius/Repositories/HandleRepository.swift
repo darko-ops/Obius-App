@@ -124,13 +124,21 @@ final class HandleRepository: ObservableObject {
 
     // MARK: - Update
 
-    func updateHandleContent(id: String, content: String) async throws {
+    func updateHandleContent(id: String, content: String, richText: String? = nil) async throws {
         try await database.write { db in
             guard var handle = try Handle.fetchOne(db, key: id) else {
                 throw HandleError.notFound(id)
             }
             handle.updateContent(content)
             try handle.update(db)
+
+            // Propagate content and rich text to all portal sections linked to this handle
+            // so all portals display the same content and Supabase stays in sync
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            try db.execute(sql: """
+                UPDATE sections SET content = ?, richContent = ?, updatedAt = ?, localVersion = localVersion + 1, syncStatus = 'pending'
+                WHERE handleId = ? AND deletedAt IS NULL
+            """, arguments: [content, richText, now, id])
         }
     }
 

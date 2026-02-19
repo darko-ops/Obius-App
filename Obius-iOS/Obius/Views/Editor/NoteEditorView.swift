@@ -64,6 +64,14 @@ private struct NoteEditorContent: View {
     @State private var lastCommitName: String?
     @State private var nodeCommitSectionId: NodeCommitItem?
     @State private var pageCommitItem: PageCommitItem?
+    @State private var shareSectionId: String?
+    @State private var shareItems: [Any] = []
+    @State private var showingNativeShare = false
+    @State private var pendingShare = false
+    @State private var shareURL: URL?
+    @State private var shareTitle: String = ""
+    @State private var sharePreview: String = ""
+    @State private var shareError: String?
     @State private var showingAudioRecorder = false
     @State private var audioRecorderTargetSectionId: String?
     @State private var audioRecorderID = UUID()
@@ -158,12 +166,32 @@ private struct NoteEditorContent: View {
             .sheet(item: $pageCommitItem) { item in
                 PageCommitSheet(
                     noteId: item.noteId,
-                    onCommit: { name in
+                    pageTitle: item.pageTitle,
+                    onCommit: { name, title, comment in
                         Task {
-                            await commitPage(name: name)
+                            await commitPage(name: name, title: title, comment: comment)
                         }
                     }
                 )
+            }
+            .sheet(isPresented: $showingNativeShare) {
+                if let url = shareURL {
+                    NodeShareSheet(url: url, title: shareTitle, preview: sharePreview)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
+                if pendingShare {
+                    pendingShare = false
+                    showingNativeShare = true
+                }
+            }
+            .alert("Unable to Share", isPresented: Binding(
+                get: { shareError != nil },
+                set: { if !$0 { shareError = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(shareError ?? "")
             }
             .sheet(isPresented: $showingTemplates) {
                 TemplateListView { template in
@@ -434,6 +462,11 @@ private struct NoteEditorContent: View {
             onCommit: { sectionId in
                 nodeCommitSectionId = NodeCommitItem(sectionId: sectionId)
             },
+            onShare: { sectionId in
+                Task {
+                    await createShareLink(for: sectionId)
+                }
+            },
             onImageTap: { sectionId in
                 guard let section = viewModel.getSection(sectionId) else { return }
 
@@ -564,9 +597,15 @@ private struct NoteEditorContent: View {
             Divider()
 
             Button {
-                pageCommitItem = PageCommitItem(noteId: noteId)
+                pageCommitItem = PageCommitItem(noteId: noteId, pageTitle: titleText)
             } label: {
                 Label("Commit Page", systemImage: "arrow.down.doc")
+            }
+
+            Button {
+                Task { await sharePageDirectly() }
+            } label: {
+                Label("Share", systemImage: "square.and.arrow.up")
             }
 
             Divider()
@@ -678,12 +717,182 @@ private struct NoteEditorContent: View {
         }
     }
 
-    private func commitPage(name: String) async {
+    private func sharePageDirectly() async {
+        guard let note = viewModel.note else { return }
+        let allSections = viewModel.sections
+
         do {
-            _ = try await appState.commitModule.createCommit(noteId: noteId, name: name)
+            let shareLink = try await ShareManager.shared.createLiveShare(
+                noteId: noteId,
+                note: note,
+                sections: allSections
+            )
+            guard let url = URL(string: shareLink.url) else { return }
+
+            let handles = allSections.compactMap { viewModel.getHandle(for: $0) }
+            let payload = ShareManager.shared.buildMessagePayload(
+                shareLink: shareLink,
+                title: viewModel.displayTitle,
+                sections: allSections,
+                handles: handles
+            )
+            payload.writeToSharedDefaults()
+
+            shareURL = url
+            shareTitle = viewModel.displayTitle
+            sharePreview = allSections.prefix(3).map { $0.content }.joined(separator: "\n")
+        } catch {
+            shareError = error.localizedDescription
+            return
+        }
+
+        pendingShare = true
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if pendingShare {
+                pendingShare = false
+                showingNativeShare = true
+            }
+        }
+    }
+
+    private func createShareLink(for sectionId: String) async {
+        guard let section = viewModel.getSection(sectionId) else { return }
+
+        // For image nodes, share the actual images directly
+        if section.contentType == .image {
+            let hashes = section.content
+                .split(separator: ",")
+                .map { entry -> String in
+                    let parts = entry.split(separator: "|", maxSplits: 1)
+                    return String(parts[0]).trimmingCharacters(in: .whitespaces)
+                }
+                .filter { !$0.isEmpty }
+
+            var images: [UIImage] = []
+            for hash in hashes {
+                if let data = try? appState.mediaRepository.getMediaData(hash: hash),
+                   let image = UIImage(data: data) {
+                    images.append(image)
+                }
+            }
+
+            guard !images.isEmpty else {
+                shareError = "Could not load images"
+                return
+            }
+
+            shareItems = images
+
+            pendingShare = true
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                if pendingShare {
+                    pendingShare = false
+                    showingNativeShare = true
+                }
+            }
+            return
+        }
+
+        // For audio nodes, share the actual audio file
+        if section.contentType == .audio {
+            let parts = section.content.split(separator: "|", maxSplits: 1)
+            let audioHash = parts.count > 0 ? String(parts[0]).trimmingCharacters(in: .whitespaces) : ""
+
+            guard !audioHash.isEmpty,
+                  let data = try? appState.mediaRepository.getMediaData(hash: audioHash) else {
+                shareError = "Could not load audio"
+                return
+            }
+
+            // Write to a temp file so the share sheet can attach it
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("obius_audio_\(audioHash.prefix(8)).m4a")
+            do {
+                try data.write(to: tempURL)
+            } catch {
+                shareError = "Could not prepare audio for sharing"
+                return
+            }
+
+            shareItems = [tempURL]
+
+            pendingShare = true
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                if pendingShare {
+                    pendingShare = false
+                    showingNativeShare = true
+                }
+            }
+            return
+        }
+
+        // For text nodes, create a share link and share via the activity sheet.
+        // Also write a MessageSharePayload so the iMessage extension can render a branded card.
+        do {
+            guard let note = viewModel.note else { return }
+            let allSections = viewModel.sections
+            let shareLink = try await ShareManager.shared.createLiveShare(noteId: noteId, note: note, sections: allSections)
+            guard let url = URL(string: shareLink.url) else { return }
+
+            // Use node content as the share title, fall back to page title
+            let nodePreview = String(section.content.prefix(200))
+            let nodeTitleSnippet = String(section.content.prefix(80)).trimmingCharacters(in: .whitespacesAndNewlines)
+            let displayTitle = nodeTitleSnippet.isEmpty ? viewModel.displayTitle : nodeTitleSnippet
+
+            // Gather sections and handles for the message payload
+            let sections = allSections
+            let handles = sections.compactMap { viewModel.getHandle(for: $0) }
+
+            let payload = ShareManager.shared.buildMessagePayload(
+                shareLink: shareLink,
+                title: displayTitle,
+                sections: [section],
+                handles: handles
+            )
+            payload.writeToSharedDefaults()
+
+            shareURL = url
+            shareTitle = displayTitle
+            sharePreview = nodePreview
+        } catch {
+            print("[Share] Failed to create live share link: \(error)")
+            shareError = error.localizedDescription
+            return
+        }
+
+        // Dismiss keyboard first, then present share sheet
+        pendingShare = true
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if pendingShare {
+                pendingShare = false
+                showingNativeShare = true
+            }
+        }
+    }
+
+    private func commitPage(name: String, title: String, comment: String) async {
+        do {
+            let titleOverride = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let commit = try await appState.commitModule.createCommit(
+                noteId: noteId,
+                name: name,
+                titleOverride: titleOverride.isEmpty ? nil : titleOverride
+            )
             lastCommitName = name
             showingCommitConfirmation = true
             pageCommitItem = nil
+
+            // Post comment if provided
+            let trimmedComment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedComment.isEmpty {
+                Task {
+                    await postCommitComment(commit: commit, comment: trimmedComment)
+                }
+            }
 
             // Auto-hide after 2 seconds
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
@@ -691,6 +900,27 @@ private struct NoteEditorContent: View {
             }
         } catch {
             print("Failed to create page commit: \(error)")
+        }
+    }
+
+    private func postCommitComment(commit: Commit, comment: String) async {
+        do {
+            let content = try appState.coldStore.readCommit(hash: commit.hash)
+            let data = try JSONEncoder().encode(content)
+            guard let jsonString = String(data: data, encoding: .utf8) else { return }
+
+            let shareLink = try await ShareManager.shared.createCommitShare(
+                commitHash: commit.hash,
+                commitName: commit.name,
+                commitContent: jsonString
+            )
+
+            _ = try await ShareManager.shared.addComment(
+                shareLinkId: shareLink.id,
+                body: comment
+            )
+        } catch {
+            print("Failed to post commit comment: \(error)")
         }
     }
 
@@ -1492,6 +1722,7 @@ struct NodeCommitSheet: View {
 struct PageCommitItem: Identifiable {
     let id = UUID()
     let noteId: String
+    let pageTitle: String
 }
 
 // MARK: - PageCommitSheet
@@ -1502,14 +1733,19 @@ struct PageCommitSheet: View {
     @EnvironmentObject var appState: AppState
 
     let noteId: String
-    let onCommit: (String) -> Void
+    let pageTitle: String
+    let onCommit: (String, String, String) -> Void
 
+    @State private var commitTitle = ""
     @State private var commitName = ""
+    @State private var commitComment = ""
     @State private var errorMessage: String?
-    @FocusState private var isNameFocused: Bool
+    @FocusState private var focusedField: Field?
+
+    private enum Field { case title, name, comment }
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 16) {
             // Header
             HStack {
                 Button("Cancel") {
@@ -1533,36 +1769,73 @@ struct PageCommitSheet: View {
             .padding(.horizontal)
             .padding(.top, 16)
 
-            // Name input
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Commit Name")
+            // Title input
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Commit Title")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
-                TextField("Enter name", text: $commitName)
+                TextField("Enter title", text: $commitTitle)
                     .textFieldStyle(.roundedBorder)
-                    .focused($isNameFocused)
-                    .autocorrectionDisabled()
-                    #if os(iOS)
-                    .textInputAutocapitalization(.never)
-                    #endif
+                    .focused($focusedField, equals: .title)
                     .onSubmit {
-                        saveCommit()
+                        focusedField = .name
                     }
+            }
+            .padding(.horizontal)
 
-                if let error = errorMessage {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.red)
+            // File name input
+            VStack(alignment: .leading, spacing: 4) {
+                Text("File Name")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                HStack {
+                    TextField("Enter name", text: $commitName)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($focusedField, equals: .name)
+                        .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+                        .onSubmit {
+                            focusedField = .comment
+                        }
+
+                    Text(".obx")
+                        .foregroundStyle(.secondary)
                 }
             }
             .padding(.horizontal)
 
+            // Comment input
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Comment")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                TextField("Add a comment (optional)", text: $commitComment)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($focusedField, equals: .comment)
+                    .onSubmit {
+                        saveCommit()
+                    }
+            }
+            .padding(.horizontal)
+
+            if let error = errorMessage {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal)
+            }
+
             Spacer()
         }
-        .presentationDetents([.height(180)])
+        .presentationDetents([.height(340)])
         .onAppear {
-            isNameFocused = true
+            commitTitle = pageTitle
+            focusedField = .title
         }
     }
 
@@ -1570,11 +1843,11 @@ struct PageCommitSheet: View {
         let trimmedName = commitName.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmedName.isEmpty else {
-            errorMessage = "Please enter a name"
+            errorMessage = "Please enter a file name"
             return
         }
 
-        onCommit(trimmedName)
+        onCommit(trimmedName, commitTitle, commitComment)
         dismiss()
     }
 }

@@ -210,3 +210,11 @@ struct NoteWithSections: Identifiable {
         sections.count
     }
 }
+
+// MARK: - SectionPreviewSource Conformance
+
+extension Section: SectionPreviewSource {
+    var previewContent: String { content }
+    var previewContentType: String { contentType.rawValue }
+    var previewIntent: String? { intent.rawValue }
+}

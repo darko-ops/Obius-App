@@ -24,9 +24,9 @@
 
     <!-- Supabase Configuration -->
     <key>SUPABASE_URL</key>
-    <string>$(SUPABASE_URL)</string>
+    <string>https://sqixnykiayfyzrrcjips.supabase.co</string>
     <key>SUPABASE_ANON_KEY</key>
-    <string>$(SUPABASE_ANON_KEY)</string>
+    <string>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNxaXhueWtpYXlmeXpycmNqaXBzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk1NzA5NDEsImV4cCI6MjA4NTE0Njk0MX0.h3XIwWspXoTYf7SOgGamLngc11itXwO-xYqLd2rOopA</string>
 
     <!-- API Configuration -->
     <key>OBIUS_API_BASE_URL</key>
@@ -37,6 +37,19 @@
     <string>$(OBIUS_LOG_LEVEL)</string>
     <key>OBIUS_ENABLE_ANALYTICS</key>
     <string>$(OBIUS_ENABLE_ANALYTICS)</string>
+
+    <!-- URL Schemes -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>app.obius.ios</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>obius</string>
+            </array>
+        </dict>
+    </array>
 
     <!-- iOS Specific -->
     <key>LSRequiresIPhoneOS</key>

@@ -28,7 +28,7 @@ class CommitModule: ObservableObject {
     ///   - noteId: The note to commit
     ///   - mediaRefs: Optional media references to include in the commit
     /// - Returns: The created Commit record
-    func createCommit(noteId: String, name: String? = nil, mediaRefs: [MediaReference] = []) async throws -> Commit {
+    func createCommit(noteId: String, name: String? = nil, titleOverride: String? = nil, mediaRefs: [MediaReference] = []) async throws -> Commit {
         // 1. Fetch current note state from Hot Store
         guard let note = try await noteRepository.getNote(id: noteId) else {
             throw CommitError.noteNotFound
@@ -39,8 +39,20 @@ class CommitModule: ObservableObject {
         // 2. Get parent hash (latest commit for this note, if any)
         let parentHash = try await commitRepository.getLatestCommit(noteId: noteId)?.hash
 
-        // 3. Create snapshots
-        let noteSnapshot = CommitNoteSnapshot(from: note)
+        // 3. Create snapshots (apply title override if provided)
+        var noteSnapshot = CommitNoteSnapshot(from: note)
+        if let titleOverride = titleOverride {
+            noteSnapshot = CommitNoteSnapshot(
+                id: noteSnapshot.id,
+                title: titleOverride,
+                body: noteSnapshot.body,
+                intent: noteSnapshot.intent,
+                isPinned: noteSnapshot.isPinned,
+                createdAt: noteSnapshot.createdAt,
+                updatedAt: noteSnapshot.updatedAt,
+                interstitialContent: noteSnapshot.interstitialContent
+            )
+        }
         let sectionSnapshots = sections.map { CommitSectionSnapshot(from: $0) }
 
         // 4. Compute content hash

@@ -14,6 +14,7 @@ struct Commit: Codable, Identifiable, Hashable {
     var parentHash: String?    // Previous commit hash for this note
     var filePath: String       // Relative path to .obx file in Cold Store
     var createdAt: Int64
+    var isHidden: Bool         // Whether commit is hidden from profile view
 
     init(
         id: String = UUID().uuidString,
@@ -23,7 +24,8 @@ struct Commit: Codable, Identifiable, Hashable {
         hash: String,
         parentHash: String? = nil,
         filePath: String,
-        createdAt: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
+        createdAt: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
+        isHidden: Bool = false
     ) {
         self.id = id
         self.noteId = noteId
@@ -33,6 +35,7 @@ struct Commit: Codable, Identifiable, Hashable {
         self.parentHash = parentHash
         self.filePath = filePath
         self.createdAt = createdAt
+        self.isHidden = isHidden
     }
 
     /// Generates a unique short ID in the format OBX-XXXX-XXXX (uppercase letters + digits)
@@ -49,7 +52,7 @@ extension Commit: FetchableRecord, PersistableRecord {
     static let databaseTableName = "commits"
 
     enum Columns: String, ColumnExpression {
-        case id, noteId, name, shortId, hash, parentHash, filePath, createdAt
+        case id, noteId, name, shortId, hash, parentHash, filePath, createdAt, isHidden
     }
 
     // Relationships
@@ -103,6 +106,7 @@ struct CommitNoteSnapshot: Codable {
     let isPinned: Bool
     let createdAt: Int64
     let updatedAt: Int64
+    let interstitialContent: [String: String]
 
     init(
         id: String,
@@ -111,7 +115,8 @@ struct CommitNoteSnapshot: Codable {
         intent: String,
         isPinned: Bool,
         createdAt: Int64,
-        updatedAt: Int64
+        updatedAt: Int64,
+        interstitialContent: [String: String] = [:]
     ) {
         self.id = id
         self.title = title
@@ -120,6 +125,7 @@ struct CommitNoteSnapshot: Codable {
         self.isPinned = isPinned
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.interstitialContent = interstitialContent
     }
 
     /// Create snapshot from a Note model
@@ -131,6 +137,24 @@ struct CommitNoteSnapshot: Codable {
         self.isPinned = note.isPinned
         self.createdAt = note.createdAt
         self.updatedAt = note.updatedAt
+        self.interstitialContent = note.interstitialContent
+    }
+
+    // Backwards-compatible decoder for commits saved without interstitialContent
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        body = try container.decode(String.self, forKey: .body)
+        intent = try container.decode(String.self, forKey: .intent)
+        isPinned = try container.decode(Bool.self, forKey: .isPinned)
+        createdAt = try container.decode(Int64.self, forKey: .createdAt)
+        updatedAt = try container.decode(Int64.self, forKey: .updatedAt)
+        interstitialContent = try container.decodeIfPresent([String: String].self, forKey: .interstitialContent) ?? [:]
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, body, intent, isPinned, createdAt, updatedAt, interstitialContent
     }
 }
 
@@ -313,6 +337,9 @@ enum CommitError: Error, LocalizedError {
     case decodingError
     case invalidName(String)
     case nameAlreadyExists(String)
+    case archiveCorrupted(String)
+    case manifestMissing
+    case manifestHashMismatch(entry: String, expected: String, actual: String)
 
     var errorDescription: String? {
         switch self {
@@ -336,6 +363,12 @@ enum CommitError: Error, LocalizedError {
             return "Invalid commit name: \(name)"
         case .nameAlreadyExists(let name):
             return "A commit named '\(name)' already exists"
+        case .archiveCorrupted(let reason):
+            return "Archive corrupted: \(reason)"
+        case .manifestMissing:
+            return "Archive is missing manifest.json"
+        case .manifestHashMismatch(let entry, let expected, let actual):
+            return "Hash mismatch for \(entry): expected \(expected), got \(actual)"
         }
     }
 }

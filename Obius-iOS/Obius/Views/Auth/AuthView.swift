@@ -104,6 +104,18 @@ struct SignInView: View {
             .padding(.bottom)
         }
         .padding()
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button {
+                    #if os(iOS)
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    #endif
+                } label: {
+                    Image(systemName: "keyboard.chevron.compact.down")
+                }
+            }
+        }
         .sheet(isPresented: $showingResetPassword) {
             ResetPasswordView()
         }
@@ -211,6 +223,18 @@ struct SignUpView: View {
             .padding(.bottom)
         }
         .padding()
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button {
+                    #if os(iOS)
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    #endif
+                } label: {
+                    Image(systemName: "keyboard.chevron.compact.down")
+                }
+            }
+        }
     }
 }
 
@@ -293,6 +317,16 @@ struct ResetPasswordView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         dismiss()
+                    }
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button {
+                        #if os(iOS)
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                        #endif
+                    } label: {
+                        Image(systemName: "keyboard.chevron.compact.down")
                     }
                 }
             }

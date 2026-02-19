@@ -63,6 +63,9 @@ struct SectionView: View {
     // Commit callback
     let onCommit: () -> Void  // Commit this node
 
+    // Share callback
+    let onShare: () -> Void  // Share this node
+
     // Image node callback
     let onImageTap: () -> Void  // Open image picker for this section
     let mediaRepository: MediaRepository?  // For loading image data
@@ -98,6 +101,7 @@ struct SectionView: View {
         onCreateLoop: @escaping () -> Void = {},
         onUnlinkHandle: @escaping () -> Void = {},
         onCommit: @escaping () -> Void = {},
+        onShare: @escaping () -> Void = {},
         onImageTap: @escaping () -> Void = {},
         mediaRepository: MediaRepository? = nil
     ) {
@@ -122,6 +126,7 @@ struct SectionView: View {
         self.onCreateLoop = onCreateLoop
         self.onUnlinkHandle = onUnlinkHandle
         self.onCommit = onCommit
+        self.onShare = onShare
         self.onImageTap = onImageTap
         self.mediaRepository = mediaRepository
 
@@ -754,23 +759,13 @@ struct SectionView: View {
             Label("Change Status", systemImage: section.intent.icon)
         }
 
-        // 2. Indent
+        // 2. Share
         Button {
-            onIndent()
+            onShare()
             HapticFeedback.selection()
         } label: {
-            Label("Indent", systemImage: "arrow.right.to.line")
+            Label("Share", systemImage: "square.and.arrow.up")
         }
-        .disabled(section.indentLevel >= 5)
-
-        // 3. Outdent
-        Button {
-            onOutdent()
-            HapticFeedback.selection()
-        } label: {
-            Label("Outdent", systemImage: "arrow.left.to.line")
-        }
-        .disabled(section.indentLevel == 0)
 
         // 4. Lock with Face ID
         if section.isLocked {

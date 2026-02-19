@@ -45,9 +45,25 @@ class ColdStore: ObservableObject {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
-        guard let data = try? encoder.encode(content) else {
+        guard let commitJSON = try? encoder.encode(content) else {
             throw CommitError.encodingError
         }
+
+        // Gather referenced media from the media/ directory
+        var mediaEntries: [(path: String, data: Data)] = []
+        for ref in content.mediaRefs {
+            let hashValue = ref.hash.replacingOccurrences(of: "sha256:", with: "")
+            if let mediaData = try? readMedia(hash: ref.hash) {
+                mediaEntries.append((path: "media/sha256_\(hashValue)", data: mediaData))
+            }
+        }
+
+        // Build zip archive
+        let archiveData = try OBXArchiver.buildArchive(
+            commitJSON: commitJSON,
+            commitHash: content.hash,
+            mediaEntries: mediaEntries
+        )
 
         // Extract hash value (remove "sha256:" prefix)
         let hashValue = content.hash.replacingOccurrences(of: "sha256:", with: "")
@@ -65,7 +81,7 @@ class ColdStore: ObservableObject {
         let relativePath = "\(hashPrefix)/\(filename)"
 
         do {
-            try data.write(to: fileURL, options: .atomic)
+            try archiveData.write(to: fileURL, options: .atomic)
         } catch {
             throw CommitError.fileWriteError(relativePath)
         }
@@ -89,8 +105,9 @@ class ColdStore: ObservableObject {
 
         do {
             let data = try Data(contentsOf: fileURL)
-            let content = try JSONDecoder().decode(CommitContent.self, from: data)
-            return content
+            return try OBXArchiver.decodeCommitContent(from: data)
+        } catch let error as CommitError {
+            throw error
         } catch is DecodingError {
             throw CommitError.decodingError
         } catch {
@@ -110,8 +127,9 @@ class ColdStore: ObservableObject {
 
         do {
             let data = try Data(contentsOf: fileURL)
-            let content = try JSONDecoder().decode(CommitContent.self, from: data)
-            return content
+            return try OBXArchiver.decodeCommitContent(from: data)
+        } catch let error as CommitError {
+            throw error
         } catch is DecodingError {
             throw CommitError.decodingError
         } catch {
@@ -198,12 +216,19 @@ class ColdStore: ObservableObject {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
-        guard let data = try? encoder.encode(contentWithHash) else {
+        guard let commitJSON = try? encoder.encode(contentWithHash) else {
             throw CommitError.encodingError
         }
 
+        // Build zip archive (no media for node commits)
+        let archiveData = try OBXArchiver.buildArchive(
+            commitJSON: commitJSON,
+            commitHash: hash,
+            mediaEntries: []
+        )
+
         do {
-            try data.write(to: fileURL, options: .atomic)
+            try archiveData.write(to: fileURL, options: .atomic)
         } catch {
             throw CommitError.fileWriteError(filename)
         }
@@ -224,7 +249,9 @@ class ColdStore: ObservableObject {
 
         do {
             let data = try Data(contentsOf: fileURL)
-            return try JSONDecoder().decode(NodeCommitContent.self, from: data)
+            return try OBXArchiver.decodeNodeCommitContent(from: data)
+        } catch let error as CommitError {
+            throw error
         } catch is DecodingError {
             throw CommitError.decodingError
         } catch {

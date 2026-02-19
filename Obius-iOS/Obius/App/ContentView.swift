@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var deepLinkRouter: DeepLinkRouter
     @StateObject private var networkMonitor = NetworkMonitor.shared
 
     var body: some View {
@@ -17,6 +18,10 @@ struct ContentView: View {
                 // Auth flow (but still allow local use)
                 LocalOrAuthView()
             }
+        }
+        .fullScreenCover(item: $deepLinkRouter.pendingShareSlugItem) { item in
+            SharedContentView(slug: item.slug)
+                .environmentObject(appState)
         }
     }
 }
@@ -122,4 +127,5 @@ struct MainTabView: View {
     ContentView()
         .environmentObject(AppState())
         .environmentObject(AuthManager.shared)
+        .environmentObject(DeepLinkRouter.shared)
 }

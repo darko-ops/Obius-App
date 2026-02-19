@@ -127,6 +127,28 @@ final class CommitRepository: ObservableObject {
         }
     }
 
+    // MARK: - Visibility
+
+    /// Toggles the hidden state of a commit.
+    func setHidden(_ isHidden: Bool, id: String) async throws {
+        try await database.write { db in
+            try db.execute(
+                sql: "UPDATE commits SET isHidden = ? WHERE id = ?",
+                arguments: [isHidden, id]
+            )
+        }
+    }
+
+    /// Gets all visible (non-hidden) commits, ordered by creation time (newest first).
+    func getVisibleCommits() async throws -> [Commit] {
+        try await database.read { db in
+            try Commit
+                .filter(Commit.Columns.isHidden == false)
+                .order(Commit.Columns.createdAt.desc)
+                .fetchAll(db)
+        }
+    }
+
     // MARK: - Observation
 
     /// Observes commits for a specific note.

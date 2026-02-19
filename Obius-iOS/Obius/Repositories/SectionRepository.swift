@@ -372,12 +372,13 @@ final class SectionRepository: ObservableObject {
         try await database.write { db in
             guard var section = try Section.fetchOne(db, key: sectionId) else { return }
 
-            // Verify the handle exists
-            guard try Handle.fetchOne(db, key: handleId) != nil else {
+            // Verify the handle exists and copy its content to the section
+            guard let handle = try Handle.fetchOne(db, key: handleId) else {
                 throw HandleError.notFound(handleId)
             }
 
             section.handleId = handleId
+            section.content = handle.content  // Keep section content in sync for Supabase
             section.touch()
             try section.update(db)
 

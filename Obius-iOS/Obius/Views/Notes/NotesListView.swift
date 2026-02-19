@@ -32,6 +32,11 @@ private struct NotesListContent: View {
     @State private var showingCommitConfirmation = false
     @State private var lastCommitName: String?
     @State private var pageCommitItem: PageCommitItem?
+    @State private var showingNativeShare = false
+    @State private var shareItems: [Any] = []
+    @State private var shareURL: URL?
+    @State private var shareTitle: String = ""
+    @State private var sharePreview: String = ""
     @State private var isSelectionMode = false
     @State private var selectedNoteIds: Set<String> = []
     @State private var showingDeleteConfirmation = false
@@ -331,12 +336,18 @@ private struct NotesListContent: View {
         .sheet(item: $pageCommitItem) { item in
             PageCommitSheet(
                 noteId: item.noteId,
-                onCommit: { name in
+                pageTitle: item.pageTitle,
+                onCommit: { name, title, comment in
                     Task {
-                        await commitPage(noteId: item.noteId, name: name)
+                        await commitPage(noteId: item.noteId, name: name, title: title, comment: comment)
                     }
                 }
             )
+        }
+        .sheet(isPresented: $showingNativeShare) {
+            if let url = shareURL {
+                NodeShareSheet(url: url, title: shareTitle, preview: sharePreview)
+            }
         }
     }
 
@@ -418,9 +429,18 @@ private struct NotesListContent: View {
 
                 // Commit Page
                 Button {
-                    pageCommitItem = PageCommitItem(noteId: note.id)
+                    pageCommitItem = PageCommitItem(noteId: note.id, pageTitle: note.title ?? "")
                 } label: {
                     Label("Commit Page", systemImage: "arrow.down.doc")
+                }
+
+                // Share
+                Button {
+                    Task {
+                        await createPageShareLink(for: note)
+                    }
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
                 }
 
                 Divider()
@@ -460,18 +480,52 @@ private struct NotesListContent: View {
             }
     }
 
-    private func commitPage(noteId: String, name: String) async {
+    private func commitPage(noteId: String, name: String, title: String, comment: String) async {
         do {
-            _ = try await commitModule.createCommit(noteId: noteId, name: name)
+            let titleOverride = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let commit = try await commitModule.createCommit(
+                noteId: noteId,
+                name: name,
+                titleOverride: titleOverride.isEmpty ? nil : titleOverride
+            )
             lastCommitName = name
             showingCommitConfirmation = true
             pageCommitItem = nil
+
+            // Post comment if provided
+            let trimmedComment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedComment.isEmpty {
+                Task {
+                    await postCommitComment(commit: commit, comment: trimmedComment)
+                }
+            }
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 showingCommitConfirmation = false
             }
         } catch {
             print("Failed to create page commit: \(error)")
+        }
+    }
+
+    private func postCommitComment(commit: Commit, comment: String) async {
+        do {
+            let content = try commitModule.getCommitContent(hash: commit.hash)
+            let data = try JSONEncoder().encode(content)
+            guard let jsonString = String(data: data, encoding: .utf8) else { return }
+
+            let shareLink = try await ShareManager.shared.createCommitShare(
+                commitHash: commit.hash,
+                commitName: commit.name,
+                commitContent: jsonString
+            )
+
+            _ = try await ShareManager.shared.addComment(
+                shareLinkId: shareLink.id,
+                body: comment
+            )
+        } catch {
+            print("Failed to post commit comment: \(error)")
         }
     }
 
@@ -554,6 +608,59 @@ private struct NotesListContent: View {
             } catch {
                 print("Failed to group note \(noteId): \(error)")
             }
+        }
+    }
+
+    private func createPageShareLink(for note: Note) async {
+        // Gather page title
+        let title = note.displayTitle
+
+        // Gather all section content
+        var sections: [Section] = []
+        var contentParts: [String] = []
+        do {
+            sections = try await sectionRepository.getSections(noteId: note.id)
+            sections.sort(by: { $0.orderKey < $1.orderKey })
+            for section in sections {
+                let text = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty && section.contentType != .image && section.contentType != .audio {
+                    contentParts.append(text)
+                }
+            }
+        } catch {
+            print("Failed to load sections for share: \(error)")
+        }
+
+        // Also include note body if present
+        let body = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !body.isEmpty {
+            contentParts.insert(body, at: 0)
+        }
+
+        let preview = contentParts.joined(separator: "\n")
+
+        do {
+            let shareLink = try await ShareManager.shared.createLiveShare(noteId: note.id, note: note, sections: sections)
+            guard let url = URL(string: shareLink.url) else { return }
+
+            // Build and write message payload for iMessage extension
+            let handles = sections.compactMap { section in
+                HandleManager.shared.handles.first(where: { $0.id == section.handleId })
+            }
+            let payload = ShareManager.shared.buildMessagePayload(
+                shareLink: shareLink,
+                title: title,
+                sections: sections,
+                handles: handles
+            )
+            payload.writeToSharedDefaults()
+
+            shareURL = url
+            shareTitle = title
+            sharePreview = String(preview.prefix(200))
+            showingNativeShare = true
+        } catch {
+            print("Failed to create share link: \(error)")
         }
     }
 }

@@ -647,10 +647,22 @@ final class NoteEditorViewModel: ObservableObject {
     }
 
     /// Get the display content for a section (handle content if portal, otherwise section content)
+    /// For portals, the section's own content is kept in sync with the handle via SQL propagation
+    /// in HandleRepository.updateHandleContent. Using section.content avoids race conditions
+    /// between the handle observer and section observer on the main queue.
     func getDisplayContent(for section: Section) -> String {
-        if let handleId = section.handleId,
-           let handleContent = handleManager.getContent(handleId: handleId) {
-            return handleContent
+        if section.handleId != nil {
+            // Portal: section.content is always synced with handle content
+            // via the SQL propagation in HandleRepository.updateHandleContent.
+            // Fall back to handle cache only if section content is empty
+            // (e.g. freshly linked before first propagation).
+            if section.content.isEmpty,
+               let handleId = section.handleId,
+               let handleContent = handleManager.getContent(handleId: handleId),
+               !handleContent.isEmpty {
+                return handleContent
+            }
+            return section.content
         }
         return section.content
     }
@@ -666,8 +678,8 @@ final class NoteEditorViewModel: ObservableObject {
         guard let section = getSection(sectionId) else { return }
 
         if let handleId = section.handleId {
-            // This is a portal - update the handle content
-            try await handleManager.updateContent(handleId: handleId, content: content)
+            // This is a portal - update the handle content and propagate rich text
+            try await handleManager.updateContent(handleId: handleId, content: content, richText: richText)
         } else {
             // Normal section - update section content
             try await sectionRepository.updateContent(sectionId, content: content, richText: richText)

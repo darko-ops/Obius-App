@@ -5,6 +5,8 @@ import UserNotifications
 struct ObiusApp: App {
     @StateObject private var appState = AppState()
     @StateObject private var authManager = AuthManager.shared
+    @StateObject private var deepLinkRouter = DeepLinkRouter.shared
+    @StateObject private var appearanceManager = AppearanceManager.shared
     private let notificationDelegate = NotificationDelegate()
 
     init() {
@@ -18,6 +20,9 @@ struct ObiusApp: App {
             ContentView()
                 .environmentObject(appState)
                 .environmentObject(authManager)
+                .environmentObject(deepLinkRouter)
+                .environmentObject(appearanceManager)
+                .preferredColorScheme(appearanceManager.currentMode.colorScheme)
                 .task {
                     await appState.initialize()
                 }
@@ -27,6 +32,9 @@ struct ObiusApp: App {
                             await EchoManager.shared.checkForFiredEchoes()
                         }
                     }
+                }
+                .onOpenURL { url in
+                    deepLinkRouter.handleURL(url)
                 }
         }
     }
@@ -61,6 +69,8 @@ class AppState: ObservableObject {
     let sectionRepository: SectionRepository
     let handleRepository: HandleRepository  // Handle Loop support
     let echoRepository: EchoRepository      // Echo alert/reminder support
+    let shareLinkRepository: ShareLinkRepository  // Share link support
+    let commentRepository: CommentRepository      // Share comments support
     let syncEngine: SyncEngine
     let syncLogger: SyncOperationLogger
 
@@ -75,11 +85,16 @@ class AppState: ObservableObject {
 
     init() {
         do {
+            // Migrate database from legacy path to App Group container (one-time)
+            DatabaseMigrationHelper.migrateIfNeeded()
+
             self.database = try DatabaseManager()
             self.noteRepository = NoteRepository(database: database)
             self.sectionRepository = SectionRepository(database: database)
             self.handleRepository = HandleRepository(database: database)  // Handle Loop support
             self.echoRepository = EchoRepository(database: database)    // Echo alert/reminder support
+            self.shareLinkRepository = ShareLinkRepository(database: database)  // Share link support
+            self.commentRepository = CommentRepository(database: database)      // Share comments support
             self.syncEngine = SyncEngine(database: database)
             self.syncLogger = SyncOperationLogger(database: database)
 
@@ -103,6 +118,12 @@ class AppState: ObservableObject {
 
             // Initialize EchoManager singleton with repository
             EchoManager.shared.initialize(echoRepository: echoRepository)
+
+            // Initialize ShareManager singleton with repositories
+            ShareManager.shared.initialize(
+                shareLinkRepository: shareLinkRepository,
+                commentRepository: commentRepository
+            )
         } catch {
             fatalError("Failed to initialize database: \(error)")
         }

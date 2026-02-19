@@ -74,13 +74,12 @@ final class AuthManager: ObservableObject {
         defer { isLoading = false }
 
         do {
-            let user = try await supabase.signUp(email: email, password: password)
-
-            // Update display name if provided
+            var metadata: [String: AnyJSON]? = nil
             if let displayName = displayName {
-                try? await supabase.client.auth.update(user: .init(data: ["display_name": .string(displayName)]))
+                metadata = ["display_name": .string(displayName)]
             }
 
+            let user = try await supabase.signUp(email: email, password: password, data: metadata)
             currentUser = user
             isAuthenticated = true
         } catch {
@@ -115,6 +114,25 @@ final class AuthManager: ObservableObject {
             try await supabase.signOut()
             currentUser = nil
             isAuthenticated = false
+        } catch {
+            authError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Update Profile
+
+    func updateProfile(displayName: String, bio: String, phoneNumber: String) async {
+        authError = nil
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            let updatedUser = try await supabase.client.auth.update(user: .init(data: [
+                "display_name": .string(displayName),
+                "bio": .string(bio),
+                "phone_number": .string(phoneNumber)
+            ]))
+            currentUser = updatedUser
         } catch {
             authError = error.localizedDescription
         }

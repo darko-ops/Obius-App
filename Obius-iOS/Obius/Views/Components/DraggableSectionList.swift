@@ -26,6 +26,7 @@ struct DraggableSectionList: View {
     let onCreateLoop: (String) -> Void  // Handle Loop: Create new handle from section
     let onUnlinkHandle: (String) -> Void  // Handle Loop: Unlink section from handle
     let onCommit: (String) -> Void  // Commit the note containing this container
+    let onShare: (String) -> Void  // Share this node
     let onImageTap: (String) -> Void  // Open image picker for section
     let mediaRepository: MediaRepository?  // For loading image data in image nodes
     let getInterstitialContent: (String?) -> String  // Get text after section (nil = end)
@@ -76,6 +77,7 @@ struct DraggableSectionList: View {
                         onCreateLoop: { onCreateLoop(section.id) },
                         onUnlinkHandle: { onUnlinkHandle(section.id) },
                         onCommit: { onCommit(section.id) },
+                        onShare: { onShare(section.id) },
                         onImageTap: { onImageTap(section.id) },
                         mediaRepository: mediaRepository
                     )
@@ -167,6 +169,7 @@ struct DraggableSectionRow: View {
     let onCreateLoop: () -> Void  // Handle Loop support
     let onUnlinkHandle: () -> Void  // Handle Loop support
     let onCommit: () -> Void  // Commit container
+    let onShare: () -> Void  // Share node
     let onImageTap: () -> Void  // Image node tap
     let mediaRepository: MediaRepository?  // For image nodes
 
@@ -197,6 +200,7 @@ struct DraggableSectionRow: View {
                 onCreateLoop: onCreateLoop,
                 onUnlinkHandle: onUnlinkHandle,
                 onCommit: onCommit,
+                onShare: onShare,
                 onImageTap: onImageTap,
                 mediaRepository: mediaRepository
             )
@@ -814,6 +818,7 @@ enum HapticFeedback {
                     onCreateLoop: { _ in },
                     onUnlinkHandle: { _ in },
                     onCommit: { _ in },
+                    onShare: { _ in },
                     onImageTap: { _ in },
                     mediaRepository: nil,
                     getInterstitialContent: { _ in "" },

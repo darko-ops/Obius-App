@@ -67,6 +67,35 @@ final class SyncOperationLogger {
         )
     }
 
+    // MARK: - ShareLink Operations
+
+    func logShareLinkCreate(_ shareLink: ShareLink) {
+        logOperation(
+            entityType: "shareLink",
+            entityId: shareLink.id,
+            operationType: "create",
+            payload: shareLinkToPayload(shareLink)
+        )
+    }
+
+    func logShareLinkUpdate(_ shareLink: ShareLink) {
+        logOperation(
+            entityType: "shareLink",
+            entityId: shareLink.id,
+            operationType: "update",
+            payload: shareLinkToPayload(shareLink)
+        )
+    }
+
+    func logShareLinkDelete(_ shareLinkId: String) {
+        logOperation(
+            entityType: "shareLink",
+            entityId: shareLinkId,
+            operationType: "delete",
+            payload: [:]
+        )
+    }
+
     // MARK: - Private
 
     private func logOperation(
@@ -136,7 +165,38 @@ final class SyncOperationLogger {
             payload["parent_section_id"] = parentId
         }
 
+        if let handleId = section.handleId {
+            payload["handle_id"] = handleId
+        }
+
         if let deletedAt = section.deletedAt {
+            payload["deleted_at"] = formatTimestamp(deletedAt)
+        }
+
+        return payload
+    }
+
+    private func shareLinkToPayload(_ shareLink: ShareLink) -> [String: Any] {
+        var payload: [String: Any] = [
+            "slug": shareLink.slug,
+            "user_id": shareLink.userId,
+            "share_type": shareLink.shareType.rawValue,
+            "is_active": shareLink.isActive,
+            "view_count": shareLink.viewCount,
+            "created_at": formatTimestamp(shareLink.createdAt),
+            "updated_at": formatTimestamp(shareLink.updatedAt)
+        ]
+
+        if let noteId = shareLink.noteId {
+            payload["note_id"] = noteId
+        }
+        if let commitHash = shareLink.commitHash {
+            payload["commit_hash"] = commitHash
+        }
+        if let commitName = shareLink.commitName {
+            payload["commit_name"] = commitName
+        }
+        if let deletedAt = shareLink.deletedAt {
             payload["deleted_at"] = formatTimestamp(deletedAt)
         }
 
