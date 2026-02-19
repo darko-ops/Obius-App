@@ -236,15 +236,311 @@ The features are replicable. Any well-funded team could build sections, handles,
 
 ---
 
-## Summary Matrix
+---
+
+## 7. Auto-Commits: The Feature That Makes Provenance Passive
+
+### The Idea
+
+Today, Obius commits are manual — the user decides when to snapshot. Auto-commits create immutable snapshots on a recurring cadence (every hour, every day, on app close) so the user gets a timestamped reasoning trail *without thinking about it*.
+
+### Why This Is Strategically Important
+
+This is the bridge feature between "notes app" and "decision documentation" that doesn't require a product pivot or new data models.
+
+**Without auto-commits:** The provenance value proposition requires user discipline. Users must remember to commit. Most won't. The audit trail has gaps. The decision documentation angle remains theoretical.
+
+**With auto-commits:** Every note automatically accumulates a timestamped, hashed history of how it evolved. The user writes naturally. Obius silently builds the proof layer underneath. When a user later needs to show "here's how my thinking developed" — for a client, a court, a review board, or themselves — the trail already exists.
+
+This is the difference between a feature users *could* use and a value they *passively receive*.
+
+### Architectural Feasibility: Confirmed (High Confidence)
+
+After reviewing the codebase, auto-commits are highly feasible because the required primitives already exist:
+
+**Already built:**
+- `CommitModule.createCommit()` — full async commit pipeline (snapshot, hash, write to Cold Store, index in Hot Store)
+- `EchoInterval` + `EchoIntervalUnit` — recurring interval logic (minutes through months) with next-fire-date calculation
+- `EchoManager` — scheduling pattern using `UNUserNotificationCenter` and scene-phase lifecycle hooks
+- `ColdStore` — content-addressable .obx file storage with SHA-256 naming
+- App lifecycle hooks in `ObiusApp.swift` for foreground activation checks
+
+**Needs building:**
+- `AutoCommitManager` class (modeled after `EchoManager`)
+- Per-note or global auto-commit configuration (DB migration for settings)
+- Change detection (skip commit if nothing changed since last commit)
+- Retention policy (prevent unbounded commit accumulation)
+- UI toggle in note settings
+
+**Estimated effort:** ~5-7 days of development.
+
+### Recommended Design Decisions
+
+1. **Per-note opt-in, with a global default.** Let users enable auto-commits on important notes. Offer a global "auto-commit all notes" setting for power users. Default: off.
+2. **Cadence options:** Every hour, every day, on note close, on app background. Daily is the sensible default for most users.
+3. **Change detection:** Only commit if the note's content hash differs from the last commit. No duplicate snapshots.
+4. **Auto-commit naming:** System-generated names like "Auto — Feb 19, 2026, 3:00 PM" to distinguish from intentional commits.
+5. **Retention:** Keep all auto-commits for 90 days. After 90 days, keep only one per week. After 1 year, keep only one per month. User can override.
+6. **Visual distinction:** Auto-commits appear slightly muted in the commit history, distinguishable from intentional commits but still fully functional.
+
+### Strategic Value
+
+Auto-commits turn Obius from "a notes app that *can* document your reasoning" into "a notes app that *does* document your reasoning." That's the difference between a feature and a value proposition. This single feature makes the "document how you think" positioning real rather than aspirational.
+
+---
+
+## 8. Go-to-Market Plan
+
+### Vision Statement
+
+Obius launches as a premium notes app for professionals who need structured, private, provable documentation of their thinking — positioned with the language of decision documentation but built as an elegant, simple notes experience.
+
+**The principle:** Ship notes. Market provenance. Let users discover the decision documentation value through use. Don't over-engineer for a market that hasn't been validated.
+
+---
+
+### Phase 0: Pre-Launch Foundation (Weeks 1-6)
+
+**Objective:** Build the audience before the product is available.
+
+**0.1 — Landing Page (Week 1)**
+
+Launch a single-page site at obius.io with:
+- Headline: "Document how you think."
+- Subhead: "Obius is the notes app where every idea is a building block — structured, private, permanent, and yours."
+- A 30-second demo video showing: create a note, add sections with intent tags, collapse/reorder, create a commit, share the immutable link.
+- Email waitlist with a single field.
+- No pricing. No feature list. Just the video and the waitlist.
+
+The landing page does one job: filter for people who feel the pain of unstructured notes. Everyone else bounces. That's fine.
+
+**0.2 — Content Seeding (Weeks 1-6)**
+
+Write 4-6 short pieces (blog posts, threads, or short-form video) targeting the beachhead audience:
+
+| # | Title | Channel | Audience |
+|---|-------|---------|----------|
+| 1 | "Why I stopped using Apple Notes for case research" | Legal tech blogs, LinkedIn | Solo lawyers |
+| 2 | "The problem with notes apps: they don't know what a thought is" | Personal blog, Hacker News | Technical professionals |
+| 3 | "Structured notes vs. flat notes: why your ideas deserve more than a blank page" | Medium, Twitter/X | Knowledge workers broadly |
+| 4 | "What if your notes could prove when you had an idea?" | LinkedIn, legal tech | Lawyers, researchers, IP professionals |
+| 5 | "I built a commit system for notes — here's why" | Hacker News, Indie Hackers | Developers, technical founders |
+| 6 | "Local-first notes: why your ideas shouldn't need WiFi" | Privacy-focused communities, Reddit | Privacy-conscious professionals |
+
+**No paid ads at this stage.** The goal is organic signal from people who resonate with the framing. If nobody responds to "document how you think," that's important data — cheaper to learn from blog silence than from App Store silence.
+
+**0.3 — Closed Beta (Weeks 3-6)**
+
+Invite 20-50 waitlist signups to TestFlight. Prioritize:
+- People who mentioned legal, research, or consulting in their signup
+- People who replied to the content pieces
+- People who asked "when can I try it"
+
+Beta goals:
+- Does the onboarding make sense without explanation?
+- Do users discover intent tags and commits organically, or do they ignore them?
+- What do users actually use Obius for? (This is the most important question. The answer may surprise you.)
+- Collect 5-10 quotes for the App Store listing.
+
+---
+
+### Phase 1: Public Launch (Weeks 7-10)
+
+**Objective:** Get Obius into the App Store and achieve first 500 downloads.
+
+**1.1 — App Store Listing**
+
+- **App Name:** Obius — Structured Notes
+- **Subtitle:** Document how you think.
+- **Category:** Productivity
+- **Keywords:** notes, structured, local-first, offline, sections, organize, ai, sync, privacy, commit, professional, writing
+- **Description lead:** "Obius is a local-first notes app where your ideas live as structured, searchable sections. Every thought has a place. Every change is permanent. Your data is yours."
+- **Screenshots:** Focus on 4 moments:
+  1. A note with collapsible sections and intent tags (the "aha" moment)
+  2. A Handle Loop updating across notes (the differentiator)
+  3. A commit being created and shared (the trust primitive)
+  4. Offline editing with the local-first badge (the reliability promise)
+
+**1.2 — Pricing**
+
+**Freemium with a clear upgrade path:**
+
+| Tier | Price | What You Get |
+|------|-------|--------------|
+| **Free** | $0 | Unlimited notes and sections. Local storage. Intent tags. Collapsible sections. Manual commits (up to 10 per note). |
+| **Obius Pro** | $3.99/month or $34.99/year | Unlimited commits. Auto-commits. AI titles and summaries. Semantic search. Cross-device sync. Share links with comments. Biometric section locks. |
+
+**Why this pricing:**
+- Free tier is genuinely useful — not a crippled demo. Users must experience the section-based structure to understand the value.
+- Pro is priced below Notion ($8-10/mo) and Bear ($2.99/mo) but above commodity. $35/year is impulse-buy territory for a professional.
+- Auto-commits behind Pro creates a natural upgrade trigger: "You've been using Obius for a week. Want your notes to automatically build a history? Upgrade to Pro."
+- No "team plan" at launch. That's a Phase 3 conversation after validating individual demand.
+
+**1.3 — Launch Week Channels**
+
+| Channel | Action | Expected Reach |
+|---------|--------|----------------|
+| **Product Hunt** | Launch with a maker story about local-first architecture and the commit system | 2,000-10,000 views |
+| **Hacker News** | "Show HN: I built a notes app with git-style commits" — lead with the technical architecture | 5,000-20,000 views |
+| **Indie Hackers** | Build-in-public post about the journey, architecture decisions, and early metrics | 1,000-5,000 views |
+| **Reddit** | r/productivity, r/ObsidianMD (as an alternative for mobile-first users), r/apple | 1,000-5,000 per post |
+| **Waitlist email** | "Obius is live" email to all waitlist subscribers | 100% of waitlist |
+| **Legal tech newsletters** | Pitch to Above the Law, Lawyerist, Legal Tech Monitor | Varies, high-quality leads |
+
+**1.4 — Launch Week Success Metrics**
+
+| Metric | Target | Why It Matters |
+|--------|--------|----------------|
+| Downloads (Week 1) | 500+ | Proves basic market interest |
+| Free-to-Pro conversion | 5-8% | Validates willingness to pay |
+| Day 7 retention | 30%+ | Proves the product is sticky, not just novel |
+| Commit creation rate | 20%+ of active users create at least 1 commit | Validates the core differentiator resonates |
+| Intent tag usage | 15%+ of sections have non-default intent tags | Validates structured thinking is used, not ignored |
+
+---
+
+### Phase 2: Beachhead Penetration (Months 2-6)
+
+**Objective:** Own the solo-lawyer niche. Achieve 2,000 paying users.
+
+**2.1 — Legal-Specific Content**
+
+After launch data confirms (or refutes) the legal beachhead hypothesis, invest in targeted content:
+
+- "How to structure case briefs in Obius" (tutorial)
+- "Using immutable commits for client documentation" (use case walkthrough)
+- "Obius for deposition prep: evidence sections and biometric locks" (workflow guide)
+- Partner with 2-3 legal tech bloggers or YouTubers for reviews
+
+**2.2 — Feature Priorities Based on User Signal**
+
+| If users do this... | Build this next... |
+|---------------------|-------------------|
+| Create lots of commits manually | Auto-commits (already designed, ship it) |
+| Ignore intent tags | Simplify to fewer options, add AI auto-tagging |
+| Use Handle Loops heavily | Cross-note Handle search, Handle dashboard |
+| Request collaboration | Comment threads on shared commits (already built) |
+| Request Android/web | Start web client scoping (Phase 3) |
+| Churn after 2 weeks | Investigate onboarding, simplify first-run experience |
+
+**2.3 — Community Building**
+
+- Launch a Discord or dedicated community space (not Slack — too transient).
+- Invite beta users and power users.
+- Use the community for feature prioritization, bug reports, and case studies.
+- Identify 5-10 "champion users" who can write testimonials and refer peers.
+
+**2.4 — Month 6 Success Metrics**
+
+| Metric | Target | Why It Matters |
+|--------|--------|----------------|
+| Paying users | 2,000+ | Sustainable at ~$70K ARR |
+| Monthly churn | <5% | Proves long-term stickiness |
+| NPS | 40+ | Measures genuine enthusiasm vs. passive usage |
+| Organic referrals | 20%+ of new users from word-of-mouth | Validates the product sells itself |
+| Commits per active user per month | 5+ | Proves the core value proposition is being used |
+
+---
+
+### Phase 3: Expansion (Months 7-18)
+
+**Objective:** Expand beyond the legal beachhead. Reach 10,000 paying users.
+
+**3.1 — Second Audience: Academic Researchers**
+
+If the legal beachhead succeeds, researchers are the natural second audience:
+- Similar pain (structured evidence, hypothesis tracking, audit trails)
+- Similar price tolerance (academic tools are routinely $50-100/year)
+- Different channels (academic Twitter, ResearchGate, university tech blogs)
+
+**3.2 — Platform Expansion**
+
+Priority order based on user demand signal:
+1. **macOS app** (already in codebase, polish and ship)
+2. **Web client** (read-only initially — view shared commits, browse notes)
+3. **Android** (only if demand signal is strong enough to justify the engineering investment)
+
+**3.3 — Moonshot Feature Sequencing**
+
+Based on our earlier analysis, the sequencing that maximizes likelihood of success:
+
+| Order | Moonshot | When | Trigger |
+|-------|----------|------|---------|
+| 1st | **Structured Thinking API** (Shortcuts, export adapters) | Month 8-10 | Power users requesting integrations |
+| 2nd | **Cognitive Audit Trail** (Decision View, compliance exports) | Month 10-14 | Legal/medical users requesting formatted reasoning chains |
+| 3rd | **Portable Proof Layer** (cryptographic timestamps) | Month 14-18 | Demand from IP professionals, researchers, or journalists |
+| 4th | **Living Knowledge Mesh** (cross-user Handles) | Month 18+ | Only after sufficient user base for network effects |
+
+**3.4 — Pricing Evolution**
+
+At 10,000+ users, introduce:
+- **Obius Pro+** at $7.99/month or $69.99/year: adds Structured Thinking API access, advanced export formats, compliance-ready PDF exports with cryptographic timestamps
+- Keep the core Pro tier unchanged — never take features away from existing customers
+
+**3.5 — Month 18 Success Metrics**
+
+| Metric | Target | Why It Matters |
+|--------|--------|----------------|
+| Paying users | 10,000+ | ~$350K-500K ARR, sustainable indie business |
+| Platform coverage | iOS + macOS + web (read) | Reduces single-platform risk |
+| Audiences served | 3+ professional verticals | Reduces single-market risk |
+| Revenue per user (annual) | $35-50 | Validates premium positioning |
+
+---
+
+### Phase 4: Category Definition (Year 2+)
+
+**Objective:** Transition from "premium notes app" to "professional decision documentation."
+
+This is where the ChatGPT vision becomes relevant — but only after you have:
+- 10,000+ paying users who validate the product
+- Revenue to fund the engineering investment
+- User data showing how professionals actually use commits, intent tags, and audit trails
+- Organic evidence that users describe Obius in decision-documentation terms
+
+**At this point, and not before:**
+- Rebrand positioning from "structured notes" to "document how you think" as the primary identity
+- Introduce the Decision View as a first-class feature
+- Pursue legal tech partnerships for court-admissible documentation
+- Explore enterprise pilots with small law firms, research labs, or consulting practices
+- Consider the AI decision intake layer (Obius as the human review surface for AI-generated decisions)
+
+The category emerges from validated user behavior, not from pre-launch positioning.
+
+---
+
+### GTM Anti-Patterns to Avoid
+
+| Don't Do This | Do This Instead |
+|---------------|-----------------|
+| Launch with "decision ledger" positioning | Launch with "structured notes" and let the decision use case emerge |
+| Build Decision Objects before v1.0 ships | Ship sections + commits, observe how users build decision trails naturally |
+| Target enterprises before you have individual users | Win individuals first, let them bring Obius into their organizations |
+| Spend on paid ads before organic channels are validated | Content + community + launches first, paid acquisition only after CAC/LTV is understood |
+| Build Android before macOS | macOS is already in the codebase and serves your iOS beachhead users who also have Macs |
+| Price at $99-199/year from day one | Start at $35/year, prove the value, then introduce premium tiers |
+| Add features users haven't requested | Build what the waitlist and beta users actually ask for |
+| Avoid the PKM/second-brain vocabulary | Position around "structured" and "private" and "permanent" — not "knowledge management" |
+
+---
+
+## Summary Matrix (Updated)
 
 | Dimension | Answer |
 |-----------|--------|
 | **Core Value** | Structured, private, offline-first thinking with immutable snapshots and reusable idea portals |
 | **Killer Thesis** | *Obius is the notes app where every idea is a building block — structured, private, permanent, and yours.* |
+| **Marketing Headline** | *Document how you think.* |
 | **First Market** | Solo lawyers and independent legal professionals on iOS |
+| **Second Market** | Academic researchers and PhD students |
+| **Pricing** | Free tier + Pro at $34.99/year |
+| **Key Launch Feature** | Auto-commits (passive reasoning trail) |
 | **Biggest Threat** | Apple Notes getting "good enough" + second-brain market fatigue |
-| **Moonshot 1** | Portable Proof Layer (cryptographic timestamp documentation) |
-| **Moonshot 2** | Living Knowledge Mesh (cross-user Handle propagation) |
-| **Moonshot 3** | Structured Thinking API (ideas as interchangeable data) |
-| **Moonshot 4** | Cognitive Audit Trail (auditable decision reasoning) |
+| **Phase 1 Target** | 500 downloads, 5-8% conversion to Pro |
+| **Phase 2 Target** | 2,000 paying users, <5% monthly churn |
+| **Phase 3 Target** | 10,000 paying users across 3+ professional verticals |
+| **Phase 4** | Category transition to professional decision documentation (Year 2+) |
+| **Moonshot 1** | Structured Thinking API (Month 8-10) |
+| **Moonshot 2** | Cognitive Audit Trail (Month 10-14) |
+| **Moonshot 3** | Portable Proof Layer (Month 14-18) |
+| **Moonshot 4** | Living Knowledge Mesh (Month 18+) |
