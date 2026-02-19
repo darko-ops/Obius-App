@@ -191,6 +191,127 @@ It must answer three questions in one sentence:
 
 ---
 
+## Part 4 — The .obx Question: Trust Protocol or Feature Creep?
+
+### What .obx Actually Is Today
+
+The codebase already has a serious commit system. Every `.obx` file is:
+
+- **Content-addressed** — SHA-256 hash computed from the note's content (parentHash + note snapshot + sections + media references), with sorted-key JSON encoding for deterministic hashing
+- **Immutable** — once written, the hash locks the content; any change produces a different hash
+- **Chained** — each commit stores a `parentHash` pointing to the previous commit, creating a verifiable history
+- **Identified** — human-readable short IDs like `#OBX-A1B2-C3D4`
+- **Self-describing** — pretty-printed JSON, readable without any proprietary tool
+- **Integrity-checked** — `ProfileScanner.verifyIntegrity()` recomputes hashes and detects tampering or corruption
+
+The storage is git-style: `vault/ab/abc123def456.obx`. Named node commits (single section extracts) live in `nodes/function_signature.obx`. Media is content-addressed and deduplicated in a parallel `media/` directory.
+
+What does NOT exist yet: zip packaging, export via share sheet, any way to get an `.obx` file off the device.
+
+### Does This Give Obius More of a Chance?
+
+**Yes — but not for the reason you might think.**
+
+Making `.obx` files exportable as zip bundles directly addresses three of the ten kill shots:
+
+| Kill Shot | How .obx Export Helps |
+|---|---|
+| **#5: Sync failures / data loss** | Exportable commits are the ultimate escape hatch. Even if sync breaks, users can manually extract their data. This is the trust guarantee that Evernote and Skiff users never had. |
+| **#6: Feature sprawl** | The commit system already exists and works. Wrapping it in a zip for export is a thin feature, not a new system. It adds portability without adding complexity. |
+| **#10: Acqui-hire death** | If every committed note is a portable, self-contained file that works without Obius, the product cannot be killed by acquisition. The data outlives the app. This is the anti-Skiff promise. |
+
+It also strengthens the core positioning for the target segment. Independent researchers and analysts care deeply about:
+- **Data portability** — "Can I leave if this app dies?"
+- **Verifiability** — "Can I prove this note existed at this time?"
+- **Archival durability** — "Will this file be readable in 10 years?"
+
+A JSON-based, hash-verified, self-contained zip file answers all three with "yes."
+
+**No other notes app does this.** Apple Notes exports PDFs. Notion exports Markdown (lossy). Obsidian uses plain Markdown files (portable but not verified). Bear exports Markdown. None of them produce a cryptographically verified, self-contained knowledge artifact.
+
+### Should This Be a Trust Protocol for AI-Era Systems?
+
+**The honest answer: the instinct is right, but the framing needs work.**
+
+#### What "Trust Protocol" Would Actually Mean
+
+A protocol requires:
+
+1. **An open specification** that anyone can implement
+2. **Multiple implementations** (not just Obius reading/writing .obx)
+3. **External verification** — someone other than the creator can validate the artifact
+4. **Adoption** — other tools recognize and interoperate with the format
+
+Today, `.obx` is a **file format**, not a protocol. And that is fine. Git started as Linus Torvalds' personal version control tool before it became the standard. The format must prove its value in one product before it can become a protocol.
+
+#### Why the AI-Era Framing Has Real Teeth
+
+The problem is real and getting worse:
+
+- **Provenance is collapsing.** When anyone can generate 10,000 words in 30 seconds, proving that a human had a specific insight at a specific time becomes valuable. AI-generated content is indistinguishable from human writing. Who thought what first?
+- **No one has solved this for knowledge work.** C2PA (Adobe, Microsoft, Intel, BBC) solves content provenance for images and video. Git solves it for code. Nothing solves it for the messy pre-publication thinking — the notes, the research threads, the analytical insights — that precedes finished work.
+- **The .obx structure maps directly to verifiable claims.** A commit with a SHA-256 hash, a timestamp, a parent chain, and a full content snapshot is exactly what you would design if you were building a "proof of thought" system from scratch.
+
+An `.obx` ticket is essentially a **signed receipt for a thought**: this content existed in this form at this time, derived from this prior state, with this hash as proof.
+
+#### What Could Go Wrong with the Protocol Framing
+
+| Risk | Why It Matters |
+|---|---|
+| **Self-signed is not verified** | If Obius generates the hash and timestamp, Obius can fake them. For real trust, you would need a timestamp authority (RFC 3161), a blockchain anchor, or an external witness. Without one, .obx proves integrity (content has not been altered) but not authenticity (content was created when it claims). |
+| **Blockchain baggage** | "Content-addressed hash chains" and "trust protocol" sound like web3/crypto to many people. That association is toxic even though the technology is completely different. The framing needs to avoid triggering this pattern-match. |
+| **Premature abstraction** | Building a protocol before you have product-market fit is classic over-engineering. Obsidian did not launch as "the Markdown protocol for knowledge" — it launched as a great app that happened to use Markdown. The protocol story emerged from adoption, not the other way around. |
+| **Users do not know they need this** | Most people taking notes are not thinking about cryptographic provenance. Positioning the product around a problem users do not yet feel risks confusing the market. |
+
+#### The Right Sequence
+
+```
+V1: .obx as PORTABILITY
+    "Your notes are files you own. Export any note as a self-contained
+    .obx package — readable JSON, verified by hash, yours forever."
+
+    This is a trust feature, not a trust protocol.
+    It directly serves the target segment's #1 fear: "what happens
+    when this app dies?"
+
+V2: .obx as VERIFICATION
+    Add optional external timestamping (RFC 3161 or similar).
+    Now .obx proves not just integrity but temporal authenticity.
+    "This research existed in this form before [date]."
+
+    This matters to: patent researchers, investigative journalists,
+    legal professionals establishing timeline of work product.
+
+V3: .obx as PROTOCOL
+    Publish the spec. Build import/export bridges to Obsidian, Notion,
+    standard Markdown. Let other tools read and verify .obx files.
+
+    Now it is a protocol — not because you declared it one, but
+    because other tools adopted it.
+```
+
+### Revised Positioning: Does This Change the Killer Thesis?
+
+The .obx system strengthens the thesis without changing it for V1. The original thesis already captures the trust dimension:
+
+> Obius is a private, offline-first notes app that lets researchers and analysts structure, search, and resurface months of accumulated thinking — without trusting a cloud they don't control.
+
+For V2, if the verification layer ships, the thesis could evolve to:
+
+> **Obius turns your research into verifiable knowledge artifacts — structured, searchable, hash-verified, and portable — so your thinking is provably yours, not trapped in someone else's cloud.**
+
+This version only works once `.obx` export is real, external verification exists, and the target segment has validated that provenance matters to them. Shipping this thesis on day one, before the feature works, would repeat the AI placeholder mistake.
+
+### The Bottom Line
+
+| Question | Answer |
+|---|---|
+| Does .obx export give Obius more of a chance? | **Yes.** It is the single most differentiated thing in the codebase. No competitor has content-addressed, hash-verified, exportable knowledge units. It directly addresses the trust crisis that killed Evernote and Skiff. |
+| Should it be a trust protocol? | **Eventually, yes. On day one, no.** Ship it as a portability and trust feature. Let adoption validate the format. Add external verification in V2. Publish the spec and pursue interoperability in V3. A protocol is earned, not declared. |
+| Does it change the minimum viable segment? | **It sharpens it.** The people who care most about verifiable, portable knowledge artifacts are exactly the independent researchers and analysts already identified — plus a new adjacent segment: patent researchers, legal analysts, and investigative journalists who need provable timelines. |
+
+---
+
 ## Appendix: Immediate Action Items
 
 Based on this analysis, the highest-leverage actions before any public launch:
@@ -200,8 +321,9 @@ Based on this analysis, the highest-leverage actions before any public launch:
 | **P0** | Wire up or remove the AI chat placeholder | A stubbed feature labeled "Intelligence" will generate 1-star reviews |
 | **P0** | Implement and test the payment/subscription flow | No revenue = no business |
 | **P0** | Stress-test sync with real multi-device scenarios | Data loss is an unrecoverable trust failure |
+| **P0** | Ship .obx zip export via iOS share sheet | The single most differentiated feature — makes "your data is yours" tangible, not theoretical |
 | **P1** | Add basic analytics (Mixpanel, PostHog, or TelemetryDeck) | You cannot improve what you cannot measure |
 | **P1** | Build onboarding that demonstrates value in the first note | Show sections, collapse, intent — in 60 seconds |
-| **P1** | Add data export (Markdown, JSON) | Users must know they can leave; this builds trust |
 | **P2** | Reduce feature surface for v1 (consider hiding Handles and Echoes behind progressive disclosure) | Ship fewer things that work perfectly rather than many things that work mostly |
 | **P2** | Build an external acquisition channel before App Store submission | Blog, community, beta waitlist, PKM newsletter partnerships |
+| **P3** | Investigate RFC 3161 timestamping for .obx verification | Moves .obx from "portable format" to "provable artifact" — the V2 trust story |
