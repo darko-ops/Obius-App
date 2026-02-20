@@ -108,6 +108,13 @@ final class NoteRepository: ObservableObject {
         }
     }
 
+    /// Insert or update a note (used when importing shared content).
+    func saveNote(_ note: Note) async throws {
+        try await database.write { db in
+            try note.save(db)
+        }
+    }
+
     func updateNoteTitle(_ noteId: String, title: String?) async throws {
         try await database.write { db in
             guard var note = try Note.fetchOne(db, key: noteId) else { return }
@@ -130,6 +137,15 @@ final class NoteRepository: ObservableObject {
         try await database.write { db in
             guard var note = try Note.fetchOne(db, key: noteId) else { return }
             note.intent = intent
+            note.touch()
+            try note.update(db)
+        }
+    }
+
+    func updateTags(_ noteId: String, tags: [String]) async throws {
+        try await database.write { db in
+            guard var note = try Note.fetchOne(db, key: noteId) else { return }
+            note.tags = tags
             note.touch()
             try note.update(db)
         }

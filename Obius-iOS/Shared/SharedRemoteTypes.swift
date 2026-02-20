@@ -11,7 +11,9 @@ struct RemoteShareLinkRow: Codable {
     let note_id: String?
     let commit_hash: String?
     let commit_name: String?
+    let commit_short_id: String?
     let commit_content: String?
+    let creator_name: String?
     let is_active: Bool
     let view_count: Int
     let created_at: String
@@ -50,6 +52,8 @@ struct SharedSection: Decodable, Identifiable {
     let orderKey: String
     let indentLevel: Int
     let handleId: String?
+    let colorIntent: String?
+    let isCollapsed: Bool
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -58,15 +62,19 @@ struct SharedSection: Decodable, Identifiable {
         case orderKey = "order_key"
         case indentLevel = "indent_level"
         case handleId = "handle_id"
+        case colorIntent = "color_intent"
+        case isCollapsed = "is_collapsed"
     }
 
-    init(id: String, content: String, contentType: String, orderKey: String, indentLevel: Int, handleId: String?) {
+    init(id: String, content: String, contentType: String, orderKey: String, indentLevel: Int, handleId: String?, colorIntent: String? = nil, isCollapsed: Bool = false) {
         self.id = id
         self.content = content
         self.contentType = contentType
         self.orderKey = orderKey
         self.indentLevel = indentLevel
         self.handleId = handleId
+        self.colorIntent = colorIntent
+        self.isCollapsed = isCollapsed
     }
 
     init(from decoder: Decoder) throws {
@@ -77,6 +85,13 @@ struct SharedSection: Decodable, Identifiable {
         orderKey = try container.decode(String.self, forKey: .orderKey)
         indentLevel = try container.decode(Int.self, forKey: .indentLevel)
         handleId = try container.decodeIfPresent(String.self, forKey: .handleId)
+        colorIntent = try container.decodeIfPresent(String.self, forKey: .colorIntent)
+        isCollapsed = (try? container.decode(Bool.self, forKey: .isCollapsed)) ?? false
+    }
+
+    /// Maps the Supabase color_intent string to an IntentType
+    var intent: IntentType {
+        IntentType.fromLegacy(colorIntent)
     }
 }
 
@@ -146,6 +161,7 @@ struct SharedContentResponse {
     let commitContent: String?
     let commitName: String?
     let commitHash: String?
+    let commitShortId: String?
     let creatorName: String?
     let createdAt: String?
     let comments: [SharedComment]
@@ -170,6 +186,7 @@ struct SharedContentResponse {
             commitContent: self.commitContent,
             commitName: self.commitName,
             commitHash: self.commitHash,
+            commitShortId: self.commitShortId,
             creatorName: self.creatorName,
             createdAt: self.createdAt,
             comments: comments ?? self.comments,

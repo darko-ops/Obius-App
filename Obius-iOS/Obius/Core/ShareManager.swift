@@ -58,9 +58,12 @@ final class ShareManager: ObservableObject {
     // MARK: - Create Live Share
 
     func createLiveShare(noteId: String, note: Note, sections: [Section]) async throws -> ShareLink {
-        guard supabase.isAuthenticated, let userId = supabase.currentUser?.id.uuidString else {
+        guard supabase.isAuthenticated, let userId = supabase.currentUser?.id.uuidString.lowercased() else {
             throw ShareError.notAuthenticated
         }
+
+        // Ensure user_profiles row exists (FK target for notes.user_id)
+        try await ensureUserProfile(userId: userId)
 
         // Push note to Supabase so viewers can read it
         let noteRow: [String: String?] = [
@@ -96,7 +99,6 @@ final class ShareManager: ObservableObject {
                     "updated_at": formatTimestamp(section.updatedAt)
                 ]
                 row["parent_section_id"] = section.parentSectionId
-                row["handle_id"] = section.handleId
                 return row
             }
 
@@ -113,12 +115,14 @@ final class ShareManager: ObservableObject {
         )
 
         // Insert share link into Supabase
+        let creatorName = supabase.currentUser?.displayName ?? supabase.currentUser?.email
         let linkRow: [String: String?] = [
             "id": shareLink.id,
             "slug": shareLink.slug,
             "user_id": userId,
             "share_type": "live",
             "note_id": noteId,
+            "creator_name": creatorName,
             "is_active": "true",
             "view_count": "0"
         ]
@@ -133,6 +137,22 @@ final class ShareManager: ObservableObject {
         return shareLink
     }
 
+    /// Ensures a user_profiles row exists for the current user.
+    /// The notes and share_links tables have a FK to user_profiles, so this
+    /// must exist before any upsert.  The row is created idempotently via upsert.
+    private func ensureUserProfile(userId: String) async throws {
+        let displayName = supabase.currentUser?.displayName
+            ?? supabase.currentUser?.email
+        let row: [String: String?] = [
+            "id": userId,
+            "display_name": displayName
+        ]
+        try await supabase.client
+            .from("user_profiles")
+            .upsert(row, onConflict: "id")
+            .execute()
+    }
+
     private func formatTimestamp(_ ms: Int64) -> String {
         let date = Date(timeIntervalSince1970: Double(ms) / 1000)
         let formatter = ISO8601DateFormatter()
@@ -142,18 +162,22 @@ final class ShareManager: ObservableObject {
 
     // MARK: - Create Commit Share
 
-    func createCommitShare(commitHash: String, commitName: String?, commitContent: String) async throws -> ShareLink {
-        guard supabase.isAuthenticated, let userId = supabase.currentUser?.id.uuidString else {
+    func createCommitShare(commitHash: String, commitName: String?, commitShortId: String? = nil, commitContent: String) async throws -> ShareLink {
+        guard supabase.isAuthenticated, let userId = supabase.currentUser?.id.uuidString.lowercased() else {
             throw ShareError.notAuthenticated
         }
+
+        try await ensureUserProfile(userId: userId)
 
         let shareLink = ShareLink(
             userId: userId,
             shareType: .commit,
             commitHash: commitHash,
-            commitName: commitName
+            commitName: commitName,
+            commitShortId: commitShortId
         )
 
+        let creatorName = supabase.currentUser?.displayName ?? supabase.currentUser?.email
         let row: [String: String?] = [
             "id": shareLink.id,
             "slug": shareLink.slug,
@@ -161,7 +185,9 @@ final class ShareManager: ObservableObject {
             "share_type": "commit",
             "commit_hash": commitHash,
             "commit_name": commitName,
+            "commit_short_id": commitShortId,
             "commit_content": commitContent,
+            "creator_name": creatorName,
             "is_active": "true",
             "view_count": "0"
         ]
@@ -211,27 +237,32 @@ final class ShareManager: ObservableObject {
             .eq("id", value: link.id)
             .execute()
 
-        // Fetch creator display name (fall back to current user's email if viewing own share)
-        var creatorName: String?
-        do {
-            struct ProfileRow: Decodable {
-                let display_name: String?
+        // Use creator_name stored on the share link (set at creation time)
+        // Fall back to user_profiles lookup for old shares, then current user email, then "Anonymous"
+        var creatorName: String? = link.creator_name
+        if creatorName == nil {
+            do {
+                struct ProfileRow: Decodable {
+                    let display_name: String?
+                }
+                let profiles: [ProfileRow] = try await supabase.client
+                    .from("user_profiles")
+                    .select("display_name")
+                    .eq("id", value: link.user_id)
+                    .limit(1)
+                    .execute()
+                    .value
+                creatorName = profiles.first?.display_name
+            } catch {
+                print("ShareManager: Could not fetch creator profile: \(error.localizedDescription)")
             }
-            let profiles: [ProfileRow] = try await supabase.client
-                .from("user_profiles")
-                .select("display_name")
-                .eq("id", value: link.user_id)
-                .limit(1)
-                .execute()
-                .value
-            creatorName = profiles.first?.display_name
-        } catch {
-            print("ShareManager: Could not fetch creator profile: \(error.localizedDescription)")
         }
-        // Fallback: if display_name is nil and this is the current user's share, use their email
         if creatorName == nil, let currentUser = supabase.currentUser,
            currentUser.id.uuidString == link.user_id {
             creatorName = currentUser.email
+        }
+        if creatorName == nil {
+            creatorName = "Anonymous"
         }
 
         // Fetch comments and enrich with email
@@ -271,26 +302,26 @@ final class ShareManager: ObservableObject {
         }
 
         if link.share_type == "live", let noteId = link.note_id {
-            // Fetch note
+            // Fetch note (body may not exist on older schemas)
             struct NoteRow: Decodable {
                 let id: String
                 let title: String?
-                let body: String
+                let body: String?
             }
             let notes: [NoteRow] = try await supabase.client
                 .from("notes")
-                .select()
+                .select("id,title,body")
                 .eq("id", value: noteId)
                 .limit(1)
                 .execute()
                 .value
 
-            let note = notes.first.map { SharedNote(id: $0.id, title: $0.title, body: $0.body) }
+            let note = notes.first.map { SharedNote(id: $0.id, title: $0.title, body: $0.body ?? "") }
 
             // Fetch sections
             let sections: [SharedSection] = try await supabase.client
                 .from("sections")
-                .select()
+                .select("id,content,content_type,order_key,indent_level,color_intent,is_collapsed,parent_section_id")
                 .eq("note_id", value: noteId)
                 .is("deleted_at", value: nil)
                 .order("order_key")
@@ -305,6 +336,7 @@ final class ShareManager: ObservableObject {
                 commitContent: nil,
                 commitName: nil,
                 commitHash: nil,
+                commitShortId: nil,
                 creatorName: creatorName,
                 createdAt: link.created_at,
                 comments: comments,
@@ -321,6 +353,7 @@ final class ShareManager: ObservableObject {
                 commitContent: link.commit_content,
                 commitName: link.commit_name,
                 commitHash: link.commit_hash,
+                commitShortId: link.commit_short_id,
                 creatorName: creatorName,
                 createdAt: link.created_at,
                 comments: comments,
@@ -408,18 +441,12 @@ final class ShareManager: ObservableObject {
             )
         }
 
-        let commitShortId: String? = shareLink.commitHash.map { hash in
-            let upper = hash.prefix(4).uppercased()
-            let lower = hash.suffix(4).uppercased()
-            return "OBX-\(upper)-\(lower)"
-        }
-
         return MessageSharePayload(
             slug: shareLink.slug,
             shareType: shareLink.shareType.rawValue,
             title: title,
             creatorName: supabase.currentUser?.displayName,
-            commitShortId: commitShortId,
+            commitShortId: shareLink.commitShortId,
             sectionPreviews: previews,
             handleNames: handles.map { $0.displayName },
             noteId: shareLink.noteId

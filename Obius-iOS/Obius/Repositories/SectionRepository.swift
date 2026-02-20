@@ -16,6 +16,36 @@ final class SectionRepository: ObservableObject {
         database.observeSections(noteId: noteId)
     }
 
+    // MARK: - Create from Shared Content
+
+    /// Inserts a section from shared content, skipping if it already exists.
+    func createSectionFromShared(
+        id: String,
+        noteId: String,
+        content: String,
+        contentType: String,
+        orderKey: String,
+        indentLevel: Int,
+        intent: String?
+    ) async throws {
+        try await database.write { db in
+            // Skip if already exists
+            if try Section.fetchOne(db, key: id) != nil { return }
+
+            let section = Section(
+                id: id,
+                noteId: noteId,
+                content: content,
+                contentType: ContentType(rawValue: contentType) ?? .text,
+                sectionType: .fold,
+                orderKey: orderKey,
+                indentLevel: indentLevel,
+                intent: IntentType.fromLegacy(intent)
+            )
+            try section.insert(db)
+        }
+    }
+
     // MARK: - Create
 
     func createSection(

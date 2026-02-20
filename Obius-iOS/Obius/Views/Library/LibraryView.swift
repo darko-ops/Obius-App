@@ -1507,7 +1507,7 @@ struct CommitsListView: View {
                     NodeCommitRowView(node: node)
                         .padding(.horizontal)
                         .padding(.vertical, 12)
-                        .background(Color.black)
+                        .background(Color.gray.opacity(0.05))
                         .cornerRadius(12)
                         .contentShape(Rectangle())
                         .onTapGesture {
@@ -1524,7 +1524,7 @@ struct CommitsListView: View {
                     CommitRowView(commit: commit, noteName: noteName)
                         .padding(.horizontal)
                         .padding(.vertical, 12)
-                        .background(Color.black)
+                        .background(commit.isAutoCommit ? Color.orange.opacity(0.04) : Color.gray.opacity(0.05))
                         .cornerRadius(12)
                         .contentShape(Rectangle())
                         .onTapGesture {
@@ -1619,6 +1619,7 @@ struct CommitsListView: View {
             let link = try await ShareManager.shared.createCommitShare(
                 commitHash: commit.hash,
                 commitName: commit.name ?? noteNames[commit.noteId],
+                commitShortId: commit.shortId,
                 commitContent: jsonString
             )
 
@@ -1766,6 +1767,33 @@ struct NodeCommitDetailSheet: View {
                         sectionType: node.content.section.sectionType,
                         mediaRepository: appState.mediaRepository
                     )
+
+                    // Copy all button
+                    if node.content.section.contentType != "image" && node.content.section.contentType != "audio" {
+                        HStack {
+                            Spacer()
+                            Button {
+                                UIPasteboard.general.string = node.content.section.content
+                                copiedField = "copy_all"
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                    if copiedField == "copy_all" { copiedField = nil }
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: copiedField == "copy_all" ? "checkmark" : "doc.on.doc")
+                                        .font(.caption)
+                                    Text(copiedField == "copy_all" ? "" : "")
+                                        .font(.caption.weight(.medium))
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.gray.opacity(0.2))
+                                .foregroundStyle(copiedField == "copy_all" ? .green : .secondary)
+                                .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
                 }
                 .padding()
             }
@@ -1781,9 +1809,20 @@ struct NodeCommitDetailSheet: View {
                     }
                 }
                 ToolbarItem(placement: .principal) {
-                    Text("#\(node.content.shortId ?? node.name)")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.green)
+                    Button {
+                        UIPasteboard.general.string = node.content.shortId ?? node.name
+                        copiedField = "nav_title"
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            if copiedField == "nav_title" { copiedField = nil }
+                        }
+                    } label: {
+                        Text(copiedField == "nav_title" ? "Copied" : "#\(node.content.shortId ?? node.name)")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(copiedField == "nav_title" ? .white : .green)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 6)
+                            .background(Color.gray.opacity(0.2), in: Capsule())
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
@@ -1806,35 +1845,41 @@ struct NodeCommitDetailSheet: View {
     }
 
     private var commitBadge: some View {
-        HStack {
-            HStack(spacing: 6) {
-                Image(systemName: "doc.zipper")
-                    .font(.caption2)
-                Text("Commit")
-                    .font(.caption2.weight(.medium))
+        ZStack {
+            HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "doc.zipper")
+                        .font(.caption2)
+                    Text("Commit")
+                        .font(.caption2.weight(.medium))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Color.purple.opacity(0.15), in: Capsule())
+                .foregroundStyle(.purple)
+                Spacer()
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(Color.purple.opacity(0.15), in: Capsule())
-            .foregroundStyle(.purple)
 
-            Spacer()
+            if let title = node.content.sourceNoteTitle, !title.isEmpty {
+                Button {
+                    UIPasteboard.general.string = title
+                    copiedField = "badge_title"
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        if copiedField == "badge_title" { copiedField = nil }
+                    }
+                } label: {
+                    Text(copiedField == "badge_title" ? "Copied" : title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(copiedField == "badge_title" ? .green : .primary)
+                        .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 
     private var metadataCard: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Source note title
-            if let title = node.content.sourceNoteTitle, !title.isEmpty {
-                copyableRow(
-                    label: "Title",
-                    value: title,
-                    field: "title",
-                    valueFont: .subheadline.weight(.semibold),
-                    valueColor: .primary
-                )
-            }
-
             // .obx filename
             copyableRow(
                 label: "File",
@@ -1843,17 +1888,6 @@ struct NodeCommitDetailSheet: View {
                 valueFont: .subheadline.weight(.medium),
                 valueColor: .primary
             )
-
-            // Commit ID
-            if let shortId = node.content.shortId {
-                copyableRow(
-                    label: "ID",
-                    value: "#\(shortId)",
-                    field: "id",
-                    valueFont: .subheadline.weight(.medium),
-                    valueColor: .primary
-                )
-            }
 
             // Creator
             copyableRow(
@@ -1928,6 +1962,7 @@ struct NodeCommitDetailSheet: View {
             let link = try await ShareManager.shared.createCommitShare(
                 commitHash: hash,
                 commitName: node.name,
+                commitShortId: content.shortId,
                 commitContent: jsonString
             )
 
@@ -1963,13 +1998,25 @@ struct CommitRowView: View {
         HStack(spacing: 12) {
             // Commit indicator
             Circle()
-                .fill(Color.accentColor)
+                .fill(commit.isAutoCommit ? Color.orange : Color.accentColor)
                 .frame(width: 8, height: 8)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(commit.name ?? noteName)
-                    .font(.headline)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(commit.name ?? noteName)
+                        .font(.headline)
+                        .lineLimit(1)
+
+                    if commit.isAutoCommit {
+                        Text("Auto")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.15))
+                            .cornerRadius(4)
+                    }
+                }
 
                 Text("#\(commit.shortId)")
                     .font(.caption2.monospaced())
@@ -2051,9 +2098,20 @@ struct CommitDetailSheet: View {
                     }
                 }
                 ToolbarItem(placement: .principal) {
-                    Text("#\(commit.shortId)")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.green)
+                    Button {
+                        UIPasteboard.general.string = commit.shortId
+                        copiedField = "nav_title"
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            if copiedField == "nav_title" { copiedField = nil }
+                        }
+                    } label: {
+                        Text(copiedField == "nav_title" ? "Copied" : "#\(commit.shortId)")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(copiedField == "nav_title" ? .white : .green)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 6)
+                            .background(Color.gray.opacity(0.2), in: Capsule())
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
@@ -2083,49 +2141,46 @@ struct CommitDetailSheet: View {
     private func commitContentView(_ content: CommitContent) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // Commit badge
-                HStack {
-                    HStack(spacing: 6) {
-                        Image(systemName: "doc.zipper")
-                            .font(.caption2)
-                        Text("Commit")
-                            .font(.caption2.weight(.medium))
+                // Commit badge + title
+                ZStack {
+                    HStack {
+                        HStack(spacing: 6) {
+                            Image(systemName: "doc.zipper")
+                                .font(.caption2)
+                            Text("Commit")
+                                .font(.caption2.weight(.medium))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color.purple.opacity(0.15), in: Capsule())
+                        .foregroundStyle(.purple)
+                        Spacer()
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Color.purple.opacity(0.15), in: Capsule())
-                    .foregroundStyle(.purple)
 
-                    Spacer()
+                    if let title = content.note.title, !title.isEmpty {
+                        Button {
+                            UIPasteboard.general.string = title
+                            copiedField = "badge_title"
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                if copiedField == "badge_title" { copiedField = nil }
+                            }
+                        } label: {
+                            Text(copiedField == "badge_title" ? "Copied" : title)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(copiedField == "badge_title" ? .green : .primary)
+                                .lineLimit(1)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
 
                 // Metadata card
                 VStack(alignment: .leading, spacing: 6) {
-                    // Page title
-                    if let title = content.note.title, !title.isEmpty {
-                        copyableRow(
-                            label: "Title",
-                            value: title,
-                            field: "title",
-                            valueFont: .subheadline.weight(.semibold),
-                            valueColor: .primary
-                        )
-                    }
-
                     // .obx filename
                     copyableRow(
                         label: "File",
                         value: "\(commit.name ?? "Untitled").obx",
                         field: "file",
-                        valueFont: .subheadline.weight(.medium),
-                        valueColor: .primary
-                    )
-
-                    // Commit ID
-                    copyableRow(
-                        label: "ID",
-                        value: "#\(commit.shortId)",
-                        field: "id",
                         valueFont: .subheadline.weight(.medium),
                         valueColor: .primary
                     )
@@ -2209,6 +2264,32 @@ struct CommitDetailSheet: View {
                         .font(.subheadline)
                         .foregroundStyle(.primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                // Copy all button
+                HStack {
+                    Spacer()
+                    Button {
+                        let allText = buildFullContentText(content)
+                        UIPasteboard.general.string = allText
+                        copiedField = "copy_all"
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            if copiedField == "copy_all" { copiedField = nil }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: copiedField == "copy_all" ? "checkmark" : "doc.on.doc")
+                                .font(.caption)
+                            Text(copiedField == "copy_all" ? "" : "")
+                                .font(.caption.weight(.medium))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.gray.opacity(0.2))
+                        .foregroundStyle(copiedField == "copy_all" ? .green : .secondary)
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 Divider()
@@ -2322,6 +2403,7 @@ struct CommitDetailSheet: View {
                 link = try await ShareManager.shared.createCommitShare(
                     commitHash: commit.hash,
                     commitName: commit.name ?? noteName,
+                    commitShortId: commit.shortId,
                     commitContent: jsonString
                 )
             }
@@ -2345,6 +2427,7 @@ struct CommitDetailSheet: View {
             let link = try await ShareManager.shared.createCommitShare(
                 commitHash: commit.hash,
                 commitName: commit.name ?? noteName,
+                commitShortId: commit.shortId,
                 commitContent: jsonString
             )
 
@@ -2375,6 +2458,28 @@ struct CommitDetailSheet: View {
         } catch {
             print("Failed to share commit: \(error)")
         }
+    }
+
+    private func buildFullContentText(_ content: CommitContent) -> String {
+        var parts: [String] = []
+        if !content.note.body.isEmpty {
+            parts.append(content.note.body)
+        }
+        for section in content.sections {
+            if section.contentType != "image" && section.contentType != "audio" {
+                parts.append(section.content)
+            }
+            let interstitialKey = "after_\(section.id)"
+            if let text = content.note.interstitialContent[interstitialKey],
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                parts.append(text)
+            }
+        }
+        if let endText = content.note.interstitialContent["end"],
+           !endText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            parts.append(endText)
+        }
+        return parts.joined(separator: "\n")
     }
 }
 

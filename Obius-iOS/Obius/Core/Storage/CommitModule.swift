@@ -28,7 +28,7 @@ class CommitModule: ObservableObject {
     ///   - noteId: The note to commit
     ///   - mediaRefs: Optional media references to include in the commit
     /// - Returns: The created Commit record
-    func createCommit(noteId: String, name: String? = nil, titleOverride: String? = nil, mediaRefs: [MediaReference] = []) async throws -> Commit {
+    func createCommit(noteId: String, name: String? = nil, titleOverride: String? = nil, mediaRefs: [MediaReference] = [], isAutoCommit: Bool = false) async throws -> Commit {
         // 1. Fetch current note state from Hot Store
         guard let note = try await noteRepository.getNote(id: noteId) else {
             throw CommitError.noteNotFound
@@ -83,7 +83,8 @@ class CommitModule: ObservableObject {
             name: name,
             hash: hash,
             parentHash: parentHash,
-            filePath: filePath
+            filePath: filePath,
+            isAutoCommit: isAutoCommit
         )
 
         try await commitRepository.saveCommit(commit)

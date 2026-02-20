@@ -19,6 +19,7 @@ struct ShareLink: Codable, Identifiable, Hashable {
     var noteId: String?                 // For live shares
     var commitHash: String?             // For commit shares
     var commitName: String?             // Display name for commit shares
+    var commitShortId: String?          // Human-readable ID e.g. OBX-A1B2-C3D4
 
     var isActive: Bool
     var viewCount: Int
@@ -42,6 +43,7 @@ struct ShareLink: Codable, Identifiable, Hashable {
         noteId: String? = nil,
         commitHash: String? = nil,
         commitName: String? = nil,
+        commitShortId: String? = nil,
         isActive: Bool = true,
         viewCount: Int = 0,
         createdAt: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
@@ -59,6 +61,7 @@ struct ShareLink: Codable, Identifiable, Hashable {
         self.noteId = noteId
         self.commitHash = commitHash
         self.commitName = commitName
+        self.commitShortId = commitShortId
         self.isActive = isActive
         self.viewCount = viewCount
         self.createdAt = createdAt
@@ -93,7 +96,7 @@ extension ShareLink: FetchableRecord, PersistableRecord {
 
     enum Columns: String, ColumnExpression {
         case id, slug, userId, shareType
-        case noteId, commitHash, commitName
+        case noteId, commitHash, commitName, commitShortId
         case isActive, viewCount
         case createdAt, updatedAt, expiresAt, deletedAt
         case localVersion, serverVersion, syncStatus

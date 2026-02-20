@@ -28,14 +28,37 @@ struct SharedContentView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    if viewModel.shareType == .commit, let hash = viewModel.commitHash {
-                        Text("#\(commitShortId(from: hash))")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.green)
+                    if viewModel.shareType == .commit, let shortId = viewModel.commitShortId ?? viewModel.commitHash.map({ commitShortId(from: $0) }) {
+                        let titleText = shortId
+                        Button {
+                            UIPasteboard.general.string = titleText
+                            copiedField = "nav_title"
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                if copiedField == "nav_title" { copiedField = nil }
+                            }
+                        } label: {
+                            Text(copiedField == "nav_title" ? "Copied" : "#\(titleText)")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(copiedField == "nav_title" ? .white : .green)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 6)
+                                .background(Color.gray.opacity(0.2), in: Capsule())
+                        }
                     } else {
-                        Text(viewModel.title ?? "Shared")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.green)
+                        Button {
+                            UIPasteboard.general.string = viewModel.title ?? ""
+                            copiedField = "nav_title"
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                if copiedField == "nav_title" { copiedField = nil }
+                            }
+                        } label: {
+                            Text(copiedField == "nav_title" ? "Copied" : "Obius Note")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(copiedField == "nav_title" ? .white : .purple)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 6)
+                                .background(Color.purple.opacity(0.15), in: Capsule())
+                        }
                     }
                 }
                 ToolbarItem(placement: .cancellationAction) {
@@ -56,15 +79,40 @@ struct SharedContentView: View {
     private var contentView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // Share type badge + action button
-                HStack {
-                    shareTypeBadge
-                    Spacer()
+                // Share type badge + title + action button
+                ZStack {
+                    // Badge on the left
+                    HStack {
+                        shareTypeBadge
+                        Spacer()
+                    }
+
+                    // Title centered (copyable)
+                    if let title = viewModel.title, !title.isEmpty {
+                        Button {
+                            UIPasteboard.general.string = title
+                            copiedField = "badge_title"
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                if copiedField == "badge_title" { copiedField = nil }
+                            }
+                        } label: {
+                            Text(copiedField == "badge_title" ? "Copied" : title)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(copiedField == "badge_title" ? .green : .primary)
+                                .lineLimit(1)
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    // Action button on the right
                     if SupabaseManager.shared.isAuthenticated {
-                        if viewModel.shareType == .commit {
-                            archiveButton
-                        } else if viewModel.shareType == .live {
-                            addToArtifactsButton
+                        HStack {
+                            Spacer()
+                            if viewModel.shareType == .commit {
+                                archiveButton
+                            } else if viewModel.shareType == .live {
+                                addToArtifactsButton
+                            }
                         }
                     }
                 }
@@ -76,18 +124,32 @@ struct SharedContentView: View {
                     commitContentView
                 }
 
-                Divider()
-                    .padding(.vertical, 8)
-
-                // Comments
-                CommentThreadView(
-                    comments: viewModel.comments,
-                    isAuthenticated: SupabaseManager.shared.isAuthenticated,
-                    isCommitShare: viewModel.shareType == .commit,
-                    onAddComment: { body in
-                        await viewModel.addComment(body: body)
+                // Copy all button
+                HStack {
+                    Spacer()
+                    Button {
+                        let allText = buildFullContentText()
+                        UIPasteboard.general.string = allText
+                        copiedField = "copy_all"
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            if copiedField == "copy_all" { copiedField = nil }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: copiedField == "copy_all" ? "checkmark" : "doc.on.doc")
+                                .font(.caption)
+                            Text(copiedField == "copy_all" ? "" : "")
+                                .font(.caption.weight(.medium))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.gray.opacity(0.2))
+                        .foregroundStyle(copiedField == "copy_all" ? .green : .secondary)
+                        .clipShape(Capsule())
                     }
-                )
+                    .buttonStyle(.plain)
+                }
+
             }
             .padding()
         }
@@ -106,10 +168,10 @@ struct SharedContentView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
         .background(
-            (viewModel.shareType == .live ? Color.blue : Color.purple).opacity(0.15),
+            (viewModel.shareType == .live ? Color.green : Color.purple).opacity(0.15),
             in: Capsule()
         )
-        .foregroundStyle(viewModel.shareType == .live ? .blue : .purple)
+        .foregroundStyle(viewModel.shareType == .live ? .green : .purple)
     }
 
     @ViewBuilder
@@ -132,17 +194,6 @@ struct SharedContentView: View {
     private var commitContentView: some View {
         // Commit metadata header
         VStack(alignment: .leading, spacing: 6) {
-            // Page title
-            if let title = viewModel.title, !title.isEmpty {
-                copyableRow(
-                    label: "Title",
-                    value: title,
-                    field: "title",
-                    valueFont: .subheadline.weight(.semibold),
-                    valueColor: .primary
-                )
-            }
-
             // .obx filename
             copyableRow(
                 label: "File",
@@ -152,27 +203,14 @@ struct SharedContentView: View {
                 valueColor: .primary
             )
 
-            // Commit ID
-            if let hash = viewModel.commitHash {
-                copyableRow(
-                    label: "ID",
-                    value: "#\(commitShortId(from: hash))",
-                    field: "id",
-                    valueFont: .subheadline.weight(.medium),
-                    valueColor: .primary
-                )
-            }
-
             // Creator
-            if let creator = viewModel.creatorName {
-                copyableRow(
-                    label: "By",
-                    value: creator,
-                    field: "creator",
-                    valueFont: .subheadline,
-                    valueColor: .secondary
-                )
-            }
+            copyableRow(
+                label: "By",
+                value: viewModel.creatorName ?? "Anonymous",
+                field: "creator",
+                valueFont: .subheadline,
+                valueColor: .secondary
+            )
 
             // Created date
             if let date = viewModel.createdAt {
@@ -242,7 +280,9 @@ struct SharedContentView: View {
             Task {
                 await viewModel.addToArtifacts(
                     coldStore: appState.coldStore,
-                    commitRepository: appState.commitRepository
+                    commitRepository: appState.commitRepository,
+                    noteRepository: appState.noteRepository,
+                    sectionRepository: appState.sectionRepository
                 )
             }
         } label: {
@@ -254,7 +294,7 @@ struct SharedContentView: View {
                     Image(systemName: viewModel.isArchived ? "checkmark.circle.fill" : "arrow.down.doc.fill")
                         .font(.caption)
                 }
-                Text(viewModel.isArchived ? "Saved" : "Add to Artifacts")
+                Text(viewModel.isArchived ? "Saved" : "Add")
                     .font(.caption.weight(.medium))
             }
             .padding(.horizontal, 10)
@@ -322,6 +362,31 @@ struct SharedContentView: View {
         .buttonStyle(.plain)
     }
 
+    private func buildFullContentText() -> String {
+        var parts: [String] = []
+        if viewModel.shareType == .live {
+            if let note = viewModel.note, !note.body.isEmpty {
+                parts.append(note.body)
+            }
+            if let sections = viewModel.sections {
+                for section in sections where section.contentType != "image" && section.contentType != "audio" {
+                    parts.append(section.content)
+                }
+            }
+        } else {
+            if let body = viewModel.commitNoteBody, !body.isEmpty {
+                parts.append(body)
+            }
+            for section in viewModel.commitSections where section.contentType != "image" && section.contentType != "audio" {
+                parts.append(section.content)
+            }
+            if parts.isEmpty, let raw = viewModel.commitContent {
+                parts.append(raw)
+            }
+        }
+        return parts.joined(separator: "\n")
+    }
+
     /// Derives a short commit ID from a hash like "sha256:abc123..." → "OBX-ABC1-...XYZ"
     private func commitShortId(from hash: String) -> String {
         let hex = hash.hasPrefix("sha256:") ? String(hash.dropFirst(7)) : hash
@@ -341,16 +406,32 @@ struct SharedContentView: View {
                 mediaRepository: appState.mediaRepository
             )
         } else {
+            let intent = section.intent
+
             HStack(alignment: .top, spacing: 0) {
                 if section.indentLevel > 0 {
                     Spacer()
                         .frame(width: CGFloat(section.indentLevel) * 20)
                 }
 
-                Text(section.content)
-                    .font(section.contentType == "code" ? .system(.body, design: .monospaced) : .body)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 0) {
+                    // Intent rail
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(intent.color)
+                        .frame(width: 3)
+                        .padding(.vertical, 4)
+
+                    Text(section.content)
+                        .font(section.contentType == "code" ? .system(.body, design: .monospaced) : .body)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(intent.backgroundTint)
+                )
             }
         }
     }

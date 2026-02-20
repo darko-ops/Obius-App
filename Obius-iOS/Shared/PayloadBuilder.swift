@@ -13,7 +13,8 @@ enum PayloadBuilder {
     ///   - sections: Sections to preview (up to 3 will be used)
     ///   - handles: Handles referenced by the note
     ///   - creatorName: Optional creator display name
-    ///   - commitHash: Optional commit hash (for generating shortId)
+    ///   - commitHash: Optional commit hash (unused, kept for compatibility)
+    ///   - commitShortId: Optional human-readable short ID (e.g. OBX-A1B2-C3D4)
     static func buildPayload(
         slug: String,
         shareType: String,
@@ -22,14 +23,9 @@ enum PayloadBuilder {
         handleNames: [String],
         creatorName: String? = nil,
         commitHash: String? = nil,
+        commitShortId: String? = nil,
         noteId: String? = nil
     ) -> MessageSharePayload {
-        let commitShortId: String? = commitHash.map { hash in
-            let upper = hash.prefix(4).uppercased()
-            let lower = hash.suffix(4).uppercased()
-            return "OBX-\(upper)-\(lower)"
-        }
-
         return MessageSharePayload(
             slug: slug,
             shareType: shareType,

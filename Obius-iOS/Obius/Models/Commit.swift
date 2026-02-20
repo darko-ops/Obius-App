@@ -15,6 +15,7 @@ struct Commit: Codable, Identifiable, Hashable {
     var filePath: String       // Relative path to .obx file in Cold Store
     var createdAt: Int64
     var isHidden: Bool         // Whether commit is hidden from profile view
+    var isAutoCommit: Bool     // Whether this commit was created automatically
 
     init(
         id: String = UUID().uuidString,
@@ -25,7 +26,8 @@ struct Commit: Codable, Identifiable, Hashable {
         parentHash: String? = nil,
         filePath: String,
         createdAt: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
-        isHidden: Bool = false
+        isHidden: Bool = false,
+        isAutoCommit: Bool = false
     ) {
         self.id = id
         self.noteId = noteId
@@ -36,6 +38,7 @@ struct Commit: Codable, Identifiable, Hashable {
         self.filePath = filePath
         self.createdAt = createdAt
         self.isHidden = isHidden
+        self.isAutoCommit = isAutoCommit
     }
 
     /// Generates a unique short ID in the format OBX-XXXX-XXXX (uppercase letters + digits)
@@ -52,7 +55,7 @@ extension Commit: FetchableRecord, PersistableRecord {
     static let databaseTableName = "commits"
 
     enum Columns: String, ColumnExpression {
-        case id, noteId, name, shortId, hash, parentHash, filePath, createdAt, isHidden
+        case id, noteId, name, shortId, hash, parentHash, filePath, createdAt, isHidden, isAutoCommit
     }
 
     // Relationships

@@ -15,6 +15,7 @@ struct Note: Codable, Identifiable, Hashable {
     var isPinned: Bool
     var groupName: String?  // Name of the group this note belongs to (nil = ungrouped)
     var intent: IntentType  // Renamed from colorIntent
+    var tags: [String]  // Hashtag labels for the page
 
     // Sync fields
     var localVersion: Int
@@ -36,6 +37,7 @@ struct Note: Codable, Identifiable, Hashable {
         isPinned: Bool = false,
         groupName: String? = nil,
         intent: IntentType = .idea,
+        tags: [String] = [],
         localVersion: Int = 1,
         serverVersion: Int? = nil,
         syncStatus: SyncStatus = .pending,
@@ -54,6 +56,7 @@ struct Note: Codable, Identifiable, Hashable {
         self.isPinned = isPinned
         self.groupName = groupName
         self.intent = intent
+        self.tags = tags
         self.localVersion = localVersion
         self.serverVersion = serverVersion
         self.syncStatus = syncStatus
@@ -188,7 +191,7 @@ extension Note: FetchableRecord, PersistableRecord {
     
     enum Columns: String, ColumnExpression {
         case id, title, aiTitle, body, bodyRichText, interstitialContent, interstitialRichContent, createdAt, updatedAt, deletedAt
-        case isPinned, groupName, intent, localVersion, serverVersion
+        case isPinned, groupName, intent, tags, localVersion, serverVersion
         case syncStatus, lastSyncedAt
     }
     

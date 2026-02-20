@@ -12,6 +12,7 @@ final class SharedContentViewModel: ObservableObject {
     @Published var commitSections: [SharedSection] = []
     @Published var commitNoteBody: String?
     @Published var commitHash: String?
+    @Published var commitShortId: String?
     @Published var creatorName: String?
     @Published var createdAt: Date?
     @Published var comments: [SharedComment] = []
@@ -40,6 +41,7 @@ final class SharedContentViewModel: ObservableObject {
             commitContent = response.commitContent
             commitName = response.commitName
             commitHash = response.commitHash
+            commitShortId = response.commitShortId
             creatorName = response.creatorName
             comments = response.comments
             viewCount = response.viewCount
@@ -53,11 +55,18 @@ final class SharedContentViewModel: ObservableObject {
             }
 
             // Parse commit JSON into sections for formatted display
+            // (may override title with the actual note title from inside the commit)
             if shareType == .commit, let raw = response.commitContent {
                 parseCommitContent(raw)
             }
 
-            title = response.note?.title ?? response.commitName ?? "Shared Content"
+            // Compute title: explicit title first, then auto-title from content
+            if let noteTitle = response.note?.title, !noteTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                title = noteTitle
+            } else if title == nil {
+                // Auto-generate from body/section text (same logic as Note.displayTitle)
+                title = autoTitle(body: response.note?.body, sections: response.sections) ?? response.commitName ?? "Shared Content"
+            }
 
             // Set up realtime for live shares
             if shareType == .live, let noteId = response.note?.id {
@@ -150,9 +159,9 @@ final class SharedContentViewModel: ObservableObject {
         do {
             let parsed = try JSONDecoder().decode(ParsedCommit.self, from: data)
 
-            // Use the note title from commit if we don't have one yet
-            if title == nil || title == "Shared Content" {
-                title = parsed.note.title
+            // Prefer the actual note title from inside the commit over the file name
+            if let noteTitle = parsed.note.title, !noteTitle.isEmpty {
+                title = noteTitle
             }
 
             // Use commit hash if not already set from share link
@@ -198,69 +207,43 @@ final class SharedContentViewModel: ObservableObject {
         }
     }
 
-    /// Creates a commit snapshot from the live shared content and saves it locally.
-    func addToArtifacts(coldStore: ColdStore, commitRepository: CommitRepository) async {
+    /// Creates a local note from the shared content and adds it to Artifacts.
+    func addToArtifacts(coldStore: ColdStore, commitRepository: CommitRepository, noteRepository: NoteRepository, sectionRepository: SectionRepository) async {
         guard let sharedNote = note else { return }
 
         isArchiving = true
         defer { isArchiving = false }
 
         do {
-            let noteSnapshot = CommitNoteSnapshot(
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            let noteTitle = title ?? sharedNote.title
+
+            // Create the note locally so it appears on the Artifacts page
+            let localNote = Note(
                 id: sharedNote.id,
-                title: sharedNote.title,
+                title: noteTitle,
                 body: sharedNote.body,
-                intent: "note",
-                isPinned: false,
-                createdAt: Int64(Date().timeIntervalSince1970 * 1000),
-                updatedAt: Int64(Date().timeIntervalSince1970 * 1000)
+                createdAt: now,
+                updatedAt: now
             )
 
-            let sectionSnapshots: [CommitSectionSnapshot] = (sections ?? []).map { section in
-                CommitSectionSnapshot(
-                    id: section.id,
-                    content: section.content,
-                    contentType: section.contentType,
-                    sectionType: "node",
-                    intent: "note",
-                    orderKey: section.orderKey,
-                    indentLevel: section.indentLevel,
-                    parentSectionId: nil,
-                    handleId: section.handleId,
-                    isCollapsed: false,
-                    isLocked: false
-                )
+            // Insert or update the note locally
+            try await noteRepository.saveNote(localNote)
+
+            // Create sections locally
+            if let sharedSections = sections {
+                for section in sharedSections {
+                    try await sectionRepository.createSectionFromShared(
+                        id: section.id,
+                        noteId: sharedNote.id,
+                        content: section.content,
+                        contentType: section.contentType,
+                        orderKey: section.orderKey,
+                        indentLevel: section.indentLevel,
+                        intent: section.colorIntent
+                    )
+                }
             }
-
-            // Compute hash for this snapshot
-            let hash = coldStore.computeCommitHash(
-                parentHash: nil,
-                note: noteSnapshot,
-                sections: sectionSnapshots,
-                mediaRefs: []
-            )
-
-            // Check if already saved
-            if let _ = try await commitRepository.getCommit(hash: hash) {
-                isArchived = true
-                return
-            }
-
-            let commitContent = CommitContent(
-                hash: hash,
-                note: noteSnapshot,
-                sections: sectionSnapshots
-            )
-
-            let filePath = try coldStore.writeCommit(commitContent)
-
-            let commit = Commit(
-                noteId: sharedNote.id,
-                name: title ?? "Shared Page",
-                hash: hash,
-                filePath: filePath
-            )
-            try await commitRepository.saveCommit(commit)
 
             isArchived = true
         } catch {
@@ -302,6 +285,37 @@ final class SharedContentViewModel: ObservableObject {
         } catch {
             errorMessage = "Failed to archive: \(error.localizedDescription)"
         }
+    }
+
+    /// Derives a title from note body and section content (first 3 words), mirroring Note.displayTitle.
+    private func autoTitle(body: String?, sections: [SharedSection]?) -> String? {
+        var sources: [String] = []
+
+        if let body = body?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty {
+            sources.append(body)
+        }
+
+        if let sections = sections {
+            for section in sections {
+                let ct = section.contentType
+                if ct == "text" || ct == "checklist" || ct == "code" || ct == "quote" {
+                    let t = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !t.isEmpty { sources.append(t) }
+                }
+            }
+        }
+
+        var words: [String] = []
+        for source in sources {
+            let sourceWords = source.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+            for word in sourceWords {
+                words.append(word)
+                if words.count >= 3 { break }
+            }
+            if words.count >= 3 { break }
+        }
+        guard !words.isEmpty else { return nil }
+        return words.prefix(3).joined(separator: " ")
     }
 
     private func extractShareLinkId() -> String? {

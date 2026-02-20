@@ -79,6 +79,15 @@ struct SettingsView: View {
                 }
             }
 
+            // Commits Section
+            SwiftUI.Section("Commits") {
+                NavigationLink {
+                    LedgerView()
+                } label: {
+                    Label("Ledger", systemImage: "list.bullet.rectangle")
+                }
+            }
+
             // About Section
             SwiftUI.Section("About") {
                 HStack {
@@ -202,6 +211,144 @@ struct DataManagementView: View {
             }
         } message: {
             Text("This cannot be undone. All local notes will be permanently deleted.")
+        }
+    }
+}
+
+// MARK: - Ledger View
+
+struct LedgerView: View {
+    @EnvironmentObject var appState: AppState
+    @State private var commits: [Commit] = []
+    @State private var noteNames: [String: String] = [:]
+    @State private var isLoading = true
+
+    var body: some View {
+        Group {
+            if isLoading {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if commits.isEmpty {
+                ContentUnavailableView(
+                    "No Commits",
+                    systemImage: "clock.arrow.circlepath",
+                    description: Text("Commits will appear here as you save snapshots of your notes.")
+                )
+            } else {
+                List {
+                    ForEach(commits) { commit in
+                        let noteName = noteNames[commit.noteId] ?? commit.name ?? "Archived Commit"
+                        HStack(spacing: 12) {
+                            Circle()
+                                .fill(commit.isAutoCommit ? Color.orange : Color.accentColor)
+                                .frame(width: 8, height: 8)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 6) {
+                                    Text(commit.name ?? noteName)
+                                        .font(.headline)
+                                        .lineLimit(1)
+
+                                    if commit.isAutoCommit {
+                                        Text("Auto")
+                                            .font(.caption2.weight(.semibold))
+                                            .foregroundStyle(.orange)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.orange.opacity(0.15))
+                                            .cornerRadius(4)
+                                    }
+                                }
+
+                                Text("#\(commit.shortId)")
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.tertiary)
+                            }
+
+                            Spacer()
+
+                            VStack(alignment: .trailing, spacing: 4) {
+                                if commit.name != nil {
+                                    Text("from \(noteName)")
+                                        .font(.caption)
+                                        .foregroundStyle(.tertiary)
+                                        .lineLimit(1)
+                                }
+
+                                Text(formattedDate(commit.createdAt))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .listRowBackground(
+                            commit.isHidden
+                                ? Color.gray.opacity(0.08)
+                                : Color.clear
+                        )
+                        .opacity(commit.isHidden ? 0.6 : 1.0)
+                        .swipeActions(edge: .trailing) {
+                            if commit.isHidden {
+                                Button {
+                                    Task { await toggleHidden(commit) }
+                                } label: {
+                                    Label("Unhide", systemImage: "eye")
+                                }
+                                .tint(.accentColor)
+                            } else {
+                                Button {
+                                    Task { await toggleHidden(commit) }
+                                } label: {
+                                    Label("Hide", systemImage: "eye.slash")
+                                }
+                                .tint(.orange)
+                            }
+                        }
+                    }
+                }
+                .listStyle(.plain)
+            }
+        }
+        .navigationTitle("Ledger")
+        .task {
+            await loadAllCommits()
+        }
+    }
+
+    private func formattedDate(_ timestamp: Int64) -> String {
+        let date = Date(timeIntervalSince1970: Double(timestamp) / 1000)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "M.dd.yyyy"
+        return formatter.string(from: date)
+    }
+
+    private func loadAllCommits() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            commits = try await appState.commitRepository.getAllCommits()
+
+            for commit in commits {
+                if noteNames[commit.noteId] == nil {
+                    if let note = try await appState.noteRepository.getNote(id: commit.noteId) {
+                        noteNames[commit.noteId] = note.displayTitle
+                    }
+                }
+            }
+        } catch {
+            print("Failed to load ledger: \(error)")
+        }
+    }
+
+    private func toggleHidden(_ commit: Commit) async {
+        do {
+            let newHidden = !commit.isHidden
+            try await appState.commitRepository.setHidden(newHidden, id: commit.id)
+            if let index = commits.firstIndex(where: { $0.id == commit.id }) {
+                commits[index].isHidden = newHidden
+            }
+        } catch {
+            print("Failed to toggle commit visibility: \(error)")
         }
     }
 }

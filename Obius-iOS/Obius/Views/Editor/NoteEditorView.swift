@@ -55,6 +55,9 @@ private struct NoteEditorContent: View {
     @State private var editingTitle = false
     @State private var titleText = ""
     @State private var bodyText = ""
+    @State private var showingTagInput = false
+    @State private var newTagText = ""
+    @FocusState private var tagFieldFocused: Bool
     @State private var isReordering = false
     @State private var showingTemplates = false
     @State private var templateTargetSectionId: String?
@@ -369,8 +372,9 @@ private struct NoteEditorContent: View {
     @ViewBuilder
     private func headerContent(currentParent: Section?, nonEmptySectionsEmpty: Bool) -> some View {
         if möbiusNavigation.isAtRoot {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 6) {
                 titleView
+                loopsAndTagsView
                 noteBodyEditor
             }
             .padding(.horizontal)
@@ -912,6 +916,7 @@ private struct NoteEditorContent: View {
             let shareLink = try await ShareManager.shared.createCommitShare(
                 commitHash: commit.hash,
                 commitName: commit.name,
+                commitShortId: commit.shortId,
                 commitContent: jsonString
             )
 
@@ -1073,37 +1078,30 @@ private struct NoteEditorContent: View {
 
     @ViewBuilder
     private var titleView: some View {
-        HStack(spacing: 12) {
-            // Intent Rail indicator
-            RoundedRectangle(cornerRadius: 2)
-                .fill(viewModel.note?.intent.color ?? .blue)
-                .frame(width: 4, height: 32)
-
+        HStack(spacing: 8) {
             if editingTitle {
                 TextField("Title", text: $titleText)
-                    .font(.title.bold())
+                    .font(.title3.bold())
                     .textFieldStyle(.plain)
+                    .multilineTextAlignment(.leading)
                     .focused($titleFocused)
                     .onSubmit {
                         saveTitle()
                     }
                     .onAppear {
                         titleText = viewModel.note?.title ?? ""
-                        // Auto-focus when entering edit mode
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             titleFocused = true
                         }
                     }
                     .onChange(of: titleFocused) { _, isFocused in
-                        // Save when focus is lost (user tapped elsewhere)
                         if !isFocused {
                             saveTitle()
                         }
                     }
             } else {
                 Text(viewModel.displayTitle)
-                    .font(.title.bold())
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .font(.title3.bold())
                     .contentShape(Rectangle())
                     .onTapGesture {
                         titleText = viewModel.note?.title ?? ""
@@ -1116,8 +1114,10 @@ private struct NoteEditorContent: View {
             if viewModel.note?.isPinned == true {
                 Image(systemName: "pin.fill")
                     .foregroundStyle(.orange)
+                    .font(.caption)
             }
         }
+        .frame(maxWidth: .infinity)
         .background {
             GeometryReader { geo in
                 let frame = geo.frame(in: .global)
@@ -1130,6 +1130,135 @@ private struct NoteEditorContent: View {
                     }
             }
         }
+    }
+
+    @ViewBuilder
+    private var loopsAndTagsView: some View {
+        let handles = viewModel.pageHandles
+        let tags = viewModel.note?.tags ?? []
+
+        if !handles.isEmpty || !tags.isEmpty || showingTagInput {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    // Loop bubbles
+                    ForEach(handles) { handle in
+                        Text("@\(handle.displayName)")
+                            .font(.caption.bold())
+                            .foregroundStyle(.purple)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                Capsule()
+                                    .fill(Color.purple.opacity(0.1))
+                            )
+                    }
+
+                    // Tag bubbles
+                    ForEach(tags, id: \.self) { tag in
+                        Text("#\(tag)")
+                            .font(.caption.bold())
+                            .foregroundStyle(.yellow)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                Capsule()
+                                    .fill(Color.yellow.opacity(0.12))
+                            )
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    removeTag(tag)
+                                } label: {
+                                    Label("Remove Tag", systemImage: "trash")
+                                }
+                            }
+                    }
+
+                    // Tag input or + button
+                    if showingTagInput {
+                        TextField("tag", text: $newTagText)
+                            .font(.caption.bold())
+                            .textFieldStyle(.plain)
+                            .focused($tagFieldFocused)
+                            .frame(width: 80)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                Capsule()
+                                    .strokeBorder(Color.yellow.opacity(0.4), lineWidth: 1)
+                            )
+                            .onSubmit {
+                                addTag()
+                            }
+                            .onAppear {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                    tagFieldFocused = true
+                                }
+                            }
+                            .onChange(of: tagFieldFocused) { _, isFocused in
+                                if !isFocused {
+                                    addTag()
+                                }
+                            }
+                    } else {
+                        Button {
+                            showingTagInput = true
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.caption.bold())
+                                .foregroundStyle(.yellow)
+                                .frame(width: 26, height: 26)
+                                .background(
+                                    Circle()
+                                        .fill(Color.yellow.opacity(0.12))
+                                )
+                        }
+                    }
+                }
+                .padding(.horizontal, 4)
+            }
+            .frame(maxWidth: .infinity)
+        } else {
+            // Just show the + button when empty
+            Button {
+                showingTagInput = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "number")
+                    Image(systemName: "plus")
+                }
+                .font(.caption2.bold())
+                .foregroundStyle(.yellow.opacity(0.6))
+                .frame(width: 40, height: 24)
+                .background(
+                    Capsule()
+                        .fill(Color.yellow.opacity(0.08))
+                )
+            }
+        }
+    }
+
+    private func addTag() {
+        let tag = newTagText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "#", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !tag.isEmpty else {
+            showingTagInput = false
+            return
+        }
+        var current = viewModel.note?.tags ?? []
+        if !current.contains(where: { $0.lowercased() == tag.lowercased() }) {
+            current.append(tag)
+            Task { try? await viewModel.updateTags(current) }
+        }
+        newTagText = ""
+        showingTagInput = false
+    }
+
+    private func removeTag(_ tag: String) {
+        var current = viewModel.note?.tags ?? []
+        current.removeAll { $0 == tag }
+        Task { try? await viewModel.updateTags(current) }
     }
 
     private func saveTitle() {

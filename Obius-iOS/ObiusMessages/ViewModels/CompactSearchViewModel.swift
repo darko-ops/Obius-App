@@ -125,12 +125,14 @@ final class CompactSearchViewModel: ObservableObject {
     private func createLiveShareMessage(noteId: String, title: String, userId: String) async throws -> MSMessage {
         let slug = generateSlug()
 
+        let creatorName = supabase.currentUser?.userMetadata["display_name"]?.stringValue ?? supabase.currentUser?.email
         let row: [String: String?] = [
             "id": UUID().uuidString,
             "slug": slug,
             "user_id": userId,
             "share_type": "live",
             "note_id": noteId,
+            "creator_name": creatorName,
             "is_active": "true",
             "view_count": "0"
         ]
@@ -159,6 +161,7 @@ final class CompactSearchViewModel: ObservableObject {
     private func createCommitShareMessage(commit: Commit, userId: String) async throws -> MSMessage {
         let slug = generateSlug()
 
+        let creatorName = supabase.currentUser?.userMetadata["display_name"]?.stringValue ?? supabase.currentUser?.email
         let row: [String: String?] = [
             "id": UUID().uuidString,
             "slug": slug,
@@ -166,6 +169,8 @@ final class CompactSearchViewModel: ObservableObject {
             "share_type": "commit",
             "commit_hash": commit.hash,
             "commit_name": commit.name,
+            "commit_short_id": commit.shortId,
+            "creator_name": creatorName,
             "is_active": "true",
             "view_count": "0"
         ]
@@ -182,7 +187,8 @@ final class CompactSearchViewModel: ObservableObject {
             sections: [],
             handleNames: [],
             creatorName: supabase.currentUser?.userMetadata["display_name"]?.stringValue,
-            commitHash: commit.hash
+            commitHash: commit.hash,
+            commitShortId: commit.shortId
         )
 
         return MessageBuilder.buildMessage(from: payload)

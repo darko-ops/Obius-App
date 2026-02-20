@@ -142,6 +142,22 @@ final class NoteEditorViewModel: ObservableObject {
         try await noteRepository.setIntent(noteId, intent: intent)
     }
 
+    func updateTags(_ tags: [String]) async throws {
+        try await noteRepository.updateTags(noteId, tags: tags)
+    }
+
+    /// Unique handles linked to sections on this page
+    var pageHandles: [Handle] {
+        var seen = Set<String>()
+        var result: [Handle] = []
+        for section in sections {
+            if let handle = getHandle(for: section), seen.insert(handle.id).inserted {
+                result.append(handle)
+            }
+        }
+        return result
+    }
+
     func updateBody(_ body: String, richText: String? = nil) async throws {
         try await noteRepository.updateNoteBody(noteId, body: body, richText: richText)
     }

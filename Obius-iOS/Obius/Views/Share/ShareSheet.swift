@@ -158,6 +158,7 @@ struct ShareSheet: View {
             let link = try await ShareManager.shared.createCommitShare(
                 commitHash: commit.hash,
                 commitName: commit.name,
+                commitShortId: commit.shortId,
                 commitContent: content
             )
             createdShareLink = link

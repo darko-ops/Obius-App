@@ -37,6 +37,8 @@ private struct NotesListContent: View {
     @State private var shareURL: URL?
     @State private var shareTitle: String = ""
     @State private var sharePreview: String = ""
+    @State private var shareError: String?
+    @State private var pendingShare = false
     @State private var isSelectionMode = false
     @State private var selectedNoteIds: Set<String> = []
     @State private var showingDeleteConfirmation = false
@@ -227,6 +229,14 @@ private struct NotesListContent: View {
         } message: {
             Text("Enter a name for the group")
         }
+        .alert("Unable to Share", isPresented: Binding(
+            get: { shareError != nil },
+            set: { if !$0 { shareError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(shareError ?? "")
+        }
         .navigationDestination(item: $selectedNote) { note in
             NoteEditorView(noteId: note.id)
         }
@@ -380,6 +390,9 @@ private struct NotesListContent: View {
         .task(id: note.updatedAt) {
             await loadSectionPreview(for: note)
         }
+        .onAppear {
+            Task { await loadSectionPreview(for: note) }
+        }
         .contextMenu {
                 // Pin/Unpin
                 Button {
@@ -517,6 +530,7 @@ private struct NotesListContent: View {
             let shareLink = try await ShareManager.shared.createCommitShare(
                 commitHash: commit.hash,
                 commitName: commit.name,
+                commitShortId: commit.shortId,
                 commitContent: jsonString
             )
 
@@ -530,30 +544,24 @@ private struct NotesListContent: View {
     }
 
     private func loadSectionPreview(for note: Note) async {
-        // Skip if body already has content (body is observed directly, no caching needed)
-        let body = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard body.isEmpty else {
-            sectionPreviews.removeValue(forKey: note.id)
-            autoTitles.removeValue(forKey: note.id)
-            return
-        }
-
         do {
             let sections = try await sectionRepository.getSections(noteId: note.id)
             let sorted = sections.sorted(by: { $0.orderKey < $1.orderKey })
 
-            // Compute auto-title with full section context
-            let computed = note.displayTitle(sections: sorted)
+            // Always compute auto-title with full section context (matches editor behavior)
             let hasUserTitle = note.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             let hasAiTitle = note.aiTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             if !hasUserTitle && !hasAiTitle {
-                autoTitles[note.id] = computed
+                autoTitles[note.id] = note.displayTitle(sections: sorted)
             } else {
                 autoTitles.removeValue(forKey: note.id)
             }
 
-            // Find first section with content for the preview subtitle
-            if let firstContent = sorted
+            // Find preview subtitle: use note body if present, otherwise first section content
+            let body = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !body.isEmpty {
+                sectionPreviews.removeValue(forKey: note.id)
+            } else if let firstContent = sorted
                 .first(where: { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
                 if firstContent.contentType == .audio {
                     // Parse "hash|duration" format
@@ -612,8 +620,11 @@ private struct NotesListContent: View {
     }
 
     private func createPageShareLink(for note: Note) async {
+        pendingShare = true
+        defer { pendingShare = false }
+
         // Gather page title
-        let title = note.displayTitle
+        let title = autoTitles[note.id] ?? note.displayTitle
 
         // Gather all section content
         var sections: [Section] = []
@@ -628,7 +639,8 @@ private struct NotesListContent: View {
                 }
             }
         } catch {
-            print("Failed to load sections for share: \(error)")
+            shareError = "Failed to load page content"
+            return
         }
 
         // Also include note body if present
@@ -641,7 +653,10 @@ private struct NotesListContent: View {
 
         do {
             let shareLink = try await ShareManager.shared.createLiveShare(noteId: note.id, note: note, sections: sections)
-            guard let url = URL(string: shareLink.url) else { return }
+            guard let url = URL(string: shareLink.url) else {
+                shareError = "Failed to generate share URL"
+                return
+            }
 
             // Build and write message payload for iMessage extension
             let handles = sections.compactMap { section in
@@ -660,7 +675,7 @@ private struct NotesListContent: View {
             sharePreview = String(preview.prefix(200))
             showingNativeShare = true
         } catch {
-            print("Failed to create share link: \(error)")
+            shareError = error.localizedDescription
         }
     }
 }

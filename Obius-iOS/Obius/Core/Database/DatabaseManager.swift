@@ -5,7 +5,7 @@ import Combine
 final class DatabaseManager {
     private let migrator: DatabaseMigrator
 
-    static let schemaVersion = 23
+    static let schemaVersion = 26
 
     /// The App Group container path for the shared database
     static var appGroupDatabaseURL: URL? {
@@ -593,6 +593,39 @@ final class DatabaseManager {
 
             try db.execute(sql: """
                 UPDATE syncMetadata SET schemaVersion = 23
+            """)
+        }
+
+        // v24: Add commitShortId column to shareLinks for sharing the human-readable ID
+        migrator.registerMigration("v24_share_link_short_id") { db in
+            try db.alter(table: "shareLinks") { t in
+                t.add(column: "commitShortId", .text)
+            }
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 24
+            """)
+        }
+
+        // v25: Add tags column to notes for hashtag labels
+        migrator.registerMigration("v25_note_tags") { db in
+            try db.alter(table: "notes") { t in
+                t.add(column: "tags", .text).notNull().defaults(to: "[]")
+            }
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 25
+            """)
+        }
+
+        // v26: Add isAutoCommit column to commits for automatic daily commits
+        migrator.registerMigration("v26_auto_commit") { db in
+            try db.execute(sql: """
+                ALTER TABLE commits ADD COLUMN isAutoCommit BOOLEAN NOT NULL DEFAULT 0
+            """)
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 26
             """)
         }
 

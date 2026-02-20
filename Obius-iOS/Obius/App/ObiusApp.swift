@@ -30,6 +30,7 @@ struct ObiusApp: App {
                     if phase == .active {
                         Task {
                             await EchoManager.shared.checkForFiredEchoes()
+                            await appState.autoCommitManager.checkAndAutoCommit()
                         }
                     }
                 }
@@ -79,6 +80,7 @@ class AppState: ObservableObject {
     let commitRepository: CommitRepository
     let mediaRepository: MediaRepository
     let commitModule: CommitModule
+    let autoCommitManager: AutoCommitManager
     let profileScanner: ProfileScanner
 
     @Published var isInitialized = false
@@ -107,6 +109,13 @@ class AppState: ObservableObject {
                 noteRepository: noteRepository,
                 sectionRepository: sectionRepository,
                 commitRepository: commitRepository
+            )
+            self.autoCommitManager = AutoCommitManager(
+                commitModule: commitModule,
+                noteRepository: noteRepository,
+                commitRepository: commitRepository,
+                sectionRepository: sectionRepository,
+                coldStore: coldStore
             )
             self.profileScanner = ProfileScanner(
                 coldStore: coldStore,
@@ -137,6 +146,9 @@ class AppState: ObservableObject {
         await EchoManager.shared.requestNotificationPermission()
         EchoManager.shared.rescheduleAllEchoes()
         await EchoManager.shared.checkForFiredEchoes()
+
+        // Auto-commit check (creates commits for notes modified before today)
+        await autoCommitManager.checkAndAutoCommit()
 
         // Auto-sync if authenticated
         if AuthManager.shared.isAuthenticated {

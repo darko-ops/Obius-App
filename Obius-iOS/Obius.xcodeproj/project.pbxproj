@@ -75,6 +75,7 @@
 		B8A1D0010000000000000091 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = B8A1E0010000000000000091 /* GRDB */; };
 		B8A1D0010000000000000092 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = B8A1E0010000000000000092 /* Supabase */; };
 		B8A1D0010000000000000093 /* ProfileImageManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000093 /* ProfileImageManager.swift */; };
+		B8A1D0010000000000000095 /* AutoCommitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000095 /* AutoCommitManager.swift */; };
 		B8A1D0020000000000000001 /* ShareLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0020000000000000001 /* ShareLink.swift */; };
 		B8A1D0020000000000000002 /* Comment.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0020000000000000002 /* Comment.swift */; };
 		B8A1D0020000000000000003 /* ShareLinkRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0020000000000000003 /* ShareLinkRepository.swift */; };
@@ -161,6 +162,7 @@
 		B8A1F0010000000000000007 /* DatabaseManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseManager.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000008 /* HandleManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandleManager.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000093 /* ProfileImageManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileImageManager.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000095 /* AutoCommitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoCommitManager.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000009 /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000010 /* SupabaseClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseClient.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000011 /* SyncTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncTypes.swift; sourceTree = "<group>"; };
@@ -332,6 +334,7 @@
 			isa = PBXGroup;
 			children = (
 				B8A1F0040000000000000001 /* AppearanceManager.swift */,
+				B8A1F0010000000000000095 /* AutoCommitManager.swift */,
 				B8A1G0010000000000000005 /* Auth */,
 				B8A1G0010000000000000006 /* Database */,
 				B8A1F0010000000000000058 /* EchoManager.swift */,
@@ -767,6 +770,7 @@
 				B8A1D0060000000000000001 /* DatabaseMigrationHelper.swift in Sources */,
 				B8A1D0010000000000000008 /* HandleManager.swift in Sources */,
 				B8A1D0010000000000000093 /* ProfileImageManager.swift in Sources */,
+				B8A1D0010000000000000095 /* AutoCommitManager.swift in Sources */,
 				B8A1D0040000000000000001 /* AppearanceManager.swift in Sources */,
 				B8A1D0010000000000000009 /* NetworkMonitor.swift in Sources */,
 				B8A1D0010000000000000010 /* SupabaseClient.swift in Sources */,
