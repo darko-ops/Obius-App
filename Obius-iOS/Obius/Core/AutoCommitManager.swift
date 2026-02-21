@@ -85,11 +85,11 @@ class AutoCommitManager {
             }
         }
 
-        // Format the commit name using the note's update date: "Auto · Feb 19"
+        // Format the commit name: "Page Title · Feb 19"
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d"
         let dateLabel = formatter.string(from: noteUpdatedDate)
-        let commitName = "Auto \u{00B7} \(dateLabel)"
+        let commitName = "\(note.displayTitle) \u{00B7} \(dateLabel)"
 
         // Create the auto-commit (ColdStore handles hash dedup — identical content produces same hash)
         _ = try await commitModule.createCommit(

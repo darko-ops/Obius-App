@@ -146,6 +146,39 @@ final class NoteEditorViewModel: ObservableObject {
         try await noteRepository.updateTags(noteId, tags: tags)
     }
 
+    /// Gather all completed hashtags (followed by a space) across body, sections,
+    /// and interstitials, then set the note's tags to match.
+    /// Tags are added when a space follows `#word` and removed when the `#word` is deleted.
+    func syncHashtags() {
+        var allText = [note?.body ?? ""]
+        for section in sections {
+            allText.append(section.content)
+        }
+        for (_, value) in note?.interstitialContent ?? [:] {
+            allText.append(value)
+        }
+        let combined = allText.joined(separator: " ")
+        let found = HashtagHelper.extractTags(from: combined)
+
+        // Build case-insensitive unique list preserving first-seen casing
+        var seen = Set<String>()
+        var uniqueTags: [String] = []
+        for tag in found {
+            let lower = tag.lowercased()
+            if seen.insert(lower).inserted {
+                uniqueTags.append(tag)
+            }
+        }
+
+        let current = note?.tags ?? []
+        let currentSet = Set(current.map { $0.lowercased() })
+        let newSet = Set(uniqueTags.map { $0.lowercased() })
+
+        if currentSet != newSet {
+            Task { try? await noteRepository.updateTags(noteId, tags: uniqueTags) }
+        }
+    }
+
     /// Unique handles linked to sections on this page
     var pageHandles: [Handle] {
         var seen = Set<String>()
@@ -160,10 +193,12 @@ final class NoteEditorViewModel: ObservableObject {
 
     func updateBody(_ body: String, richText: String? = nil) async throws {
         try await noteRepository.updateNoteBody(noteId, body: body, richText: richText)
+        syncHashtags()
     }
 
     func updateInterstitialContent(afterSectionId: String?, content: String, richText: String? = nil) async throws {
         try await noteRepository.updateInterstitialContent(noteId, afterSectionId: afterSectionId, content: content, richText: richText)
+        syncHashtags()
     }
 
     func getInterstitialContent(afterSectionId: String?) -> String {
@@ -700,6 +735,7 @@ final class NoteEditorViewModel: ObservableObject {
             // Normal section - update section content
             try await sectionRepository.updateContent(sectionId, content: content, richText: richText)
         }
+        syncHashtags()
     }
 
     /// Detect if content starts with @HandleName and hydrate section with that handle

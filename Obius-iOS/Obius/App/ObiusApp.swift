@@ -11,6 +11,7 @@ struct ObiusApp: App {
 
     init() {
         UNUserNotificationCenter.current().delegate = notificationDelegate
+        InterFontRegistration.registerAsDefault()
     }
 
     @Environment(\.scenePhase) private var scenePhase
@@ -18,6 +19,7 @@ struct ObiusApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .font(.custom("Inter-Regular", size: 17))
                 .environmentObject(appState)
                 .environmentObject(authManager)
                 .environmentObject(deepLinkRouter)
@@ -72,6 +74,7 @@ class AppState: ObservableObject {
     let echoRepository: EchoRepository      // Echo alert/reminder support
     let shareLinkRepository: ShareLinkRepository  // Share link support
     let commentRepository: CommentRepository      // Share comments support
+    let moduleRepository: ModuleRepository        // Module (folder) support
     let syncEngine: SyncEngine
     let syncLogger: SyncOperationLogger
 
@@ -97,6 +100,7 @@ class AppState: ObservableObject {
             self.echoRepository = EchoRepository(database: database)    // Echo alert/reminder support
             self.shareLinkRepository = ShareLinkRepository(database: database)  // Share link support
             self.commentRepository = CommentRepository(database: database)      // Share comments support
+            self.moduleRepository = ModuleRepository(database: database)        // Module (folder) support
             self.syncEngine = SyncEngine(database: database)
             self.syncLogger = SyncOperationLogger(database: database)
 

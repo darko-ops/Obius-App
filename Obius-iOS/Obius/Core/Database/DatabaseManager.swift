@@ -5,7 +5,7 @@ import Combine
 final class DatabaseManager {
     private let migrator: DatabaseMigrator
 
-    static let schemaVersion = 26
+    static let schemaVersion = 28
 
     /// The App Group container path for the shared database
     static var appGroupDatabaseURL: URL? {
@@ -629,6 +629,68 @@ final class DatabaseManager {
             """)
         }
 
+        // v27: Add modules table and moduleId to notes
+        migrator.registerMigration("v27_modules") { db in
+            // Create modules table
+            try db.create(table: "modules") { t in
+                t.column("id", .text).primaryKey()
+                t.column("name", .text).notNull()
+                t.column("icon", .text).notNull().defaults(to: "folder")
+                t.column("isDefault", .boolean).notNull().defaults(to: false)
+                t.column("orderIndex", .integer).notNull().defaults(to: 0)
+                t.column("createdAt", .integer).notNull()
+                t.column("updatedAt", .integer).notNull()
+                t.column("deletedAt", .integer)
+            }
+
+            try db.create(index: "idx_modules_order", on: "modules", columns: ["orderIndex"])
+
+            // Add moduleId column to notes
+            try db.execute(sql: """
+                ALTER TABLE notes ADD COLUMN moduleId TEXT
+            """)
+
+            // Seed default modules
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            let localId = UUID().uuidString
+            let cloudId = UUID().uuidString
+
+            try db.execute(sql: """
+                INSERT INTO modules (id, name, icon, isDefault, orderIndex, createdAt, updatedAt)
+                VALUES (?, 'Local', 'iphone', 1, 0, ?, ?)
+            """, arguments: [localId, now, now])
+
+            try db.execute(sql: """
+                INSERT INTO modules (id, name, icon, isDefault, orderIndex, createdAt, updatedAt)
+                VALUES (?, 'Cloud', 'cloud', 1, 1, ?, ?)
+            """, arguments: [cloudId, now, now])
+
+            // Assign all existing notes to the Local module
+            try db.execute(sql: """
+                UPDATE notes SET moduleId = ? WHERE moduleId IS NULL
+            """, arguments: [localId])
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 27
+            """)
+        }
+
+        // v28: Add storageType column to modules
+        migrator.registerMigration("v28_module_storage_type") { db in
+            try db.execute(sql: """
+                ALTER TABLE modules ADD COLUMN storageType TEXT NOT NULL DEFAULT 'local'
+            """)
+
+            // Backfill: Local module → local, Cloud module → cloud
+            try db.execute(sql: """
+                UPDATE modules SET storageType = 'cloud' WHERE name = 'Cloud' AND isDefault = 1
+            """)
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 28
+            """)
+        }
+
         self.migrator = migrator
 
         // Extensions open read-only and must not run migrations
@@ -728,6 +790,20 @@ final class DatabaseManager {
         ValueObservation
             .tracking { db in
                 try Handle.fetchOne(db, key: id)
+            }
+            .publisher(in: dbQueue, scheduling: .immediate)
+            .eraseToAnyPublisher()
+    }
+
+    // MARK: - Module Observation
+
+    func observeAllModules() -> AnyPublisher<[Module], Error> {
+        ValueObservation
+            .tracking { db in
+                try Module
+                    .filter(Module.Columns.deletedAt == nil)
+                    .order(Module.Columns.orderIndex)
+                    .fetchAll(db)
             }
             .publisher(in: dbQueue, scheduling: .immediate)
             .eraseToAnyPublisher()

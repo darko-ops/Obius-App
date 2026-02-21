@@ -115,6 +115,16 @@
     <key>NSPhotoLibraryUsageDescription</key>
     <string>Access your photo library to add images to notes</string>
 
+    <!-- Custom Fonts -->
+    <key>UIAppFonts</key>
+    <array>
+        <string>Fonts/Inter-Regular.ttf</string>
+        <string>Fonts/Inter-Medium.ttf</string>
+        <string>Fonts/Inter-SemiBold.ttf</string>
+        <string>Fonts/Inter-Bold.ttf</string>
+        <string>Fonts/Inter-Light.ttf</string>
+    </array>
+
     <!-- Status Bar -->
     <key>UIStatusBarStyle</key>
     <string>UIStatusBarStyleDefault</string>

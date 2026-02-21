@@ -6,6 +6,7 @@ struct NotesListView: View {
     var body: some View {
         NotesListContent(
             noteRepository: appState.noteRepository,
+            moduleRepository: appState.moduleRepository,
             sectionRepository: appState.sectionRepository,
             syncLogger: appState.syncLogger,
             syncEngine: appState.syncEngine,
@@ -18,11 +19,14 @@ struct NotesListView: View {
 
 private struct NotesListContent: View {
     @ObservedObject var noteRepository: NoteRepository
+    @ObservedObject var moduleRepository: ModuleRepository
     let sectionRepository: SectionRepository
     let syncLogger: SyncOperationLogger
     let syncEngine: SyncEngine
     let commitModule: CommitModule
 
+    @AppStorage("selectedModuleId") private var selectedModuleId: String?
+    @State private var showingModulePicker = false
     @State private var searchQuery = ""
     @State private var selectedNote: Note?
     @State private var sectionPreviews: [String: String] = [:]
@@ -46,8 +50,16 @@ private struct NotesListContent: View {
     @State private var newGroupName = ""
     @State private var collapsedGroups: Set<String> = []
 
+    private var selectedModule: Module? {
+        moduleRepository.modules.first { $0.id == selectedModuleId }
+    }
+
+    private var selectedModuleName: String {
+        selectedModule?.name ?? "Artifacts"
+    }
+
     private var notes: [Note] {
-        noteRepository.notes
+        noteRepository.notes.filter { $0.moduleId == selectedModuleId }
     }
 
     private var filteredNotes: [Note] {
@@ -83,9 +95,10 @@ private struct NotesListContent: View {
     var body: some View {
         VStack(spacing: 0) {
             // Custom rounded search bar
-            RoundedSearchBar(text: $searchQuery, placeholder: "Search notes")
+            RoundedSearchBar(text: $searchQuery, placeholder: "Search")
                 .padding(.horizontal)
                 .padding(.vertical, 8)
+                .background(Color.black)
 
             List {
                 // Grouped notes (pinned groups) - collapsible
@@ -129,26 +142,61 @@ private struct NotesListContent: View {
 
             // Ungrouped pinned notes
             if !pinnedNotes.isEmpty {
-                SwiftUI.Section("Pinned") {
+                SwiftUI.Section {
                     ForEach(pinnedNotes) { note in
                         noteRow(note)
                     }
+                } header: {
+                    Text("Pinned")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
 
             // Ungrouped unpinned notes
-            SwiftUI.Section(pinnedNotes.isEmpty && groupNames.isEmpty ? "Recently" : "Other Notes") {
+            SwiftUI.Section {
                 ForEach(unpinnedNotes) { note in
                     noteRow(note)
                 }
+            } header: {
+                Text(pinnedNotes.isEmpty && groupNames.isEmpty ? "Recently" : "Other Notes")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
             }
             #if os(iOS)
             .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
             #endif
         }
-        .navigationTitle("Artifacts")
+        .background(Color.black)
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(Color.black, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                if let module = selectedModule {
+                    StorageTypeBadge(storageType: module.storageType)
+                }
+            }
+
+            ToolbarItem(placement: .principal) {
+                Button {
+                    showingModulePicker = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(selectedModuleName)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+
             ToolbarItemGroup(placement: .primaryAction) {
                 // More options menu
                 Menu {
@@ -185,7 +233,7 @@ private struct NotesListContent: View {
                     Button {
                         Task {
                             do {
-                                let note = try await noteRepository.createNote()
+                                let note = try await noteRepository.createNote(moduleId: selectedModuleId)
                                 // Log for sync
                                 syncLogger.logNoteCreate(note)
                                 selectedNote = note
@@ -250,7 +298,7 @@ private struct NotesListContent: View {
                 } actions: {
                     Button("Create Note") {
                         Task {
-                            if let note = try? await noteRepository.createNote() {
+                            if let note = try? await noteRepository.createNote(moduleId: selectedModuleId) {
                                 syncLogger.logNoteCreate(note)
                                 selectedNote = note
                             }
@@ -359,6 +407,25 @@ private struct NotesListContent: View {
                 NodeShareSheet(url: url, title: shareTitle, preview: sharePreview)
             }
         }
+        .sheet(isPresented: $showingModulePicker) {
+            ModulePickerSheet(
+                moduleRepository: moduleRepository,
+                selectedModuleId: $selectedModuleId
+            )
+        }
+        .onAppear {
+            // Set initial module to Local if none selected
+            if selectedModuleId == nil, let local = moduleRepository.getLocalModule() {
+                selectedModuleId = local.id
+            }
+        }
+        .onChange(of: moduleRepository.modules) { _ in
+            // If selected module was deleted, fall back to Local
+            if let id = selectedModuleId,
+               !moduleRepository.modules.contains(where: { $0.id == id }) {
+                selectedModuleId = moduleRepository.getLocalModule()?.id
+            }
+        }
     }
 
     @ViewBuilder
@@ -374,6 +441,7 @@ private struct NotesListContent: View {
             NoteRowView(note: note, sectionContent: sectionPreviews[note.id], autoTitle: autoTitles[note.id])
         }
         .contentShape(Rectangle())
+        .listRowBackground(Color(white: 0.06))
         .onTapGesture {
             if isSelectionMode {
                 withAnimation(.easeInOut(duration: 0.15)) {
@@ -454,6 +522,23 @@ private struct NotesListContent: View {
                     }
                 } label: {
                     Label("Share", systemImage: "square.and.arrow.up")
+                }
+
+                // Move to Module
+                if moduleRepository.modules.count > 1 {
+                    Menu {
+                        ForEach(moduleRepository.modules.filter { $0.id != note.moduleId }) { module in
+                            Button {
+                                Task {
+                                    try? await noteRepository.setModuleId(noteId: note.id, moduleId: module.id)
+                                }
+                            } label: {
+                                Label(module.name, systemImage: module.icon)
+                            }
+                        }
+                    } label: {
+                        Label("Move to Module", systemImage: "folder")
+                    }
                 }
 
                 Divider()

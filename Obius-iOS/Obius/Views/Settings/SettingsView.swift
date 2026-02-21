@@ -238,46 +238,68 @@ struct LedgerView: View {
                 List {
                     ForEach(commits) { commit in
                         let noteName = noteNames[commit.noteId] ?? commit.name ?? "Archived Commit"
-                        HStack(spacing: 12) {
-                            Circle()
-                                .fill(commit.isAutoCommit ? Color.orange : Color.accentColor)
-                                .frame(width: 8, height: 8)
+                        Group {
+                            if commit.isAutoCommit {
+                                HStack(spacing: 0) {
+                                    ZStack {
+                                        LinearGradient(
+                                            colors: [Color.orange.opacity(0.2), Color.orange.opacity(0)],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
 
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 6) {
-                                    Text(commit.name ?? noteName)
-                                        .font(.headline)
-                                        .lineLimit(1)
-
-                                    if commit.isAutoCommit {
                                         Text("Auto")
-                                            .font(.caption2.weight(.semibold))
+                                            .font(.system(size: 9, weight: .semibold))
                                             .foregroundStyle(.orange)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(Color.orange.opacity(0.15))
-                                            .cornerRadius(4)
+                                            .rotationEffect(.degrees(-90))
+                                            .fixedSize()
+                                    }
+                                    .frame(width: 24)
+
+                                    HStack {
+                                        Text(commit.name ?? noteName)
+                                            .font(.subheadline)
+                                            .lineLimit(1)
+
+                                        Spacer()
+
+                                        Text(formattedDate(commit.createdAt))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .padding(.leading, 6)
+                                }
+                            } else {
+                                HStack(spacing: 12) {
+                                    Circle()
+                                        .fill(Color.accentColor)
+                                        .frame(width: 8, height: 8)
+
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(commit.name ?? noteName)
+                                            .font(.headline)
+                                            .lineLimit(1)
+
+                                        Text("#\(commit.shortId)")
+                                            .font(.caption2.monospaced())
+                                            .foregroundStyle(.tertiary)
+                                    }
+
+                                    Spacer()
+
+                                    VStack(alignment: .trailing, spacing: 4) {
+                                        if commit.name != nil {
+                                            Text("from \(noteName)")
+                                                .font(.caption)
+                                                .foregroundStyle(.tertiary)
+                                                .lineLimit(1)
+                                        }
+
+                                        Text(formattedDate(commit.createdAt))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
                                     }
                                 }
-
-                                Text("#\(commit.shortId)")
-                                    .font(.caption2.monospaced())
-                                    .foregroundStyle(.tertiary)
-                            }
-
-                            Spacer()
-
-                            VStack(alignment: .trailing, spacing: 4) {
-                                if commit.name != nil {
-                                    Text("from \(noteName)")
-                                        .font(.caption)
-                                        .foregroundStyle(.tertiary)
-                                        .lineLimit(1)
-                                }
-
-                                Text(formattedDate(commit.createdAt))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
                             }
                         }
                         .listRowBackground(

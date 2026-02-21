@@ -54,33 +54,35 @@ struct NoteRowView: View {
                 .fill(note.intent.color)
                 .frame(width: 8, height: 8)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(autoTitle ?? note.displayTitle)
-                    .font(.headline)
+                    .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
 
                 if let preview = contentPreview {
                     Text(preview)
-                        .font(.subheadline)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-
-                Text(formattedDate)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
             }
 
             Spacer()
 
-            // Only show pin icon for pinned notes that aren't in a group
-            if note.isPinned && note.groupName == nil {
-                Image(systemName: "pin.fill")
+            HStack(spacing: 8) {
+                Text(formattedDate)
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.tertiary)
+
+                // Only show pin icon for pinned notes that aren't in a group
+                if note.isPinned && note.groupName == nil {
+                    Image(systemName: "pin.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
     }
 }
 

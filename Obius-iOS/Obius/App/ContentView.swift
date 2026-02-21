@@ -113,12 +113,21 @@ struct MainTabView: View {
             .tag(0)
 
             NavigationStack {
+                IntelligenceView()
+            }
+            .tabItem {
+                Image("ObiusLogo")
+                    .renderingMode(.template)
+            }
+            .tag(1)
+
+            NavigationStack {
                 LibraryView()
             }
             .tabItem {
                 Image(systemName: "person.crop.circle")
             }
-            .tag(1)
+            .tag(2)
         }
     }
 }

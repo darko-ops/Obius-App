@@ -283,7 +283,7 @@ struct LoopsListView: View {
                 } label: {
                     Image(systemName: "plus.circle.fill")
                         .font(.title2)
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(.gray)
                 }
             }
             .padding(.horizontal)
@@ -325,7 +325,7 @@ struct LoopsListView: View {
                 LoopRowView(handle: handle)
                     .padding(.horizontal)
                     .padding(.vertical, 12)
-                    .background(Color.gray.opacity(0.05))
+                    .background(Color(white: 0.06))
                     .cornerRadius(12)
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -342,11 +342,14 @@ struct LoopsListView: View {
 struct LoopRowView: View {
     let handle: Handle
 
+    private static let handleColor = Color(red: 0.72, green: 0.32, blue: 0.82)
+
     var body: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(handle.formattedName)
-                    .font(.headline)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Self.handleColor)
 
                 if !handle.preview.isEmpty {
                     Text(handle.preview)
@@ -591,7 +594,7 @@ struct TemplatesListView: View {
                 } label: {
                     Image(systemName: "plus.circle.fill")
                         .font(.title2)
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(.gray)
                 }
             }
             .padding(.horizontal)
@@ -649,7 +652,7 @@ struct TemplatesListView: View {
                                 TemplateRowView(template: template)
                                     .padding(.horizontal)
                                     .padding(.vertical, 12)
-                                    .background(Color.gray.opacity(0.05))
+                                    .background(Color(white: 0.06))
                                     .cornerRadius(12)
                                     .contentShape(Rectangle())
                                     .onTapGesture {
@@ -679,7 +682,7 @@ struct TemplatesListView: View {
                                 TemplateRowView(template: template)
                                     .padding(.horizontal)
                                     .padding(.vertical, 12)
-                                    .background(Color.gray.opacity(0.05))
+                                    .background(Color(white: 0.06))
                                     .cornerRadius(12)
                                     .contentShape(Rectangle())
                                     .onTapGesture {
@@ -882,7 +885,7 @@ struct CreatePageTemplateSheet: View {
                         .font(.title2.weight(.semibold))
                         .padding()
                 }
-                .background(Color.gray.opacity(0.05))
+                .background(Color(white: 0.06))
 
                 Divider()
 
@@ -1232,7 +1235,7 @@ struct EditPageTemplateSheet: View {
                         .font(.title2.weight(.semibold))
                         .padding()
                 }
-                .background(Color.gray.opacity(0.05))
+                .background(Color(white: 0.06))
 
                 Divider()
 
@@ -1507,7 +1510,7 @@ struct CommitsListView: View {
                     NodeCommitRowView(node: node)
                         .padding(.horizontal)
                         .padding(.vertical, 12)
-                        .background(Color.gray.opacity(0.05))
+                        .background(Color(white: 0.06))
                         .cornerRadius(12)
                         .contentShape(Rectangle())
                         .onTapGesture {
@@ -1522,10 +1525,11 @@ struct CommitsListView: View {
                         }
                 case .page(let commit, let noteName):
                     CommitRowView(commit: commit, noteName: noteName)
-                        .padding(.horizontal)
-                        .padding(.vertical, 12)
-                        .background(commit.isAutoCommit ? Color.orange.opacity(0.04) : Color.gray.opacity(0.05))
-                        .cornerRadius(12)
+                        .padding(.leading, commit.isAutoCommit ? 0 : 16)
+                        .padding(.trailing, 16)
+                        .padding(.vertical, commit.isAutoCommit ? 10 : 12)
+                        .background(Color(white: 0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                         .contentShape(Rectangle())
                         .onTapGesture {
                             selectedCommit = commit
@@ -1995,28 +1999,23 @@ struct CommitRowView: View {
     }
 
     var body: some View {
+        if commit.isAutoCommit {
+            autoCommitRow
+        } else {
+            manualCommitRow
+        }
+    }
+
+    private var manualCommitRow: some View {
         HStack(spacing: 12) {
-            // Commit indicator
             Circle()
-                .fill(commit.isAutoCommit ? Color.orange : Color.accentColor)
+                .fill(Color.accentColor)
                 .frame(width: 8, height: 8)
 
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(commit.name ?? noteName)
-                        .font(.headline)
-                        .lineLimit(1)
-
-                    if commit.isAutoCommit {
-                        Text("Auto")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.orange)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.orange.opacity(0.15))
-                            .cornerRadius(4)
-                    }
-                }
+                Text(commit.name ?? noteName)
+                    .font(.headline)
+                    .lineLimit(1)
 
                 Text("#\(commit.shortId)")
                     .font(.caption2.monospaced())
@@ -2039,6 +2038,38 @@ struct CommitRowView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private var autoCommitRow: some View {
+        HStack(spacing: 0) {
+            // Gradient lip with sideways "Auto" label
+            ZStack {
+                LinearGradient(
+                    colors: [Color.orange.opacity(0.2), Color.orange.opacity(0)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+
+                Text("Auto")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.orange)
+            }
+            .frame(width: 40)
+            .padding(.vertical, -10)
+
+            HStack {
+                Text(commit.name ?? noteName)
+                    .font(.subheadline)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Text(formattedDate)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.leading, 6)
+        }
     }
 }
 

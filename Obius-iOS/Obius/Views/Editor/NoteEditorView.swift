@@ -1676,6 +1676,9 @@ struct BodyTextView: UIViewRepresentable {
             textView.attributedText = attrText
         }
 
+        // Highlight any existing hashtags on load
+        HashtagHelper.applyHighlighting(to: textView)
+
         return textView
     }
 
@@ -1729,6 +1732,7 @@ struct BodyTextView: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
+            HashtagHelper.applyHighlighting(to: textView)
             let newText = textView.text ?? ""
             let richText = RichTextHelper.serialize(textView.attributedText)
             if parent.text != newText {

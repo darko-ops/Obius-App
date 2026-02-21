@@ -642,6 +642,9 @@ struct InterstitialTextView: UIViewRepresentable {
             textView.attributedText = attrText
         }
 
+        // Highlight any existing hashtags on load
+        HashtagHelper.applyHighlighting(to: textView)
+
         // Add keyboard accessory toolbar with formatting and dismiss buttons
         let toolbar = InterstitialKeyboardToolbar()
         toolbar.textView = textView
@@ -703,6 +706,7 @@ struct InterstitialTextView: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
+            HashtagHelper.applyHighlighting(to: textView)
             let newText = textView.text ?? ""
             let richText = RichTextHelper.serialize(textView.attributedText)
             if parent.text != newText {

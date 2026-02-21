@@ -1501,6 +1501,9 @@ struct EditableTextView: UIViewRepresentable {
             textView.text = text
         }
 
+        // Highlight any existing hashtags on load
+        HashtagHelper.applyHighlighting(to: textView)
+
         // Add keyboard accessory toolbar with all buttons
         let toolbar = KeyboardAccessoryToolbar(
             showIndentButtons: onIndent != nil,
@@ -1570,6 +1573,7 @@ struct EditableTextView: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
+            HashtagHelper.applyHighlighting(to: textView)
             let newText = textView.text ?? ""
             let richText = RichTextHelper.serialize(textView.attributedText)
             if parent.text != newText {

@@ -29,10 +29,11 @@ final class NoteRepository: ObservableObject {
 
     // MARK: - Create
 
-    func createNote(title: String? = nil, intent: IntentType = .idea) async throws -> Note {
+    func createNote(title: String? = nil, intent: IntentType = .idea, moduleId: String? = nil) async throws -> Note {
         let note = Note(
             title: title,
-            intent: intent
+            intent: intent,
+            moduleId: moduleId
         )
 
         try await database.write { db in
@@ -156,6 +157,15 @@ final class NoteRepository: ObservableObject {
             guard var note = try Note.fetchOne(db, key: noteId) else { return }
             note.groupName = groupName
             note.isPinned = groupName != nil  // Grouped notes are always pinned
+            note.touch()
+            try note.update(db)
+        }
+    }
+
+    func setModuleId(noteId: String, moduleId: String?) async throws {
+        try await database.write { db in
+            guard var note = try Note.fetchOne(db, key: noteId) else { return }
+            note.moduleId = moduleId
             note.touch()
             try note.update(db)
         }
