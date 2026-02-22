@@ -90,6 +90,7 @@ class AppState: ObservableObject {
     let shareLinkRepository: ShareLinkRepository  // Share link support
     let commentRepository: CommentRepository      // Share comments support
     let moduleRepository: ModuleRepository        // Module (folder) support
+    let insightRepository: InsightRepository      // Intelligence insight cards
     let syncEngine: SyncEngine
     let syncLogger: SyncOperationLogger
 
@@ -116,6 +117,7 @@ class AppState: ObservableObject {
             self.shareLinkRepository = ShareLinkRepository(database: database)  // Share link support
             self.commentRepository = CommentRepository(database: database)      // Share comments support
             self.moduleRepository = ModuleRepository(database: database)        // Module (folder) support
+            self.insightRepository = InsightRepository(database: database)    // Intelligence insight cards
             self.syncEngine = SyncEngine(database: database)
             self.syncLogger = SyncOperationLogger(database: database)
 

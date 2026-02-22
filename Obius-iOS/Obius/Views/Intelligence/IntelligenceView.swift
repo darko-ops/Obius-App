@@ -5,81 +5,225 @@ struct IntelligenceView: View {
     @State private var messageText = ""
     @State private var messages: [ChatMessage] = []
     @State private var isLoading = false
+    @State private var isScanning = false
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
-            if messages.isEmpty {
-                emptyState
-            } else {
-                messageList
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    // Surfaced insight cards
+                    if !appState.insightRepository.surfacedInsights.isEmpty {
+                        surfacedSection
+                    }
+
+                    // Tracked insights (pinned)
+                    if !appState.insightRepository.trackedInsights.isEmpty {
+                        trackedSection
+                    }
+
+                    // Empty state when nothing exists
+                    if appState.insightRepository.surfacedInsights.isEmpty
+                        && appState.insightRepository.trackedInsights.isEmpty
+                        && messages.isEmpty {
+                        emptyState
+                    }
+
+                    // Chat messages
+                    if !messages.isEmpty {
+                        chatSection
+                    }
+                }
             }
 
             inputBar
         }
-        .navigationTitle("Obius")
+        .navigationTitle("Intelligence")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Task { await scanForInsights() }
+                } label: {
+                    if isScanning {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                    } else {
+                        Image(systemName: "arrow.trianglehead.2.clockwise")
+                    }
+                }
+                .disabled(isScanning)
+            }
+        }
+        .task {
+            // Auto-scan on first appearance if no insights exist
+            if appState.insightRepository.surfacedInsights.isEmpty
+                && appState.insightRepository.trackedInsights.isEmpty {
+                await scanForInsights()
+            }
+        }
     }
+
+    // MARK: - Surfaced Insights
+
+    private var surfacedSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("New Insights")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Text("\(appState.insightRepository.surfacedInsights.count)")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal)
+
+            ForEach(appState.insightRepository.surfacedInsights) { insight in
+                InsightCardView(
+                    insight: insight,
+                    onTrack: {
+                        Task { try? await appState.insightRepository.trackInsight(insight.id) }
+                        HapticFeedback.selection()
+                    },
+                    onDismiss: {
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            Task { try? await appState.insightRepository.dismissInsight(insight.id) }
+                        }
+                        HapticFeedback.light()
+                    },
+                    onTap: {
+                        navigateToSource(insight)
+                    }
+                )
+                .padding(.horizontal)
+                .transition(.asymmetric(
+                    insertion: .opacity,
+                    removal: .move(edge: .trailing).combined(with: .opacity)
+                ))
+            }
+        }
+        .padding(.top, 16)
+        .padding(.bottom, 8)
+    }
+
+    // MARK: - Tracked Insights
+
+    private var trackedSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "pin.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Tracked")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+            }
+            .padding(.horizontal)
+            .padding(.top, 12)
+
+            ForEach(appState.insightRepository.trackedInsights) { insight in
+                TrackedInsightRow(
+                    insight: insight,
+                    onTap: {
+                        navigateToSource(insight)
+                    },
+                    onUntrack: {
+                        Task { try? await appState.insightRepository.untrackInsight(insight.id) }
+                    }
+                )
+                .padding(.horizontal)
+            }
+
+            Divider()
+                .padding(.horizontal)
+                .padding(.top, 4)
+        }
+    }
+
+    // MARK: - Empty State
 
     private var emptyState: some View {
         VStack(spacing: 16) {
             Spacer()
+                .frame(height: 80)
 
             Image(systemName: "brain")
                 .font(.system(size: 60))
                 .foregroundStyle(.secondary)
 
-            Text("Intelligence : Architecture")
+            Text("Intelligence")
                 .font(.title2.weight(.semibold))
 
-            Text("I can help you explore your notes, generate ideas, and answer questions.")
+            Text("Insights about your notes will appear here. I detect tasks, questions, connections, and patterns in your content.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
 
+            if isScanning {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text("Scanning your notes...")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.top, 8)
+            }
+
             Spacer()
+                .frame(height: 80)
         }
     }
 
-    private var messageList: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 16) {
-                    ForEach(messages) { message in
-                        ChatMessageView(message: message)
-                            .id(message.id)
-                    }
+    // MARK: - Chat Section
 
-                    if isLoading {
-                        HStack {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                            Text("Thinking...")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                        }
-                        .padding(.horizontal)
-                    }
+    private var chatSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if !appState.insightRepository.surfacedInsights.isEmpty
+                || !appState.insightRepository.trackedInsights.isEmpty {
+                HStack {
+                    Text("Chat")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
                 }
-                .padding()
+                .padding(.horizontal)
+                .padding(.top, 12)
             }
-            .onChange(of: messages.count) { _, _ in
-                if let lastMessage = messages.last {
-                    withAnimation {
-                        proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                    }
+
+            ForEach(messages) { message in
+                ChatMessageView(message: message)
+                    .padding(.horizontal)
+            }
+
+            if isLoading {
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text("Thinking...")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
                 }
+                .padding(.horizontal)
             }
         }
+        .padding(.bottom, 16)
     }
+
+    // MARK: - Input Bar
 
     private var inputBar: some View {
         HStack(spacing: 12) {
-            TextField("Ask a question...", text: $messageText, axis: .vertical)
+            TextField("Ask about your notes...", text: $messageText, axis: .vertical)
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
@@ -102,6 +246,27 @@ struct IntelligenceView: View {
         .background(.bar)
     }
 
+    // MARK: - Actions
+
+    private func scanForInsights() async {
+        guard !isScanning else { return }
+        isScanning = true
+        defer { isScanning = false }
+
+        let engine = InsightEngine(
+            noteRepository: appState.noteRepository,
+            sectionRepository: appState.sectionRepository,
+            handleRepository: appState.handleRepository,
+            insightRepository: appState.insightRepository,
+            database: appState.database
+        )
+        await engine.scan()
+    }
+
+    private func navigateToSource(_ insight: Insight) {
+        // TODO: Navigate to the source note/section when tapped
+    }
+
     private func sendMessage() {
         let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -112,7 +277,6 @@ struct IntelligenceView: View {
         isLoading = true
 
         // TODO: Integrate with actual AI backend
-        // For now, show a placeholder response
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             let response = ChatMessage(
                 role: .assistant,
@@ -165,11 +329,21 @@ struct ChatMessageView: View {
     }
 }
 
+// MARK: - Haptic Helpers
+
+private enum HapticFeedback {
+    static func selection() {
+        UISelectionFeedbackGenerator().selectionChanged()
+    }
+
+    static func light() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+}
+
 #Preview {
     NavigationStack {
         IntelligenceView()
     }
     .environmentObject(AppState())
 }
-
-

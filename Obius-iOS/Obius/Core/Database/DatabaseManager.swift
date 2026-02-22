@@ -5,7 +5,7 @@ import Combine
 final class DatabaseManager {
     private let migrator: DatabaseMigrator
 
-    static let schemaVersion = 28
+    static let schemaVersion = 29
 
     /// The App Group container path for the shared database
     static var appGroupDatabaseURL: URL? {
@@ -691,6 +691,30 @@ final class DatabaseManager {
             """)
         }
 
+        // v29: Add insights table for Intelligence page insight cards
+        migrator.registerMigration("v29_insights") { db in
+            try db.create(table: "insights") { t in
+                t.column("id", .text).primaryKey()
+                t.column("insightType", .text).notNull()
+                t.column("title", .text).notNull()
+                t.column("body", .text).notNull()
+                t.column("status", .text).notNull().defaults(to: "surfaced")
+                t.column("sourceNoteId", .text)
+                t.column("sourceSectionId", .text)
+                t.column("relatedNoteId", .text)
+                t.column("createdAt", .integer).notNull()
+                t.column("updatedAt", .integer).notNull()
+            }
+
+            try db.create(index: "idx_insights_status", on: "insights", columns: ["status"])
+            try db.create(index: "idx_insights_type", on: "insights", columns: ["insightType"])
+            try db.create(index: "idx_insights_source_note", on: "insights", columns: ["sourceNoteId"])
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 29
+            """)
+        }
+
         self.migrator = migrator
 
         // Extensions open read-only and must not run migrations
@@ -818,6 +842,21 @@ final class DatabaseManager {
                     .filter(Echo.Columns.isActive == true)
                     .order(Echo.Columns.nextFireDate)
                     .fetchAll(db)
+            }
+            .publisher(in: dbQueue, scheduling: .immediate)
+            .eraseToAnyPublisher()
+    }
+
+    // MARK: - Insight Observation
+
+    func observeInsights(status: InsightStatus? = nil) -> AnyPublisher<[Insight], Error> {
+        ValueObservation
+            .tracking { db in
+                var request = Insight.order(Insight.Columns.createdAt.desc)
+                if let status = status {
+                    request = request.filter(Insight.Columns.status == status.rawValue)
+                }
+                return try request.fetchAll(db)
             }
             .publisher(in: dbQueue, scheduling: .immediate)
             .eraseToAnyPublisher()
