@@ -139,6 +139,49 @@ struct Echo: Codable, Identifiable, Hashable {
         return descriptions.joined(separator: ", ")
     }
 
+    /// The most recent fire date that has already passed (current cycle trigger)
+    var mostRecentFireDate: Date? {
+        let startDate = fireDateAsDate
+        let now = Date()
+
+        if !isRecurring {
+            return startDate <= now ? startDate : nil
+        }
+
+        let ints = intervals
+        if ints.isEmpty { return nil }
+
+        var latest: Date?
+
+        for interval in ints {
+            var components = DateComponents()
+            switch interval.unit {
+            case .minutes: components.minute = interval.value
+            case .hours: components.hour = interval.value
+            case .days: components.day = interval.value
+            case .weeks: components.day = interval.value * 7
+            case .months: components.month = interval.value
+            }
+
+            // Walk forward from startDate until we pass now, keeping the last one before now
+            var previous = startDate
+            var candidate = startDate
+            while candidate <= now {
+                previous = candidate
+                guard let next = Calendar.current.date(byAdding: components, to: candidate) else { break }
+                candidate = next
+            }
+
+            if previous <= now {
+                if latest == nil || previous > latest! {
+                    latest = previous
+                }
+            }
+        }
+
+        return latest
+    }
+
     /// Compute the next fire date — soonest across all intervals from the start date
     var computedNextFireDate: Date? {
         let startDate = fireDateAsDate

@@ -11,6 +11,7 @@ struct LibraryView: View {
     @State private var showingEditProfile = false
     @State private var selectedEcho: Echo?
     @StateObject private var profileImages = ProfileImageManager.shared
+    var pendingEchoId: Binding<String?> = .constant(nil)
 
     enum LibrarySection: String, CaseIterable {
         case loops = "Loops"
@@ -66,7 +67,7 @@ struct LibraryView: View {
             }
             .padding(.bottom)
         }
-        .background(Color.black)
+        .background(Color(.systemBackground))
         .ignoresSafeArea(.container, edges: .top)
         .navigationBarHidden(true)
         .onChange(of: selectedSection) { _, _ in
@@ -95,6 +96,13 @@ struct LibraryView: View {
         .sheet(item: $selectedEcho) { echo in
             EchoDetailSheet(echo: echo)
         }
+        .onChange(of: pendingEchoId.wrappedValue) { _, echoId in
+            guard let echoId else { return }
+            if let echo = echoManager.activeEchoes.first(where: { $0.id == echoId }) {
+                selectedEcho = echo
+            }
+            pendingEchoId.wrappedValue = nil
+        }
     }
 
     // MARK: - Active Echoes Section
@@ -119,11 +127,6 @@ struct LibraryView: View {
                     .padding(.horizontal)
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        if echo.isAlerted {
-                            Task {
-                                try? await echoManager.acknowledgeEcho(id: echo.id)
-                            }
-                        }
                         selectedEcho = echo
                     }
             }
@@ -325,7 +328,7 @@ struct LoopsListView: View {
                 LoopRowView(handle: handle)
                     .padding(.horizontal)
                     .padding(.vertical, 12)
-                    .background(Color(white: 0.06))
+                    .background(Color(.secondarySystemBackground))
                     .cornerRadius(12)
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -652,7 +655,7 @@ struct TemplatesListView: View {
                                 TemplateRowView(template: template)
                                     .padding(.horizontal)
                                     .padding(.vertical, 12)
-                                    .background(Color(white: 0.06))
+                                    .background(Color(.secondarySystemBackground))
                                     .cornerRadius(12)
                                     .contentShape(Rectangle())
                                     .onTapGesture {
@@ -682,7 +685,7 @@ struct TemplatesListView: View {
                                 TemplateRowView(template: template)
                                     .padding(.horizontal)
                                     .padding(.vertical, 12)
-                                    .background(Color(white: 0.06))
+                                    .background(Color(.secondarySystemBackground))
                                     .cornerRadius(12)
                                     .contentShape(Rectangle())
                                     .onTapGesture {
@@ -885,7 +888,7 @@ struct CreatePageTemplateSheet: View {
                         .font(.title2.weight(.semibold))
                         .padding()
                 }
-                .background(Color(white: 0.06))
+                .background(Color(.secondarySystemBackground))
 
                 Divider()
 
@@ -1235,7 +1238,7 @@ struct EditPageTemplateSheet: View {
                         .font(.title2.weight(.semibold))
                         .padding()
                 }
-                .background(Color(white: 0.06))
+                .background(Color(.secondarySystemBackground))
 
                 Divider()
 
@@ -1408,6 +1411,7 @@ struct CommitsListView: View {
     @State private var sharePreview: String = ""
     @State private var shareError: String?
     @State private var isSharing = false
+    @State private var commitViewCounts: [String: Int] = [:]
     var searchQuery: String = ""
 
     private var allItems: [CommitListItem] {
@@ -1510,7 +1514,7 @@ struct CommitsListView: View {
                     NodeCommitRowView(node: node)
                         .padding(.horizontal)
                         .padding(.vertical, 12)
-                        .background(Color(white: 0.06))
+                        .background(Color(.secondarySystemBackground))
                         .cornerRadius(12)
                         .contentShape(Rectangle())
                         .onTapGesture {
@@ -1524,11 +1528,11 @@ struct CommitsListView: View {
                             }
                         }
                 case .page(let commit, let noteName):
-                    CommitRowView(commit: commit, noteName: noteName)
+                    CommitRowView(commit: commit, noteName: noteName, viewCount: commitViewCounts[commit.hash] ?? 0)
                         .padding(.leading, commit.isAutoCommit ? 0 : 16)
                         .padding(.trailing, 16)
                         .padding(.vertical, commit.isAutoCommit ? 10 : 12)
-                        .background(Color(white: 0.06))
+                        .background(Color(.secondarySystemBackground))
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                         .contentShape(Rectangle())
                         .onTapGesture {
@@ -1592,6 +1596,16 @@ struct CommitsListView: View {
                     }
                 }
             }
+
+            // Load view counts from share links
+            let allShareLinks = try await appState.shareLinkRepository.getAllShareLinks()
+            var counts: [String: Int] = [:]
+            for link in allShareLinks {
+                if let hash = link.commitHash, link.viewCount > 0 {
+                    counts[hash, default: 0] += link.viewCount
+                }
+            }
+            commitViewCounts = counts
 
             // Load storage stats
             storageStats = try await appState.profileScanner.getStorageStats()
@@ -1746,7 +1760,7 @@ struct NodeCommitDetailSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    // Commit badge
+                    // Commit badge (title + commit icon + ID)
                     commitBadge
 
                     // Metadata card
@@ -1801,7 +1815,7 @@ struct NodeCommitDetailSheet: View {
                 }
                 .padding()
             }
-            .background(Color.black)
+            .background(Color(.systemBackground))
             .navigationTitle("")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -1813,20 +1827,9 @@ struct NodeCommitDetailSheet: View {
                     }
                 }
                 ToolbarItem(placement: .principal) {
-                    Button {
-                        UIPasteboard.general.string = node.content.shortId ?? node.name
-                        copiedField = "nav_title"
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                            if copiedField == "nav_title" { copiedField = nil }
-                        }
-                    } label: {
-                        Text(copiedField == "nav_title" ? "Copied" : "#\(node.content.shortId ?? node.name)")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(copiedField == "nav_title" ? .white : .green)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 6)
-                            .background(Color.gray.opacity(0.2), in: Capsule())
-                    }
+                    Image("ObiusLogo")
+                        .renderingMode(.template)
+                        .foregroundStyle(.primary)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
@@ -1849,21 +1852,8 @@ struct NodeCommitDetailSheet: View {
     }
 
     private var commitBadge: some View {
-        ZStack {
-            HStack {
-                HStack(spacing: 6) {
-                    Image(systemName: "doc.zipper")
-                        .font(.caption2)
-                    Text("Commit")
-                        .font(.caption2.weight(.medium))
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(Color.purple.opacity(0.15), in: Capsule())
-                .foregroundStyle(.purple)
-                Spacer()
-            }
-
+        VStack(alignment: .leading, spacing: 16) {
+            // Title
             if let title = node.content.sourceNoteTitle, !title.isEmpty {
                 Button {
                     UIPasteboard.general.string = title
@@ -1878,6 +1868,39 @@ struct NodeCommitDetailSheet: View {
                         .lineLimit(1)
                 }
                 .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .center)
+            }
+
+            // Commit icon + centered ID
+            ZStack {
+                HStack {
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc.zipper")
+                            .font(.caption2)
+                        Text("Commit")
+                            .font(.caption2.weight(.medium))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Color.purple.opacity(0.15), in: Capsule())
+                    .foregroundStyle(.purple)
+                    Spacer()
+                }
+
+                Button {
+                    UIPasteboard.general.string = node.content.shortId ?? node.name
+                    copiedField = "nav_title"
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        if copiedField == "nav_title" { copiedField = nil }
+                    }
+                } label: {
+                    Text(copiedField == "nav_title" ? "Copied" : "#\(node.content.shortId ?? node.name)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(copiedField == "nav_title" ? .white : .green)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(Color.gray.opacity(0.2), in: Capsule())
+                }
             }
         }
     }
@@ -1985,6 +2008,7 @@ struct NodeCommitDetailSheet: View {
 struct CommitRowView: View {
     let commit: Commit
     let noteName: String
+    var viewCount: Int = 0
 
     private var formattedDate: String {
         let date = Date(timeIntervalSince1970: Double(commit.createdAt) / 1000)
@@ -2035,6 +2059,12 @@ struct CommitRowView: View {
                 Text(formattedDate)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                if viewCount > 0 {
+                    Label("\(viewCount)", systemImage: "eye")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(.vertical, 4)
@@ -2063,6 +2093,12 @@ struct CommitRowView: View {
                     .lineLimit(1)
 
                 Spacer()
+
+                if viewCount > 0 {
+                    Label("\(viewCount)", systemImage: "eye")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
 
                 Text(formattedDate)
                     .font(.caption)
@@ -2117,7 +2153,7 @@ struct CommitDetailSheet: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .background(Color.black)
+            .background(Color(.systemBackground))
             .navigationTitle("")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -2129,20 +2165,9 @@ struct CommitDetailSheet: View {
                     }
                 }
                 ToolbarItem(placement: .principal) {
-                    Button {
-                        UIPasteboard.general.string = commit.shortId
-                        copiedField = "nav_title"
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                            if copiedField == "nav_title" { copiedField = nil }
-                        }
-                    } label: {
-                        Text(copiedField == "nav_title" ? "Copied" : "#\(commit.shortId)")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(copiedField == "nav_title" ? .white : .green)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 6)
-                            .background(Color.gray.opacity(0.2), in: Capsule())
-                    }
+                    Image("ObiusLogo")
+                        .renderingMode(.template)
+                        .foregroundStyle(.primary)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
@@ -2172,7 +2197,25 @@ struct CommitDetailSheet: View {
     private func commitContentView(_ content: CommitContent) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // Commit badge + title
+                // Title
+                if let title = content.note.title, !title.isEmpty {
+                    Button {
+                        UIPasteboard.general.string = title
+                        copiedField = "badge_title"
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            if copiedField == "badge_title" { copiedField = nil }
+                        }
+                    } label: {
+                        Text(copiedField == "badge_title" ? "Copied" : title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(copiedField == "badge_title" ? .green : .primary)
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                }
+
+                // Commit icon + centered ID
                 ZStack {
                     HStack {
                         HStack(spacing: 6) {
@@ -2188,20 +2231,19 @@ struct CommitDetailSheet: View {
                         Spacer()
                     }
 
-                    if let title = content.note.title, !title.isEmpty {
-                        Button {
-                            UIPasteboard.general.string = title
-                            copiedField = "badge_title"
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                if copiedField == "badge_title" { copiedField = nil }
-                            }
-                        } label: {
-                            Text(copiedField == "badge_title" ? "Copied" : title)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(copiedField == "badge_title" ? .green : .primary)
-                                .lineLimit(1)
+                    Button {
+                        UIPasteboard.general.string = commit.shortId
+                        copiedField = "nav_title"
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            if copiedField == "nav_title" { copiedField = nil }
                         }
-                        .buttonStyle(.plain)
+                    } label: {
+                        Text(copiedField == "nav_title" ? "Copied" : "#\(commit.shortId)")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(copiedField == "nav_title" ? .white : .green)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 6)
+                            .background(Color.gray.opacity(0.2), in: Capsule())
                     }
                 }
 
@@ -2258,7 +2300,7 @@ struct CommitDetailSheet: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 4)
+                .padding(.vertical, -4)
 
                 // Section content
                 if !content.note.body.isEmpty {

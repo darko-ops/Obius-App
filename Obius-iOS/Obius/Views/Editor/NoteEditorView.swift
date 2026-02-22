@@ -471,6 +471,19 @@ private struct NoteEditorContent: View {
                     await createShareLink(for: sectionId)
                 }
             },
+            onCopy: { sectionId in
+                viewModel.copySection(sectionId)
+            },
+            onPaste: { sectionId in
+                Task {
+                    do {
+                        try await viewModel.pasteSectionAfter(sectionId)
+                    } catch {
+                        print("📋 Paste ERROR: \(error)")
+                    }
+                }
+            },
+            hasCopiedSection: !viewModel.copiedSections.isEmpty,
             onImageTap: { sectionId in
                 guard let section = viewModel.getSection(sectionId) else { return }
 

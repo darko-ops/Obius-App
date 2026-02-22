@@ -8,9 +8,12 @@ final class EchoManager: ObservableObject {
 
     @Published private(set) var activeEchoes: [Echo] = []
     @Published private(set) var isLoaded: Bool = false
+    /// Set when an echo fires while the app is open — used for in-app banner
+    @Published var firedEcho: Echo?
 
     private var echoRepository: EchoRepository?
     private var cancellables = Set<AnyCancellable>()
+    private var checkTimer: Timer?
 
     private init() {}
 
@@ -23,8 +26,51 @@ final class EchoManager: ObservableObject {
             .sink { [weak self] echoes in
                 self?.activeEchoes = echoes
                 self?.isLoaded = true
+                // Recalculate the next fire timer whenever echoes change
+                self?.scheduleNextCheck()
             }
             .store(in: &cancellables)
+    }
+
+    /// Schedule a precise timer for the next echo fire date
+    func scheduleNextCheck() {
+        checkTimer?.invalidate()
+        checkTimer = nil
+
+        // Find the soonest upcoming fire date across all active echoes
+        let now = Date()
+        var soonest: Date?
+
+        for echo in activeEchoes where echo.isActive {
+            if echo.isRecurring {
+                if let next = echo.computedNextFireDate, next > now {
+                    if soonest == nil || next < soonest! { soonest = next }
+                }
+            } else {
+                let fire = echo.fireDateAsDate
+                if fire > now {
+                    if soonest == nil || fire < soonest! { soonest = fire }
+                }
+            }
+        }
+
+        guard let targetDate = soonest else { return }
+
+        let delay = targetDate.timeIntervalSince(now)
+        guard delay > 0 else { return }
+
+        checkTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.checkForFiredEchoes()
+                // Schedule the next one
+                self?.scheduleNextCheck()
+            }
+        }
+    }
+
+    func stopPeriodicCheck() {
+        checkTimer?.invalidate()
+        checkTimer = nil
     }
 
     // MARK: - Notification Permission
@@ -252,9 +298,25 @@ final class EchoManager: ObservableObject {
         }
 
         try await repository.acknowledgeEcho(id: id)
+    }
 
-        // Cancel all notifications for this echo (start, intervals, and reminders)
+    /// Complete an echo: acknowledge it and stop all notifications.
+    /// For recurring echoes, reschedules for the next cycle.
+    /// For one-time echoes, deactivates it entirely.
+    func completeEcho(id: String) async throws {
+        guard let repository = echoRepository else {
+            throw EchoError.notInitialized
+        }
+
+        try await repository.acknowledgeEcho(id: id)
+
+        // Cancel all current notifications
         cancelEcho(id)
+
+        // For recurring echoes, reschedule so the next cycle fires normally
+        if let echo = activeEchoes.first(where: { $0.id == id }), echo.isRecurring {
+            scheduleEcho(echo)
+        }
     }
 
     func checkForFiredEchoes() async {
@@ -263,19 +325,28 @@ final class EchoManager: ObservableObject {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
 
         for echo in activeEchoes where echo.isActive && echo.fireDate <= now {
-            // Non-recurring echo that already fired is complete — cancel all notifications
-            if !echo.isRecurring {
-                cancelEcho(echo.id)
-                continue
-            }
-
+            // Already alerted — nothing to do
             guard !echo.isAlerted else { continue }
 
-            // Skip if already acknowledged for this fire cycle
-            if let ack = echo.lastAcknowledgedAt, ack >= echo.fireDate {
-                continue
+            if echo.isRecurring {
+                // Recurring: check if acknowledged for the current cycle
+                if let ack = echo.lastAcknowledgedAt,
+                   let cycleDate = echo.mostRecentFireDate {
+                    let cycleDateMs = Int64(cycleDate.timeIntervalSince1970 * 1000)
+                    if ack >= cycleDateMs {
+                        continue
+                    }
+                }
+            } else {
+                // Non-recurring: skip if already acknowledged (already completed)
+                if echo.lastAcknowledgedAt != nil {
+                    cancelEcho(echo.id)
+                    continue
+                }
             }
+
             try? await repository.alertEcho(id: echo.id)
+            firedEcho = echo
         }
     }
 

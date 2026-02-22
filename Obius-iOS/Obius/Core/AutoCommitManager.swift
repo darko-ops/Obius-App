@@ -69,6 +69,9 @@ class AutoCommitManager {
             return
         }
 
+        // Fetch sections once for both content check and title generation
+        let sections = try await sectionRepository.getSections(noteId: note.id)
+
         // Get latest commit for this note
         let latestCommit = try await commitRepository.getLatestCommit(noteId: note.id)
 
@@ -79,7 +82,6 @@ class AutoCommitManager {
             }
         } else {
             // No commits yet — skip if note has no content
-            let sections = try await sectionRepository.getSections(noteId: note.id)
             if note.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && sections.isEmpty {
                 return
             }
@@ -89,7 +91,8 @@ class AutoCommitManager {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d"
         let dateLabel = formatter.string(from: noteUpdatedDate)
-        let commitName = "\(note.displayTitle) \u{00B7} \(dateLabel)"
+        let pageTitle = note.displayTitle(sections: sections)
+        let commitName = "\(pageTitle) \u{00B7} \(dateLabel)"
 
         // Create the auto-commit (ColdStore handles hash dedup — identical content produces same hash)
         _ = try await commitModule.createCommit(

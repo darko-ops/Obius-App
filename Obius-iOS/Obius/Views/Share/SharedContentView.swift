@@ -23,43 +23,14 @@ struct SharedContentView: View {
                     contentView
                 }
             }
-            .background(Color.black)
+            .background(Color(.systemBackground))
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    if viewModel.shareType == .commit, let shortId = viewModel.commitShortId ?? viewModel.commitHash.map({ commitShortId(from: $0) }) {
-                        let titleText = shortId
-                        Button {
-                            UIPasteboard.general.string = titleText
-                            copiedField = "nav_title"
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                if copiedField == "nav_title" { copiedField = nil }
-                            }
-                        } label: {
-                            Text(copiedField == "nav_title" ? "Copied" : "#\(titleText)")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(copiedField == "nav_title" ? .white : .green)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 6)
-                                .background(Color.gray.opacity(0.2), in: Capsule())
-                        }
-                    } else {
-                        Button {
-                            UIPasteboard.general.string = viewModel.title ?? ""
-                            copiedField = "nav_title"
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                if copiedField == "nav_title" { copiedField = nil }
-                            }
-                        } label: {
-                            Text(copiedField == "nav_title" ? "Copied" : "Obius Note")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(copiedField == "nav_title" ? .white : .purple)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 6)
-                                .background(Color.purple.opacity(0.15), in: Capsule())
-                        }
-                    }
+                    Image("ObiusLogo")
+                        .renderingMode(.template)
+                        .foregroundStyle(.primary)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") {
@@ -79,32 +50,48 @@ struct SharedContentView: View {
     private var contentView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // Share type badge + title + action button
+                // Title (centered)
+                if let title = viewModel.title, !title.isEmpty {
+                    Button {
+                        UIPasteboard.general.string = title
+                        copiedField = "badge_title"
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            if copiedField == "badge_title" { copiedField = nil }
+                        }
+                    } label: {
+                        Text(copiedField == "badge_title" ? "Copied" : title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(copiedField == "badge_title" ? .green : .primary)
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                }
+
+                // Share type badge (left) + centered ID + action button (right)
                 ZStack {
-                    // Badge on the left
                     HStack {
                         shareTypeBadge
                         Spacer()
                     }
 
-                    // Title centered (copyable)
-                    if let title = viewModel.title, !title.isEmpty {
+                    if viewModel.shareType == .commit, let shortId = viewModel.commitShortId ?? viewModel.commitHash.map({ commitShortId(from: $0) }) {
                         Button {
-                            UIPasteboard.general.string = title
-                            copiedField = "badge_title"
+                            UIPasteboard.general.string = shortId
+                            copiedField = "nav_title"
                             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                if copiedField == "badge_title" { copiedField = nil }
+                                if copiedField == "nav_title" { copiedField = nil }
                             }
                         } label: {
-                            Text(copiedField == "badge_title" ? "Copied" : title)
+                            Text(copiedField == "nav_title" ? "Copied" : "#\(shortId)")
                                 .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(copiedField == "badge_title" ? .green : .primary)
-                                .lineLimit(1)
+                                .foregroundStyle(copiedField == "nav_title" ? .white : .green)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 6)
+                                .background(Color.gray.opacity(0.2), in: Capsule())
                         }
-                        .buttonStyle(.plain)
                     }
 
-                    // Action button on the right
                     if SupabaseManager.shared.isAuthenticated {
                         HStack {
                             Spacer()
@@ -115,6 +102,11 @@ struct SharedContentView: View {
                             }
                         }
                     }
+                }
+
+                // Metadata card (for commits)
+                if viewModel.shareType == .commit {
+                    commitMetadataCard
                 }
 
                 // Content
@@ -190,9 +182,7 @@ struct SharedContentView: View {
         }
     }
 
-    @ViewBuilder
-    private var commitContentView: some View {
-        // Commit metadata header
+    private var commitMetadataCard: some View {
         VStack(alignment: .leading, spacing: 6) {
             // .obx filename
             copyableRow(
@@ -245,7 +235,10 @@ struct SharedContentView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(UIColor.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
 
+    @ViewBuilder
+    private var commitContentView: some View {
         // Dot divider
         HStack(spacing: 6) {
             ForEach(0..<3, id: \.self) { _ in

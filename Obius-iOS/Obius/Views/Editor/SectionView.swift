@@ -66,6 +66,11 @@ struct SectionView: View {
     // Share callback
     let onShare: () -> Void  // Share this node
 
+    // Copy/Paste callbacks
+    let onCopy: () -> Void  // Copy this node to clipboard
+    let onPaste: () -> Void  // Paste copied node after this node
+    let hasCopiedSection: Bool  // Whether a section is on the clipboard
+
     // Image node callback
     let onImageTap: () -> Void  // Open image picker for this section
     let mediaRepository: MediaRepository?  // For loading image data
@@ -102,6 +107,9 @@ struct SectionView: View {
         onUnlinkHandle: @escaping () -> Void = {},
         onCommit: @escaping () -> Void = {},
         onShare: @escaping () -> Void = {},
+        onCopy: @escaping () -> Void = {},
+        onPaste: @escaping () -> Void = {},
+        hasCopiedSection: Bool = false,
         onImageTap: @escaping () -> Void = {},
         mediaRepository: MediaRepository? = nil
     ) {
@@ -127,6 +135,9 @@ struct SectionView: View {
         self.onUnlinkHandle = onUnlinkHandle
         self.onCommit = onCommit
         self.onShare = onShare
+        self.onCopy = onCopy
+        self.onPaste = onPaste
+        self.hasCopiedSection = hasCopiedSection
         self.onImageTap = onImageTap
         self.mediaRepository = mediaRepository
 
@@ -829,17 +840,13 @@ struct SectionView: View {
             Label("Apply Template", systemImage: "doc.on.doc.fill")
         }
 
-        // 8. Copy
+        // 8. Duplicate (copy + paste in one action)
         Button {
-            #if os(iOS)
-            UIPasteboard.general.string = displayContent
-            #elseif os(macOS)
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(displayContent, forType: .string)
-            #endif
+            onCopy()
+            onPaste()
             HapticFeedback.notification(.success)
         } label: {
-            Label("Copy", systemImage: "doc.on.doc")
+            Label("Duplicate", systemImage: "plus.square.on.square")
         }
 
         // 9. Delete

@@ -159,11 +159,13 @@ struct Note: Codable, Identifiable, Hashable {
         let endTrimmed = endText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !endTrimmed.isEmpty { sources.append(endTrimmed) }
 
-        // Collect words across sources until we have enough
+        // Collect words across sources until we have enough, skipping hashtags
         var words: [String] = []
         for source in sources {
             let sourceWords = source.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
             for word in sourceWords {
+                // Skip hashtag words (e.g. #tag)
+                if word.hasPrefix("#") { continue }
                 words.append(word)
                 if words.count >= count { break }
             }

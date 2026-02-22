@@ -34,6 +34,9 @@ struct ObiusApp: App {
                             await EchoManager.shared.checkForFiredEchoes()
                             await appState.autoCommitManager.checkAndAutoCommit()
                         }
+                        EchoManager.shared.scheduleNextCheck()
+                    } else if phase == .background {
+                        EchoManager.shared.stopPeriodicCheck()
                     }
                 }
                 .onOpenURL { url in
@@ -46,21 +49,33 @@ struct ObiusApp: App {
 // MARK: - Notification Delegate
 
 class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
-    // Show notifications even when app is in foreground
+    // Show notifications even when app is in foreground + update echo state
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
+        // Immediately update echo alert state so the UI reflects the fired echo
+        Task { @MainActor in
+            await EchoManager.shared.checkForFiredEchoes()
+        }
         completionHandler([.banner, .sound])
     }
 
-    // Handle notification tap
+    // Handle notification tap — navigate to the Echo alert
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
+        let userInfo = response.notification.request.content.userInfo
+        if let echoId = userInfo["echoId"] as? String {
+            NotificationCenter.default.post(
+                name: .echoNotificationTapped,
+                object: nil,
+                userInfo: ["echoId": echoId]
+            )
+        }
         completionHandler()
     }
 }
@@ -150,6 +165,7 @@ class AppState: ObservableObject {
         await EchoManager.shared.requestNotificationPermission()
         EchoManager.shared.rescheduleAllEchoes()
         await EchoManager.shared.checkForFiredEchoes()
+        EchoManager.shared.scheduleNextCheck()
 
         // Auto-commit check (creates commits for notes modified before today)
         await autoCommitManager.checkAndAutoCommit()
@@ -163,4 +179,10 @@ class AppState: ObservableObject {
     func triggerSync() async {
         await syncEngine.sync()
     }
+}
+
+// MARK: - Notification Names
+
+extension Notification.Name {
+    static let echoNotificationTapped = Notification.Name("echoNotificationTapped")
 }

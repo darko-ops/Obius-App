@@ -27,6 +27,9 @@ struct DraggableSectionList: View {
     let onUnlinkHandle: (String) -> Void  // Handle Loop: Unlink section from handle
     let onCommit: (String) -> Void  // Commit the note containing this container
     let onShare: (String) -> Void  // Share this node
+    let onCopy: (String) -> Void  // Copy this node to clipboard
+    let onPaste: (String) -> Void  // Paste copied node after this node
+    let hasCopiedSection: Bool  // Whether a section is on the clipboard
     let onImageTap: (String) -> Void  // Open image picker for section
     let mediaRepository: MediaRepository?  // For loading image data in image nodes
     let getInterstitialContent: (String?) -> String  // Get text after section (nil = end)
@@ -78,6 +81,9 @@ struct DraggableSectionList: View {
                         onUnlinkHandle: { onUnlinkHandle(section.id) },
                         onCommit: { onCommit(section.id) },
                         onShare: { onShare(section.id) },
+                        onCopy: { onCopy(section.id) },
+                        onPaste: { onPaste(section.id) },
+                        hasCopiedSection: hasCopiedSection,
                         onImageTap: { onImageTap(section.id) },
                         mediaRepository: mediaRepository
                     )
@@ -170,6 +176,9 @@ struct DraggableSectionRow: View {
     let onUnlinkHandle: () -> Void  // Handle Loop support
     let onCommit: () -> Void  // Commit container
     let onShare: () -> Void  // Share node
+    let onCopy: () -> Void  // Copy node to clipboard
+    let onPaste: () -> Void  // Paste copied node after this node
+    let hasCopiedSection: Bool  // Whether a section is on the clipboard
     let onImageTap: () -> Void  // Image node tap
     let mediaRepository: MediaRepository?  // For image nodes
 
@@ -201,6 +210,9 @@ struct DraggableSectionRow: View {
                 onUnlinkHandle: onUnlinkHandle,
                 onCommit: onCommit,
                 onShare: onShare,
+                onCopy: onCopy,
+                onPaste: onPaste,
+                hasCopiedSection: hasCopiedSection,
                 onImageTap: onImageTap,
                 mediaRepository: mediaRepository
             )
@@ -823,6 +835,9 @@ enum HapticFeedback {
                     onUnlinkHandle: { _ in },
                     onCommit: { _ in },
                     onShare: { _ in },
+                    onCopy: { _ in },
+                    onPaste: { _ in },
+                    hasCopiedSection: false,
                     onImageTap: { _ in },
                     mediaRepository: nil,
                     getInterstitialContent: { _ in "" },

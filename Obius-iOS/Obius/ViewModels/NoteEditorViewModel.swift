@@ -17,6 +17,7 @@ final class NoteEditorViewModel: ObservableObject {
     @Published var sections: [Section] = []
     @Published var isLoading: Bool = true
     @Published var focusedSectionId: String?
+    @Published var copiedSections: [Section] = []
 
     // Computed hierarchical structure
     var sectionTree: [SectionNode] {
@@ -426,20 +427,83 @@ final class NoteEditorViewModel: ObservableObject {
         }
     }
 
-    func duplicateSection(_ sectionId: String) async throws {
-        guard let section = sections.first(where: { $0.id == sectionId }) else { return }
+    func copySection(_ sectionId: String) {
+        guard let root = sections.first(where: { $0.id == sectionId }) else {
+            print("📋 Copy FAILED: section \(sectionId.prefix(8)) not found in \(sections.count) sections")
+            return
+        }
+        // Collect the root section and all its descendants
+        copiedSections = [root] + getDescendants(of: sectionId)
+        print("📋 Copied \(copiedSections.count) section(s): \(root.content.prefix(30))")
+    }
 
+    func pasteSectionAfter(_ afterId: String?) async throws {
+        guard let rootSection = copiedSections.first else {
+            print("📋 Paste FAILED: no copied sections")
+            return
+        }
+        let targetId = afterId?.isEmpty == true ? sections.last?.id : afterId
+        print("📋 Pasting \(copiedSections.count) section(s) after \(targetId?.prefix(8) ?? "end")")
+
+        // Map old IDs to new IDs so we can remap parentSectionId
+        var idMap: [String: String] = [:]
+
+        // Create the root section after the target
+        do {
+            let newRoot = try await createPastedSection(rootSection, afterSectionId: targetId, parentSectionId: nil)
+            print("📋 Created root section: \(newRoot.id.prefix(8)) content: \(newRoot.content.prefix(20))")
+            idMap[rootSection.id] = newRoot.id
+
+            // Create all descendant sections, preserving parent relationships
+            for section in copiedSections.dropFirst() {
+                let newParentId = section.parentSectionId.flatMap { idMap[$0] }
+                let newSection = try await createPastedSection(section, afterSectionId: nil, parentSectionId: newParentId)
+                print("📋 Created child section: \(newSection.id.prefix(8))")
+                idMap[section.id] = newSection.id
+            }
+
+            focusedSectionId = newRoot.id
+            print("📋 Paste complete. Total sections now: \(sections.count)")
+        } catch {
+            print("📋 Paste CREATE ERROR: \(error)")
+            throw error
+        }
+    }
+
+    /// Helper to create a single pasted section with all its properties
+    private func createPastedSection(_ source: Section, afterSectionId: String?, parentSectionId: String?) async throws -> Section {
         let newSection = try await sectionRepository.createSection(
             noteId: noteId,
-            content: section.content,
-            contentType: section.contentType,
-            afterSectionId: sectionId
+            content: source.content,
+            contentType: source.contentType,
+            sectionType: source.sectionType,
+            afterSectionId: afterSectionId,
+            isTemplateContent: source.isTemplateContent,
+            templatePrefix: source.templatePrefix
         )
 
         // Copy indent level
-        try await sectionRepository.setIndentLevel(newSection.id, level: section.indentLevel)
+        try await sectionRepository.setIndentLevel(newSection.id, level: source.indentLevel)
 
-        focusedSectionId = newSection.id
+        // Copy rich content
+        if let richContent = source.richContent {
+            try await sectionRepository.updateContent(newSection.id, content: source.content, richText: richContent)
+        }
+
+        // Copy intent
+        try await sectionRepository.setIntent(newSection.id, intent: source.intent)
+
+        // Copy title
+        if let title = source.title {
+            try await sectionRepository.setTitle(newSection.id, title: title)
+        }
+
+        // Set parent relationship
+        if let parentId = parentSectionId {
+            try await sectionRepository.setParentSection(newSection.id, parentId: parentId)
+        }
+
+        return newSection
     }
 
     func toggleCollapse(_ sectionId: String) async throws {

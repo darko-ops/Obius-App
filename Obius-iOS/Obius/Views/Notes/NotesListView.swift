@@ -98,7 +98,7 @@ private struct NotesListContent: View {
             RoundedSearchBar(text: $searchQuery, placeholder: "Search")
                 .padding(.horizontal)
                 .padding(.vertical, 8)
-                .background(Color.black)
+                .background(Color(.systemBackground))
 
             List {
                 // Grouped notes (pinned groups) - collapsible
@@ -169,10 +169,10 @@ private struct NotesListContent: View {
             .scrollContentBackground(.hidden)
             #endif
         }
-        .background(Color.black)
+        .background(Color(.systemBackground))
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(Color.black, for: .navigationBar)
+        .toolbarBackground(Color(.systemBackground), for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -244,6 +244,15 @@ private struct NotesListContent: View {
                     } label: {
                         Image(systemName: "plus")
                     }
+                }
+            }
+
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button {
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                } label: {
+                    Image(systemName: "keyboard.chevron.compact.down")
                 }
             }
         }
@@ -441,7 +450,7 @@ private struct NotesListContent: View {
             NoteRowView(note: note, sectionContent: sectionPreviews[note.id], autoTitle: autoTitles[note.id])
         }
         .contentShape(Rectangle())
-        .listRowBackground(Color(white: 0.06))
+        .listRowBackground(Color(.secondarySystemBackground))
         .onTapGesture {
             if isSelectionMode {
                 withAnimation(.easeInOut(duration: 0.15)) {

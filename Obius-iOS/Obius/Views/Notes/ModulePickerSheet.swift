@@ -14,7 +14,7 @@ struct ModulePickerSheet: View {
     var body: some View {
         NavigationStack {
             moduleList
-                .background(Color.black)
+                .background(Color(.systemBackground))
                 .navigationTitle("Modules")
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -60,7 +60,7 @@ struct ModulePickerSheet: View {
             moduleRowLabel(module)
         }
         .buttonStyle(.plain)
-        .listRowBackground(Color(white: 0.06))
+        .listRowBackground(Color(.secondarySystemBackground))
         .contextMenu {
             if !module.isDefault {
                 Button(role: .destructive) {

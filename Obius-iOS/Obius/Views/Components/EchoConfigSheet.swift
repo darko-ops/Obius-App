@@ -183,30 +183,49 @@ struct EchoRowView: View {
     @StateObject private var echoManager = EchoManager.shared
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "dot.radiowaves.left.and.right")
-                .font(.subheadline)
-                .foregroundStyle(.yellow)
+        VStack(spacing: 6) {
+            HStack(spacing: 12) {
+                Image(systemName: "dot.radiowaves.left.and.right")
+                    .font(.subheadline)
+                    .foregroundStyle(.yellow)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("@\(echoManager.getHandleName(for: echo))")
-                    .font(.subheadline.weight(.medium))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("@\(echoManager.getHandleName(for: echo))")
+                        .font(.subheadline.weight(.medium))
 
-                Text(echo.cadenceDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    Text(echo.cadenceDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                if !echo.isRecurring && echo.fireDateAsDate <= Date() {
+                    Text("Complete")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.green)
+                } else if let nextDate = echo.computedNextFireDate {
+                    Text(nextDate, style: .relative)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
             }
 
-            Spacer()
-
-            if !echo.isRecurring && echo.fireDateAsDate <= Date() {
-                Text("Complete")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.green)
-            } else if let nextDate = echo.computedNextFireDate {
-                Text(nextDate, style: .relative)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+            if echo.isAlerted {
+                Button {
+                    Task {
+                        try? await echoManager.completeEcho(id: echo.id)
+                        HapticFeedback.notification(.success)
+                    }
+                } label: {
+                    Label("Complete", systemImage: "checkmark.circle")
+                        .font(.caption.weight(.medium))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .background(Color.green.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(.vertical, 6)
@@ -308,14 +327,37 @@ struct EchoDetailSheet: View {
 
                 // Status section
                 SwiftUI.Section("Status") {
-                    if !echo.isRecurring && echo.fireDateAsDate <= Date() {
+                    if echo.isAlerted {
+                        LabeledContent("Status") {
+                            Text("Alerted")
+                                .foregroundStyle(.yellow)
+                        }
+                    } else if !echo.isRecurring && echo.fireDateAsDate <= Date() {
                         LabeledContent("Status") {
                             Text("Complete")
                                 .foregroundStyle(.green)
                         }
-                    } else if let nextDate = echo.computedNextFireDate {
+                    }
+
+                    if let nextDate = echo.computedNextFireDate {
                         LabeledContent("Next Fire") {
                             Text(nextDate, style: .relative)
+                        }
+                    }
+                }
+
+                // Complete action
+                if echo.isAlerted {
+                    SwiftUI.Section {
+                        Button {
+                            Task {
+                                try? await echoManager.completeEcho(id: echo.id)
+                                HapticFeedback.notification(.success)
+                            }
+                            dismiss()
+                        } label: {
+                            Label("Complete", systemImage: "checkmark.circle")
+                                .foregroundStyle(.green)
                         }
                     }
                 }
