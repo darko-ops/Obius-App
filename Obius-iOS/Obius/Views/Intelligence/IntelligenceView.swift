@@ -2,55 +2,49 @@ import SwiftUI
 
 struct IntelligenceView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var insightRepository: InsightRepository
     @State private var messageText = ""
     @State private var messages: [ChatMessage] = []
     @State private var isLoading = false
+    @State private var isScanning = false
+    @State private var hasScannedOnce = false
+    @State private var selectedInsight: Insight?
+    @State private var showCreateSheet = false
     @FocusState private var isInputFocused: Bool
+
+    private var insightEngine: InsightEngine {
+        InsightEngine(
+            noteRepository: appState.noteRepository,
+            sectionRepository: appState.sectionRepository,
+            handleRepository: appState.handleRepository,
+            insightRepository: insightRepository,
+            database: appState.database
+        )
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            if messages.isEmpty {
-                emptyState
-            } else {
-                messageList
-            }
-
-            inputBar
-        }
-        .navigationTitle("Obius")
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
-        #endif
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 16) {
-            Spacer()
-
-            Image(systemName: "brain")
-                .font(.system(size: 60))
-                .foregroundStyle(.secondary)
-
-            Text("Intelligence : Architecture")
-                .font(.title2.weight(.semibold))
-
-            Text("I can help you explore your notes, generate ideas, and answer questions.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
-
-            Spacer()
-        }
-    }
-
-    private var messageList: some View {
-        ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 16) {
-                    ForEach(messages) { message in
-                        ChatMessageView(message: message)
-                            .id(message.id)
+                    // Tracked section (always visible for + button)
+                    trackedSection
+
+                    // New Insights section
+                    if !insightRepository.surfacedInsights.isEmpty {
+                        insightsSection
+                    }
+
+                    // Empty state (when no insights and no chat)
+                    if insightRepository.surfacedInsights.isEmpty
+                        && insightRepository.trackedInsights.isEmpty
+                        && messages.isEmpty
+                        && !isScanning {
+                        emptyState
+                    }
+
+                    // Chat messages
+                    if !messages.isEmpty {
+                        chatSection
                     }
 
                     if isLoading {
@@ -67,12 +61,185 @@ struct IntelligenceView: View {
                 }
                 .padding()
             }
-            .onChange(of: messages.count) { _, _ in
-                if let lastMessage = messages.last {
-                    withAnimation {
-                        proxy.scrollTo(lastMessage.id, anchor: .bottom)
+
+            inputBar
+        }
+        .navigationTitle("Intelligence")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Task { await runScan() }
+                } label: {
+                    if isScanning {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
                     }
                 }
+                .disabled(isScanning)
+            }
+        }
+        .sheet(item: $selectedInsight) { insight in
+            InsightDetailSheet(
+                insight: insight,
+                onTrack: {
+                    Task {
+                        try? await insightRepository.trackInsight(insight.id)
+                        haptic(.success)
+                    }
+                },
+                onDismiss: {
+                    Task {
+                        try? await insightRepository.dismissInsight(insight.id)
+                    }
+                    haptic(.light)
+                },
+                onUntrack: {
+                    Task {
+                        try? await insightRepository.untrackInsight(insight.id)
+                        haptic(.light)
+                    }
+                }
+            )
+        }
+        .sheet(isPresented: $showCreateSheet) {
+            CreateInsightSheet { title, body in
+                Task {
+                    try? await insightRepository.createInsight(
+                        type: .suggestedTask,
+                        title: title,
+                        body: body,
+                        status: .tracked
+                    )
+                    haptic(.success)
+                }
+            }
+        }
+        .task {
+            // Auto-scan on first appearance if no insights exist
+            if !hasScannedOnce
+                && insightRepository.surfacedInsights.isEmpty
+                && insightRepository.trackedInsights.isEmpty {
+                await runScan()
+            }
+        }
+    }
+
+    // MARK: - New Insights
+
+    private var insightsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("New Insights")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+
+            ForEach(insightRepository.surfacedInsights) { insight in
+                InsightCardView(
+                    insight: insight,
+                    onTrack: {
+                        Task {
+                            try? await insightRepository.trackInsight(insight.id)
+                            haptic(.success)
+                        }
+                    },
+                    onDismiss: {
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            Task {
+                                try? await insightRepository.dismissInsight(insight.id)
+                            }
+                        }
+                        haptic(.light)
+                    },
+                    onTap: {
+                        selectedInsight = insight
+                    }
+                )
+                .transition(.asymmetric(
+                    insertion: .opacity,
+                    removal: .move(edge: .trailing).combined(with: .opacity)
+                ))
+            }
+        }
+    }
+
+    // MARK: - Tracked
+
+    private var trackedSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("TRACKING")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Button {
+                    showCreateSheet = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(insightRepository.trackedInsights) { insight in
+                        TrackedInsightChip(
+                            insight: insight,
+                            onTap: {
+                                selectedInsight = insight
+                            },
+                            onUntrack: {
+                                Task {
+                                    try? await insightRepository.untrackInsight(insight.id)
+                                    haptic(.light)
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Empty State
+
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            Spacer()
+                .frame(height: 60)
+
+            Image(systemName: "brain")
+                .font(.system(size: 60))
+                .foregroundStyle(.secondary)
+
+            Text("Intelligence")
+                .font(.title2.weight(.semibold))
+
+            Text("Insights about your notes will appear here. Tap refresh to scan for tasks, questions, and patterns.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+
+            Spacer()
+                .frame(height: 60)
+        }
+    }
+
+    // MARK: - Chat
+
+    private var chatSection: some View {
+        VStack(spacing: 12) {
+            ForEach(messages) { message in
+                ChatMessageView(message: message)
+                    .id(message.id)
             }
         }
     }
@@ -102,6 +269,15 @@ struct IntelligenceView: View {
         .background(.bar)
     }
 
+    // MARK: - Actions
+
+    private func runScan() async {
+        isScanning = true
+        await insightEngine.scan()
+        isScanning = false
+        hasScannedOnce = true
+    }
+
     private func sendMessage() {
         let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -112,7 +288,6 @@ struct IntelligenceView: View {
         isLoading = true
 
         // TODO: Integrate with actual AI backend
-        // For now, show a placeholder response
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             let response = ChatMessage(
                 role: .assistant,
@@ -121,6 +296,16 @@ struct IntelligenceView: View {
             messages.append(response)
             isLoading = false
         }
+    }
+
+    // MARK: - Haptics
+
+    private func haptic(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
+        UIImpactFeedbackGenerator(style: style).impactOccurred()
+    }
+
+    private func haptic(_ type: UINotificationFeedbackGenerator.FeedbackType) {
+        UINotificationFeedbackGenerator().notificationOccurred(type)
     }
 }
 
@@ -166,10 +351,10 @@ struct ChatMessageView: View {
 }
 
 #Preview {
+    let appState = AppState()
     NavigationStack {
         IntelligenceView()
+            .environmentObject(appState.insightRepository)
     }
-    .environmentObject(AppState())
+    .environmentObject(appState)
 }
-
-

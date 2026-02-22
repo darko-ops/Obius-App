@@ -118,12 +118,21 @@ struct MainTabView: View {
                 .tag(0)
 
                 NavigationStack {
+                    IntelligenceView()
+                        .environmentObject(appState.insightRepository)
+                }
+                .tabItem {
+                    Image(systemName: "brain")
+                }
+                .tag(1)
+
+                NavigationStack {
                     LibraryView(pendingEchoId: $pendingEchoId)
                 }
                 .tabItem {
                     Image(systemName: "person.crop.circle")
                 }
-                .tag(1)
+                .tag(2)
             }
 
             // In-app echo alert banner
@@ -131,7 +140,7 @@ struct MainTabView: View {
                 EchoAlertBanner(echo: echo) {
                     withAnimation { showBanner = false }
                     pendingEchoId = echo.id
-                    selectedTab = 1
+                    selectedTab = 2
                 } onDismiss: {
                     withAnimation { showBanner = false }
                 }
@@ -142,7 +151,7 @@ struct MainTabView: View {
         .onReceive(NotificationCenter.default.publisher(for: .echoNotificationTapped)) { notification in
             if let echoId = notification.userInfo?["echoId"] as? String {
                 pendingEchoId = echoId
-                selectedTab = 1
+                selectedTab = 2
             }
         }
         .onChange(of: echoManager.firedEcho) { _, echo in

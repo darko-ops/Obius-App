@@ -99,6 +99,7 @@ class AppState: ObservableObject {
     let mediaRepository: MediaRepository
     let commitModule: CommitModule
     let autoCommitManager: AutoCommitManager
+    let insightRepository: InsightRepository
     let profileScanner: ProfileScanner
 
     @Published var isInitialized = false
@@ -136,6 +137,7 @@ class AppState: ObservableObject {
                 sectionRepository: sectionRepository,
                 coldStore: coldStore
             )
+            self.insightRepository = InsightRepository(database: database)
             self.profileScanner = ProfileScanner(
                 coldStore: coldStore,
                 commitRepository: commitRepository
