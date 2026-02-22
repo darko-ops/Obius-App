@@ -10,6 +10,8 @@ struct IntelligenceView: View {
     @State private var hasScannedOnce = false
     @State private var selectedInsight: Insight?
     @State private var showCreateSheet = false
+    @State private var insightToDelete: Insight?
+    @State private var showDeleteConfirmation = false
     @FocusState private var isInputFocused: Bool
 
     private var insightEngine: InsightEngine {
@@ -103,7 +105,12 @@ struct IntelligenceView: View {
                         try? await insightRepository.untrackInsight(insight.id)
                         haptic(.light)
                     }
-                }
+                },
+                onDelete: insight.insightType == .nonsenseContent ? {
+                    selectedInsight = nil
+                    insightToDelete = insight
+                    showDeleteConfirmation = true
+                } : nil
             )
         }
         .sheet(isPresented: $showCreateSheet) {
@@ -118,6 +125,22 @@ struct IntelligenceView: View {
                     haptic(.success)
                 }
             }
+        }
+        .alert("Delete Page?", isPresented: $showDeleteConfirmation) {
+            Button("Delete", role: .destructive) {
+                guard let insight = insightToDelete, let noteId = insight.sourceNoteId else { return }
+                Task {
+                    try? await appState.noteRepository.deleteNote(noteId)
+                    try? await insightRepository.dismissInsight(insight.id)
+                    haptic(.success)
+                }
+                insightToDelete = nil
+            }
+            Button("Cancel", role: .cancel) {
+                insightToDelete = nil
+            }
+        } message: {
+            Text("This will delete the page and all its sections. This action can't be undone easily.")
         }
         .task {
             // Auto-scan on first appearance if no insights exist
@@ -157,7 +180,11 @@ struct IntelligenceView: View {
                     },
                     onTap: {
                         selectedInsight = insight
-                    }
+                    },
+                    onDelete: insight.insightType == .nonsenseContent ? {
+                        insightToDelete = insight
+                        showDeleteConfirmation = true
+                    } : nil
                 )
                 .transition(.asymmetric(
                     insertion: .opacity,

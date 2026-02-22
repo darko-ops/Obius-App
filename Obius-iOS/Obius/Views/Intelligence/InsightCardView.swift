@@ -7,6 +7,7 @@ struct InsightCardView: View {
     let onTrack: () -> Void
     let onDismiss: () -> Void
     let onTap: () -> Void
+    var onDelete: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -47,20 +48,38 @@ struct InsightCardView: View {
 
             // Action row
             HStack(spacing: 10) {
-                Button {
-                    onTrack()
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "star")
-                            .font(.caption2)
-                        Text("Track")
-                            .font(.caption.weight(.medium))
+                if insight.insightType == .nonsenseContent, let onDelete {
+                    Button {
+                        onDelete()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "trash")
+                                .font(.caption2)
+                            Text("Delete Page")
+                                .font(.caption.weight(.medium))
+                        }
+                        .foregroundStyle(.red)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.red.opacity(0.12))
+                        .clipShape(Capsule())
                     }
-                    .foregroundStyle(insight.insightType.tint.color)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(insight.insightType.tint.color.opacity(0.12))
-                    .clipShape(Capsule())
+                } else {
+                    Button {
+                        onTrack()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "star")
+                                .font(.caption2)
+                            Text("Track")
+                                .font(.caption.weight(.medium))
+                        }
+                        .foregroundStyle(insight.insightType.tint.color)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(insight.insightType.tint.color.opacity(0.12))
+                        .clipShape(Capsule())
+                    }
                 }
 
                 Button {
@@ -151,6 +170,7 @@ struct InsightDetailSheet: View {
     let onTrack: (() -> Void)?
     let onDismiss: (() -> Void)?
     let onUntrack: (() -> Void)?
+    var onDelete: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
 
@@ -191,37 +211,73 @@ struct InsightDetailSheet: View {
 
                     // Actions
                     if insight.status == .surfaced {
-                        HStack(spacing: 12) {
-                            Button {
-                                onTrack?()
-                                dismiss()
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "star")
-                                    Text("Track")
+                        if insight.insightType == .nonsenseContent, let onDelete {
+                            HStack(spacing: 12) {
+                                Button {
+                                    onDelete()
+                                    dismiss()
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "trash")
+                                        Text("Delete Page")
+                                    }
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.red)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(Color.red.opacity(0.12))
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
                                 }
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(insight.insightType.tint.color)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                                .background(insight.insightType.tint.color.opacity(0.12))
-                                .clipShape(RoundedRectangle(cornerRadius: 10))
-                            }
 
-                            Button {
-                                onDismiss?()
-                                dismiss()
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "xmark")
-                                    Text("Dismiss")
+                                Button {
+                                    onDismiss?()
+                                    dismiss()
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "xmark")
+                                        Text("Dismiss")
+                                    }
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(Color.gray.opacity(0.1))
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
                                 }
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                                .background(Color.gray.opacity(0.1))
-                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                            }
+                        } else {
+                            HStack(spacing: 12) {
+                                Button {
+                                    onTrack?()
+                                    dismiss()
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "star")
+                                        Text("Track")
+                                    }
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(insight.insightType.tint.color)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(insight.insightType.tint.color.opacity(0.12))
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                }
+
+                                Button {
+                                    onDismiss?()
+                                    dismiss()
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "xmark")
+                                        Text("Dismiss")
+                                    }
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(Color.gray.opacity(0.1))
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                }
                             }
                         }
                     } else if insight.status == .tracked {

@@ -46,6 +46,7 @@ final class InsightEngine {
         newInsights.append(contentsOf: detectStaleContent(notes: notes))
         newInsights.append(contentsOf: detectGrowingNotes(notes: notes, sectionsByNote: sectionsByNote))
         newInsights.append(contentsOf: await detectLonelyHandles(sectionsByNote: sectionsByNote))
+        newInsights.append(contentsOf: detectNonsenseContent(notes: notes, sectionsByNote: sectionsByNote))
 
         // Deduplicate against existing non-dismissed insights
         var deduped: [Insight] = []
@@ -126,7 +127,8 @@ final class InsightEngine {
         let questionPrefixes = [
             "how do", "what if", "why does", "should i", "should we",
             "can we", "is there", "what is", "where do", "when should",
-            "who should", "which", "could we"
+            "who should", "which", "could we", "how can", "what are",
+            "why is", "who is", "where is", "when is", "is it"
         ]
 
         var insights: [Insight] = []
@@ -137,17 +139,32 @@ final class InsightEngine {
             for section in sections {
                 // Skip sections already classified as questions
                 guard section.intent != .question else { continue }
-                guard section.contentType == .text || section.contentType == .quote else { continue }
+                guard section.contentType == .text || section.contentType == .quote || section.contentType == .checklist else { continue }
 
                 let content = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !content.isEmpty else { continue }
 
-                let lower = content.lowercased()
-                let endsWithQuestion = content.hasSuffix("?")
-                let startsWithQuestion = questionPrefixes.contains { lower.hasPrefix($0) }
+                // Scan each line individually so embedded questions are caught
+                let lines = content.components(separatedBy: .newlines)
+                var matchedLine: String?
 
-                if endsWithQuestion || startsWithQuestion {
-                    let preview = String(content.prefix(120))
+                for line in lines {
+                    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { continue }
+                    let lower = trimmed.lowercased()
+
+                    let endsWithQuestion = trimmed.hasSuffix("?")
+                    let startsWithQuestion = questionPrefixes.contains { lower.hasPrefix($0) }
+                    let containsQuestion = trimmed.contains("?")
+
+                    if endsWithQuestion || startsWithQuestion || containsQuestion {
+                        matchedLine = trimmed
+                        break
+                    }
+                }
+
+                if let matched = matchedLine {
+                    let preview = String(matched.prefix(120))
                     let pageTitle = note.displayTitle(sections: sections)
 
                     insights.append(Insight(
@@ -259,5 +276,102 @@ final class InsightEngine {
         }
 
         return insights
+    }
+
+    // MARK: - Nonsense Content
+
+    private func detectNonsenseContent(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
+        var insights: [Insight] = []
+
+        for note in notes {
+            let sections = sectionsByNote[note.id] ?? []
+
+            // Gather all text content from the note
+            let allText = sections
+                .filter { $0.contentType == .text || $0.contentType == .checklist || $0.contentType == .quote }
+                .map { $0.content.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .joined(separator: " ")
+
+            let stripped = allText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // Skip empty notes (staleContent handles those) and notes with media sections only
+            let hasMediaOnly = sections.allSatisfy { $0.contentType == .image || $0.contentType == .audio }
+            if hasMediaOnly && !sections.isEmpty { continue }
+
+            // Skip notes with no text sections at all
+            guard !stripped.isEmpty else { continue }
+
+            // Run heuristics
+            let score = nonsenseScore(for: stripped)
+
+            if score >= 3 {
+                let pageTitle = note.displayTitle(sections: sections)
+                let preview = String(stripped.prefix(80))
+
+                insights.append(Insight(
+                    insightType: .nonsenseContent,
+                    title: "\(pageTitle) looks like nonsense",
+                    body: "\"\(preview)\"",
+                    sourceNoteId: note.id
+                ))
+
+                if insights.count >= 3 { return insights }
+            }
+        }
+
+        return insights
+    }
+
+    /// Returns a score 0–5 indicating how likely the content is nonsense.
+    /// 3+ = flag it.
+    private func nonsenseScore(for text: String) -> Int {
+        var score = 0
+
+        // 1. Very short content (< 8 meaningful chars)
+        let alphanumOnly = text.filter { $0.isLetter || $0.isNumber }
+        if alphanumOnly.count < 8 && text.count < 15 {
+            score += 1
+        }
+
+        // 2. Low word-quality ratio: tokens that look like real words
+        //    (3+ chars, contains a vowel)
+        let vowels: Set<Character> = ["a", "e", "i", "o", "u", "A", "E", "I", "O", "U"]
+        let tokens = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+        if !tokens.isEmpty {
+            let wordLike = tokens.filter { token in
+                token.count >= 3 && token.contains(where: { vowels.contains($0) })
+            }
+            let ratio = Double(wordLike.count) / Double(tokens.count)
+            if ratio < 0.3 {
+                score += 2
+            } else if ratio < 0.5 {
+                score += 1
+            }
+        }
+
+        // 3. Keyboard mash patterns
+        let lower = text.lowercased()
+        let mashPatterns = ["asdf", "qwer", "zxcv", "hjkl", "jkl;", "fghj", "sdfg", "dfgh", "bnm,"]
+        if mashPatterns.contains(where: { lower.contains($0) }) {
+            score += 2
+        }
+
+        // 4. Highly repetitive characters (same char 4+ times in a row)
+        let repetitivePattern = try? NSRegularExpression(pattern: "(.)\\1{3,}")
+        let matches = repetitivePattern?.numberOfMatches(in: text, range: NSRange(text.startIndex..., in: text)) ?? 0
+        if matches > 0 {
+            score += 1
+        }
+
+        // 5. Very high non-letter ratio (lots of symbols/numbers, few letters)
+        if !text.isEmpty {
+            let letterCount = text.filter { $0.isLetter }.count
+            let letterRatio = Double(letterCount) / Double(text.count)
+            if letterRatio < 0.4 && text.count > 3 {
+                score += 1
+            }
+        }
+
+        return score
     }
 }

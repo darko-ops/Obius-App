@@ -10,6 +10,7 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable {
     case staleContent    // Note untouched for 14+ days
     case growingNote     // Note accumulating many sections quickly
     case lonelyHandle    // Handle only referenced in one place
+    case nonsenseContent // Page with gibberish or meaningless content
     case connection      // (future) Two notes share overlapping themes
 
     var icon: String {
@@ -19,6 +20,7 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable {
         case .staleContent:  return "clock.arrow.circlepath"
         case .growingNote:   return "chart.line.uptrend.xyaxis"
         case .lonelyHandle:  return "link"
+        case .nonsenseContent: return "exclamationmark.triangle"
         case .connection:    return "arrow.triangle.branch"
         }
     }
@@ -30,6 +32,7 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable {
         case .staleContent:  return "Stale"
         case .growingNote:   return "Growing"
         case .lonelyHandle:  return "Lonely"
+        case .nonsenseContent: return "Nonsense"
         case .connection:    return "Connection"
         }
     }
@@ -41,6 +44,7 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable {
         case .staleContent:  return .gray
         case .growingNote:   return .purple
         case .lonelyHandle:  return .orange
+        case .nonsenseContent: return .red
         case .connection:    return .blue
         }
     }
@@ -49,7 +53,7 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable {
 // MARK: - InsightTint
 
 enum InsightTint: String, Codable {
-    case green, yellow, purple, gray, blue, orange
+    case green, yellow, purple, gray, blue, orange, red
 
     var color: Color {
         switch self {
@@ -59,6 +63,7 @@ enum InsightTint: String, Codable {
         case .gray:   return .gray
         case .blue:   return .blue
         case .orange: return .orange
+        case .red:    return .red
         }
     }
 }
