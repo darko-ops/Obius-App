@@ -135,6 +135,21 @@ extension Insight: FetchableRecord, PersistableRecord {
     }
 }
 
+// MARK: - Dedup
+
+extension Insight {
+    /// Stable key used to prevent duplicate insights across scans.
+    /// Tasks and questions dedup per-note (consolidated), others include sectionId.
+    var dedupKey: String {
+        switch insightType {
+        case .suggestedTask, .openQuestion:
+            return "\(insightType.rawValue)|\(sourceNoteId ?? "")|"
+        default:
+            return "\(insightType.rawValue)|\(sourceNoteId ?? "")|\(sourceSectionId ?? "")"
+        }
+    }
+}
+
 // MARK: - Mutations
 
 extension Insight {

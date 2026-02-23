@@ -27,6 +27,15 @@ final class InsightEngine {
     func scan() async {
         let notes = noteRepository.notes.filter { !$0.isDeleted }
 
+        // Skip scan entirely if notes haven't loaded yet — avoids wiping
+        // existing insights via garbage collection on an empty list.
+        guard !notes.isEmpty else { return }
+
+        let validNoteIds = Set(notes.map(\.id))
+
+        // Garbage-collect surfaced insights whose source note was deleted
+        try? await insightRepository.removeOrphanedInsights(validNoteIds: validNoteIds)
+
         // Fetch all sections grouped by noteId
         var sectionsByNote: [String: [Section]] = [:]
         for note in notes {
@@ -41,31 +50,18 @@ final class InsightEngine {
         var newInsights: [Insight] = []
 
         // Run each detector
-        newInsights.append(contentsOf: await detectSuggestedTasks(notes: notes, sectionsByNote: sectionsByNote))
-        newInsights.append(contentsOf: await detectOpenQuestions(notes: notes, sectionsByNote: sectionsByNote))
+        newInsights.append(contentsOf: detectSuggestedTasks(notes: notes, sectionsByNote: sectionsByNote))
+        newInsights.append(contentsOf: detectOpenQuestions(notes: notes, sectionsByNote: sectionsByNote))
         newInsights.append(contentsOf: detectStaleContent(notes: notes))
         newInsights.append(contentsOf: detectGrowingNotes(notes: notes, sectionsByNote: sectionsByNote))
-        newInsights.append(contentsOf: await detectLonelyHandles(sectionsByNote: sectionsByNote))
+        newInsights.append(contentsOf: detectLonelyHandles(sectionsByNote: sectionsByNote))
         newInsights.append(contentsOf: detectNonsenseContent(notes: notes, sectionsByNote: sectionsByNote))
         newInsights.append(contentsOf: detectUpcomingEchoes(sectionsByNote: sectionsByNote))
         newInsights.append(contentsOf: detectConceptClusters(notes: notes, sectionsByNote: sectionsByNote))
 
-        // Deduplicate against existing non-dismissed insights
-        var deduped: [Insight] = []
-        for insight in newInsights {
-            do {
-                let exists = try await insightRepository.insightExists(
-                    type: insight.insightType,
-                    sourceNoteId: insight.sourceNoteId,
-                    sourceSectionId: insight.sourceSectionId
-                )
-                if !exists {
-                    deduped.append(insight)
-                }
-            } catch {
-                print("[InsightEngine] Dedup check failed: \(error)")
-            }
-        }
+        // Batch dedup against all existing insights (surfaced, tracked, dismissed)
+        let existingKeys = (try? await insightRepository.existingInsightKeys()) ?? []
+        let deduped = newInsights.filter { !existingKeys.contains($0.dedupKey) }
 
         // Bulk insert
         if !deduped.isEmpty {
@@ -82,63 +78,118 @@ final class InsightEngine {
 
     // MARK: - Suggested Tasks
 
-    private func detectSuggestedTasks(notes: [Note], sectionsByNote: [String: [Section]]) async -> [Insight] {
-        let taskPhrases = [
-            "need to", "should", "have to", "must", "todo", "to-do",
-            "follow up", "deadline", "by tomorrow", "action item",
-            "remind me", "don't forget", "make sure"
+    private func detectSuggestedTasks(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
+        // Explicit markers — match anywhere in text (high confidence)
+        let explicitMarkers = [
+            "todo:", "todo ", "to-do", "fixme", "action item",
+            "[ ]", "action:", "deadline"
         ]
+
+        // Phrases that match at line start or after a sentence boundary
+        let lineStartPhrases = [
+            "need to", "have to", "follow up", "don't forget",
+            "remind me", "make sure", "by tomorrow"
+        ]
+
+        // Phrases that only match after subject pronouns (I/we/you)
+        let subjectPhrases = ["should ", "must ", "gotta ", "ought to "]
+        let subjects = ["i ", "we ", "you "]
 
         var insights: [Insight] = []
 
         for note in notes {
+            // Skip notes already tagged as task intent
+            guard note.intent != .task else { continue }
+
             let sections = sectionsByNote[note.id] ?? []
             let pageTitle = note.displayTitle(sections: sections)
 
-            // Scan note body
-            let bodyText = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !bodyText.isEmpty && taskPhrases.contains(where: { bodyText.lowercased().contains($0) }) {
-                insights.append(Insight(
-                    insightType: .suggestedTask,
-                    title: "Possible task in '\(pageTitle)'",
-                    body: String(bodyText.prefix(120)),
-                    sourceNoteId: note.id
-                ))
-                if insights.count >= 5 { return insights }
+            var matchCount = 0
+            var firstMatch: (text: String, sectionId: String?)?
+
+            func checkText(_ text: String, sectionId: String? = nil) {
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return }
+                let lower = trimmed.lowercased()
+
+                // Check explicit markers
+                if explicitMarkers.contains(where: { lower.contains($0) }) {
+                    matchCount += 1
+                    if firstMatch == nil {
+                        firstMatch = (String(trimmed.prefix(120)), sectionId)
+                    }
+                    return
+                }
+
+                // Check line-by-line for contextual phrases
+                for line in lower.components(separatedBy: .newlines) {
+                    let l = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !l.isEmpty else { continue }
+
+                    // Line-start phrases
+                    let lineStartMatch = lineStartPhrases.contains(where: { l.hasPrefix($0) })
+
+                    // After sentence boundary (". need to", "! follow up")
+                    let boundaryMatch = lineStartPhrases.contains(where: {
+                        l.contains(". \($0)") || l.contains("! \($0)")
+                    })
+
+                    // Subject + phrase ("i should", "we must")
+                    let subjectMatch = subjectPhrases.contains(where: { phrase in
+                        subjects.contains(where: { l.hasPrefix($0 + phrase) }) ||
+                        subjects.contains(where: { subject in
+                            l.contains(". \(subject)\(phrase)") ||
+                            l.contains("! \(subject)\(phrase)")
+                        })
+                    })
+
+                    if lineStartMatch || boundaryMatch || subjectMatch {
+                        matchCount += 1
+                        if firstMatch == nil {
+                            // Recover original-case line for preview
+                            let origLines = trimmed.components(separatedBy: .newlines)
+                            let origLine = origLines.first(where: {
+                                $0.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) == l
+                            }) ?? trimmed
+                            firstMatch = (
+                                String(origLine.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120)),
+                                sectionId
+                            )
+                        }
+                        return // One match per text block
+                    }
+                }
             }
+
+            // Scan note body
+            checkText(note.body)
 
             // Scan sections
             for section in sections {
                 guard section.intent != .task else { continue }
                 guard section.contentType == .text || section.contentType == .checklist || section.contentType == .quote else { continue }
-
-                let content = section.content.lowercased()
-                if taskPhrases.contains(where: { content.contains($0) }) {
-                    insights.append(Insight(
-                        insightType: .suggestedTask,
-                        title: "Possible task in '\(pageTitle)'",
-                        body: String(section.content.prefix(120)),
-                        sourceNoteId: note.id,
-                        sourceSectionId: section.id
-                    ))
-                    if insights.count >= 5 { return insights }
-                }
+                checkText(section.content, sectionId: section.id)
             }
 
             // Scan interstitial content
             for (_, text) in note.interstitialContent {
-                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { continue }
-                if taskPhrases.contains(where: { trimmed.lowercased().contains($0) }) {
-                    insights.append(Insight(
-                        insightType: .suggestedTask,
-                        title: "Possible task in '\(pageTitle)'",
-                        body: String(trimmed.prefix(120)),
-                        sourceNoteId: note.id
-                    ))
-                    if insights.count >= 5 { return insights }
-                }
+                checkText(text)
             }
+
+            // Consolidate: 1 insight per note
+            guard let first = firstMatch else { continue }
+
+            insights.append(Insight(
+                insightType: .suggestedTask,
+                title: matchCount == 1
+                    ? "Possible task in '\(pageTitle)'"
+                    : "\(matchCount) possible tasks in '\(pageTitle)'",
+                body: matchCount == 1
+                    ? first.text
+                    : "\(first.text)\n+\(matchCount - 1) more",
+                sourceNoteId: note.id,
+                sourceSectionId: first.sectionId
+            ))
         }
 
         return insights
@@ -146,14 +197,12 @@ final class InsightEngine {
 
     // MARK: - Open Questions
 
-    private func detectOpenQuestions(notes: [Note], sectionsByNote: [String: [Section]]) async -> [Insight] {
-        // Single question words that start a question sentence
+    private func detectOpenQuestions(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
         let questionStarters: Set<String> = [
             "who", "what", "when", "where", "why", "how",
             "which", "whose", "whom"
         ]
 
-        // Multi-word question phrases
         let questionPhrases = [
             "should i", "should we", "could i", "could we",
             "can i", "can we", "would i", "would we",
@@ -170,33 +219,52 @@ final class InsightEngine {
         for note in notes {
             let sections = sectionsByNote[note.id] ?? []
             let pageTitle = note.displayTitle(sections: sections)
+            let noteTitleLower = (note.title ?? "").lowercased()
+                .trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // Helper to check a text block for questions
+            var matchCount = 0
+            var firstMatch: (text: String, sectionId: String?)?
+
             func checkForQuestion(_ text: String, sectionId: String? = nil) {
-                guard insights.count < 5 else { return }
-                // Check each line/sentence for questions
                 let lines = text.components(separatedBy: .newlines)
                 for line in lines {
                     let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !trimmed.isEmpty else { continue }
                     let lower = trimmed.lowercased()
+
+                    // Skip lines that duplicate the note title (the note IS the question)
+                    if !noteTitleLower.isEmpty && lower == noteTitleLower { continue }
+
                     let endsWithQuestion = trimmed.hasSuffix("?")
-
-                    // Check if the first word is a question starter (only if 2+ words)
                     let words = lower.split(separator: " ")
-                    let firstWord = words.first.map(String.init) ?? ""
-                    let startsWithQuestionWord = words.count >= 2 && questionStarters.contains(firstWord)
-                    let startsWithQuestionPhrase = questionPhrases.contains { lower.hasPrefix($0) }
 
-                    if endsWithQuestion || startsWithQuestionWord || startsWithQuestionPhrase {
-                        insights.append(Insight(
-                            insightType: .openQuestion,
-                            title: "Question in '\(pageTitle)'",
-                            body: String(trimmed.prefix(120)),
-                            sourceNoteId: note.id,
-                            sourceSectionId: sectionId
-                        ))
-                        return // One per text block
+                    // Question ending with "?" — require 4+ words to skip fragments like "Why?" "Really?"
+                    if endsWithQuestion && words.count >= 4 {
+                        matchCount += 1
+                        if firstMatch == nil {
+                            firstMatch = (String(trimmed.prefix(120)), sectionId)
+                        }
+                        return // One match per text block
+                    }
+
+                    // Question starters — require 3+ words
+                    if words.count >= 3,
+                       let first = words.first,
+                       questionStarters.contains(String(first)) {
+                        matchCount += 1
+                        if firstMatch == nil {
+                            firstMatch = (String(trimmed.prefix(120)), sectionId)
+                        }
+                        return
+                    }
+
+                    // Multi-word question phrases at line start
+                    if questionPhrases.contains(where: { lower.hasPrefix($0) }) {
+                        matchCount += 1
+                        if firstMatch == nil {
+                            firstMatch = (String(trimmed.prefix(120)), sectionId)
+                        }
+                        return
                     }
                 }
             }
@@ -207,11 +275,10 @@ final class InsightEngine {
                 checkForQuestion(bodyText)
             }
 
-            // Scan sections
+            // Scan sections — skip .question intent and .quote contentType (attributed quotes aren't open questions)
             for section in sections {
-                guard insights.count < 5 else { return insights }
                 guard section.intent != .question else { continue }
-                guard section.contentType == .text || section.contentType == .quote else { continue }
+                guard section.contentType == .text else { continue }
                 let content = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !content.isEmpty else { continue }
                 checkForQuestion(content, sectionId: section.id)
@@ -219,11 +286,25 @@ final class InsightEngine {
 
             // Scan interstitial content
             for (_, text) in note.interstitialContent {
-                guard insights.count < 5 else { return insights }
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { continue }
                 checkForQuestion(trimmed)
             }
+
+            // Consolidate: 1 insight per note
+            guard let first = firstMatch else { continue }
+
+            insights.append(Insight(
+                insightType: .openQuestion,
+                title: matchCount == 1
+                    ? "Question in '\(pageTitle)'"
+                    : "\(matchCount) questions in '\(pageTitle)'",
+                body: matchCount == 1
+                    ? first.text
+                    : "\(first.text)\n+\(matchCount - 1) more",
+                sourceNoteId: note.id,
+                sourceSectionId: first.sectionId
+            ))
         }
 
         return insights
@@ -232,25 +313,75 @@ final class InsightEngine {
     // MARK: - Stale Content
 
     private func detectStaleContent(notes: [Note]) -> [Insight] {
-        let fourteenDaysAgo = Int64(Date().timeIntervalSince1970 * 1000) - (14 * 86_400_000)
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let fourteenDaysMs: Int64 = 14 * 86_400_000
         var insights: [Insight] = []
 
-        for note in notes {
-            guard note.updatedAt < fourteenDaysAgo else { continue }
+        // Sort by staleness descending — surface the dustiest notes first
+        let candidates = notes
+            .filter { note in
+                // Skip pinned notes — user intentionally keeps them visible
+                guard !note.isPinned else { return false }
+                guard note.updatedAt < now - fourteenDaysMs else { return false }
 
-            // Only flag notes with meaningful content
-            let hasTitle = note.title != nil && !note.title!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            let hasBody = note.body.trimmingCharacters(in: .whitespacesAndNewlines).count > 20
+                let hasTitle = note.title != nil
+                    && !note.title!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                let hasBody = note.body.trimmingCharacters(in: .whitespacesAndNewlines).count > 20
 
-            guard hasTitle || hasBody else { continue }
+                return hasTitle || hasBody
+            }
+            .sorted { $0.updatedAt < $1.updatedAt }
 
-            let daysSince = Int((Int64(Date().timeIntervalSince1970 * 1000) - note.updatedAt) / 86_400_000)
+        for note in candidates {
+            let daysSince = Int((now - note.updatedAt) / 86_400_000)
             let pageTitle = note.displayTitle
+
+            let staleness: String
+            if daysSince >= 90 {
+                staleness = "Last edited \(daysSince / 30) months ago"
+            } else if daysSince >= 30 {
+                staleness = "Last edited about a month ago"
+            } else {
+                staleness = "Last edited \(daysSince) days ago"
+            }
 
             insights.append(Insight(
                 insightType: .staleContent,
-                title: "'\(pageTitle)' is stale",
-                body: "Last edited \(daysSince) days ago",
+                title: "'\(pageTitle)' is gathering dust",
+                body: staleness,
+                sourceNoteId: note.id
+            ))
+
+            if insights.count >= 5 { return insights }
+        }
+
+        return insights
+    }
+
+    // MARK: - Growing Notes
+
+    private func detectGrowingNotes(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
+        let sevenDaysAgo = Int64(Date().timeIntervalSince1970 * 1000) - (7 * 86_400_000)
+        var insights: [Insight] = []
+
+        for note in notes {
+            guard let sections = sectionsByNote[note.id] else { continue }
+            guard sections.count >= 10 else { continue }
+
+            let pageTitle = note.displayTitle(sections: sections)
+            let recentCount = sections.filter { $0.createdAt > sevenDaysAgo }.count
+
+            let body: String
+            if recentCount >= 5 {
+                body = "\(recentCount) nodes added this week — consider splitting"
+            } else {
+                body = "Consider splitting or organizing this note"
+            }
+
+            insights.append(Insight(
+                insightType: .growingNote,
+                title: "'\(pageTitle)' has \(sections.count) nodes",
+                body: body,
                 sourceNoteId: note.id
             ))
 
@@ -260,45 +391,25 @@ final class InsightEngine {
         return insights
     }
 
-    // MARK: - Growing Notes
-
-    private func detectGrowingNotes(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
-        var insights: [Insight] = []
-
-        for note in notes {
-            guard let sections = sectionsByNote[note.id] else { continue }
-            guard sections.count >= 10 else { continue }
-
-            let pageTitle = note.displayTitle(sections: sections)
-
-            insights.append(Insight(
-                insightType: .growingNote,
-                title: "'\(pageTitle)' has \(sections.count) nodes",
-                body: "Consider splitting or organizing this note",
-                sourceNoteId: note.id
-            ))
-
-            if insights.count >= 2 { return insights }
-        }
-
-        return insights
-    }
-
     // MARK: - Lonely Handles
 
-    private func detectLonelyHandles(sectionsByNote: [String: [Section]]) async -> [Insight] {
+    private func detectLonelyHandles(sectionsByNote: [String: [Section]]) -> [Insight] {
         let handles = handleRepository.handles
         var insights: [Insight] = []
 
         // Skip handles that have echoes — echoes are designed to be single-reference
         let echoHandleIds = Set(EchoManager.shared.activeEchoes.map { $0.handleId })
 
-        // Count how many sections reference each handle
+        // Count how many sections reference each handle, and track where it first appears
         var handleRefCount: [String: Int] = [:]
-        for (_, sections) in sectionsByNote {
+        var handleFirstLocation: [String: (noteId: String, sectionId: String)] = [:]
+        for (noteId, sections) in sectionsByNote {
             for section in sections {
                 if let handleId = section.handleId {
                     handleRefCount[handleId, default: 0] += 1
+                    if handleFirstLocation[handleId] == nil {
+                        handleFirstLocation[handleId] = (noteId, section.id)
+                    }
                 }
             }
         }
@@ -311,11 +422,14 @@ final class InsightEngine {
             // Only flag handles that appear exactly once (not zero — zero means unreferenced, not lonely)
             guard count == 1 else { continue }
 
+            let location = handleFirstLocation[handle.id]
+
             insights.append(Insight(
                 insightType: .lonelyHandle,
                 title: "@\(handle.displayName) only appears once",
                 body: "Consider linking it elsewhere",
-                sourceNoteId: nil
+                sourceNoteId: location?.noteId,
+                sourceSectionId: handle.id  // Store handle ID for stable dedup
             ))
 
             if insights.count >= 3 { return insights }
@@ -382,9 +496,11 @@ final class InsightEngine {
 
             // Find the note containing a section with this handleId
             var noteId: String?
+            var sectionId: String?
             for (nId, sections) in sectionsByNote {
-                if sections.contains(where: { $0.handleId == echo.handleId }) {
+                if let match = sections.first(where: { $0.handleId == echo.handleId }) {
                     noteId = nId
+                    sectionId = match.id
                     break
                 }
             }
@@ -404,7 +520,8 @@ final class InsightEngine {
                 insightType: .upcomingEcho,
                 title: "Echo: @\(handleName) fires soon",
                 body: timeDesc,
-                sourceNoteId: noteId
+                sourceNoteId: noteId,
+                sourceSectionId: sectionId
             ))
 
             if insights.count >= 5 { return insights }

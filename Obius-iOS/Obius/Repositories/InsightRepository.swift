@@ -122,6 +122,34 @@ final class InsightRepository: ObservableObject {
         }
     }
 
+    // MARK: - Batch Dedup
+
+    /// Returns dedup keys for all existing insights (any status) in one query.
+    func existingInsightKeys() async throws -> Set<String> {
+        try await database.read { db in
+            let insights = try Insight.fetchAll(db)
+            return Set(insights.map(\.dedupKey))
+        }
+    }
+
+    // MARK: - Garbage Collection
+
+    /// Removes surfaced insights whose source note no longer exists.
+    func removeOrphanedInsights(validNoteIds: Set<String>) async throws {
+        try await database.write { db in
+            let surfaced = try Insight
+                .filter(Insight.Columns.status == InsightStatus.surfaced.rawValue)
+                .filter(Insight.Columns.sourceNoteId != nil)
+                .fetchAll(db)
+
+            for insight in surfaced {
+                if let noteId = insight.sourceNoteId, !validNoteIds.contains(noteId) {
+                    try Insight.deleteOne(db, key: insight.id)
+                }
+            }
+        }
+    }
+
     // MARK: - Cleanup
 
     func purgeDismissed(olderThan days: Int = 30) async throws {

@@ -163,6 +163,42 @@ struct TrackedInsightChip: View {
     }
 }
 
+// MARK: - Upcoming Echo Card (Compact, horizontal scroll)
+
+struct UpcomingEchoCard: View {
+    let insight: Insight
+    let onTap: () -> Void
+    let onLongPress: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Image(systemName: "bell.badge")
+                .font(.title3)
+                .foregroundStyle(.orange)
+
+            Text(insight.title.replacingOccurrences(of: "Echo: ", with: ""))
+                .font(.caption.weight(.medium))
+                .lineLimit(1)
+
+            Text(insight.body)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(width: 120, height: 80, alignment: .topLeading)
+        .padding(10)
+        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
+        .onLongPressGesture { onLongPress() }
+    }
+}
+
 // MARK: - Insight Detail Sheet
 
 struct InsightDetailSheet: View {

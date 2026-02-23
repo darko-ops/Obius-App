@@ -11,6 +11,9 @@ struct IntelligenceView: View {
     @State private var showCreateSheet = false
     @State private var navigateToNote: Note?
     @State private var navigateSectionId: String?
+    @State private var pendingGoToNoteId: String?
+    @State private var pendingGoToSectionId: String?
+    @State private var insightFilter: InsightFilter = .all
     @FocusState private var isInputFocused: Bool
 
     private var insightEngine: InsightEngine {
@@ -30,8 +33,13 @@ struct IntelligenceView: View {
                     // Tracked section (always visible for + button)
                     trackedSection
 
-                    // New Insights section
-                    if !insightRepository.surfacedInsights.isEmpty {
+                    // Upcoming Echoes section
+                    if !upcomingEchoInsights.isEmpty {
+                        upcomingEchoesSection
+                    }
+
+                    // New Insights section (excludes upcoming echoes)
+                    if !nonEchoSurfacedInsights.isEmpty {
                         insightsSection
                     }
 
@@ -75,7 +83,15 @@ struct IntelligenceView: View {
                     .renderingMode(.original)
             }
         }
-        .sheet(item: $selectedInsight) { insight in
+        .sheet(item: $selectedInsight, onDismiss: {
+            if let noteId = pendingGoToNoteId,
+               let note = appState.noteRepository.notes.first(where: { $0.id == noteId }) {
+                navigateSectionId = pendingGoToSectionId
+                navigateToNote = note
+            }
+            pendingGoToNoteId = nil
+            pendingGoToSectionId = nil
+        }) { insight in
             InsightDetailSheet(
                 insight: insight,
                 onTrack: {
@@ -106,10 +122,8 @@ struct IntelligenceView: View {
                     }
                 } : nil,
                 onGoToNote: insight.sourceNoteId != nil ? {
-                    if let note = appState.noteRepository.notes.first(where: { $0.id == insight.sourceNoteId }) {
-                        navigateSectionId = insight.sourceSectionId
-                        navigateToNote = note
-                    }
+                    pendingGoToNoteId = insight.sourceNoteId
+                    pendingGoToSectionId = insight.sourceSectionId
                 } : nil
             )
         }
@@ -129,8 +143,56 @@ struct IntelligenceView: View {
         .task {
             await runScan()
         }
+        .onChange(of: insightRepository.surfacedInsights) {
+            if insightFilter != .all && filteredInsights.isEmpty {
+                withAnimation { insightFilter = .all }
+            }
+        }
         .navigationDestination(item: $navigateToNote) { note in
             NoteEditorView(noteId: note.id, targetSectionId: navigateSectionId)
+        }
+    }
+
+    // MARK: - Upcoming Echoes
+
+    private var upcomingEchoInsights: [Insight] {
+        insightRepository.surfacedInsights.filter { $0.insightType == .upcomingEcho }
+    }
+
+    private var nonEchoSurfacedInsights: [Insight] {
+        insightRepository.surfacedInsights.filter { $0.insightType != .upcomingEcho }
+    }
+
+    private var filteredInsights: [Insight] {
+        switch insightFilter {
+        case .all:       return nonEchoSurfacedInsights
+        case .tasks:     return nonEchoSurfacedInsights.filter { $0.insightType == .suggestedTask }
+        case .questions: return nonEchoSurfacedInsights.filter { $0.insightType == .openQuestion }
+        case .stale:     return nonEchoSurfacedInsights.filter { $0.insightType == .staleContent }
+        }
+    }
+
+    private var upcomingEchoesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("UPCOMING ECHOES")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(upcomingEchoInsights) { insight in
+                        UpcomingEchoCard(
+                            insight: insight,
+                            onTap: {
+                                navigateToInsightSource(insight)
+                            },
+                            onLongPress: {
+                                selectedInsight = insight
+                            }
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -143,7 +205,15 @@ struct IntelligenceView: View {
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
 
-            ForEach(insightRepository.surfacedInsights) { insight in
+            Picker("Filter", selection: $insightFilter.animation(.easeInOut(duration: 0.2))) {
+                ForEach(InsightFilter.allCases) { filter in
+                    Text(filter.label(for: nonEchoSurfacedInsights))
+                        .tag(filter)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            ForEach(filteredInsights) { insight in
                 InsightCardView(
                     insight: insight,
                     onTrack: {
@@ -161,7 +231,7 @@ struct IntelligenceView: View {
                         haptic(.light)
                     },
                     onTap: {
-                        selectedInsight = insight
+                        navigateToInsightSource(insight)
                     },
                     onDeleteNote: insight.insightType == .nonsenseContent ? {
                         Task {
@@ -195,7 +265,7 @@ struct IntelligenceView: View {
                         TrackedInsightChip(
                             insight: insight,
                             onTap: {
-                                selectedInsight = insight
+                                navigateToInsightSource(insight)
                             },
                             onUntrack: {
                                 Task {
@@ -288,6 +358,16 @@ struct IntelligenceView: View {
     }
 
     // MARK: - Actions
+
+    private func navigateToInsightSource(_ insight: Insight) {
+        if let noteId = insight.sourceNoteId,
+           let note = appState.noteRepository.notes.first(where: { $0.id == noteId }) {
+            navigateSectionId = insight.sourceSectionId
+            navigateToNote = note
+        } else {
+            selectedInsight = insight
+        }
+    }
 
     private func runScan() async {
         isScanning = true
@@ -382,6 +462,32 @@ struct ChatMessageView: View {
                 Spacer()
             }
         }
+    }
+}
+
+// MARK: - Insight Filter
+
+private enum InsightFilter: String, CaseIterable, Identifiable {
+    case all, tasks, questions, stale
+
+    var id: String { rawValue }
+
+    func label(for insights: [Insight]) -> String {
+        let count: Int
+        switch self {
+        case .all:       count = insights.count
+        case .tasks:     count = insights.filter { $0.insightType == .suggestedTask }.count
+        case .questions: count = insights.filter { $0.insightType == .openQuestion }.count
+        case .stale:     count = insights.filter { $0.insightType == .staleContent }.count
+        }
+        let name: String
+        switch self {
+        case .all:       name = "All"
+        case .tasks:     name = "Tasks"
+        case .questions: name = "Questions"
+        case .stale:     name = "Stale"
+        }
+        return "\(name) (\(count))"
     }
 }
 

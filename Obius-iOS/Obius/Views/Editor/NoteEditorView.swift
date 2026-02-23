@@ -600,8 +600,7 @@ private struct NoteEditorContent: View {
         ToolbarItem(placement: .principal) {
             if titleVisible {
                 Image("ObiusLogo")
-                    .renderingMode(.template)
-                    .foregroundStyle(.secondary)
+                    .renderingMode(.original)
                     .transition(.opacity)
             } else {
                 Text(viewModel.displayTitle)
