@@ -1828,8 +1828,7 @@ struct NodeCommitDetailSheet: View {
                 }
                 ToolbarItem(placement: .principal) {
                     Image("ObiusLogo")
-                        .renderingMode(.template)
-                        .foregroundStyle(.primary)
+                        .renderingMode(.original)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
@@ -2166,8 +2165,7 @@ struct CommitDetailSheet: View {
                 }
                 ToolbarItem(placement: .principal) {
                     Image("ObiusLogo")
-                        .renderingMode(.template)
-                        .foregroundStyle(.primary)
+                        .renderingMode(.original)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button {

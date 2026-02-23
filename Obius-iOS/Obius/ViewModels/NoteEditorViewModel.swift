@@ -427,6 +427,155 @@ final class NoteEditorViewModel: ObservableObject {
         }
     }
 
+    /// Generate an AI title if the note has content but no user-set or AI title.
+    func generateAITitleIfNeeded() {
+        guard let note = note else {
+            print("🤖 [AI Title] Skipped — note is nil")
+            return
+        }
+
+        // Don't overwrite a user-set title
+        let hasUserTitle = !(note.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if hasUserTitle {
+            print("🤖 [AI Title] Skipped — user title exists")
+            return
+        }
+
+        // Don't regenerate if already has an AI title
+        let hasAITitle = !(note.aiTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if hasAITitle {
+            print("🤖 [AI Title] Skipped — AI title already set: \(note.aiTitle ?? "")")
+            return
+        }
+
+        // Gather all text content
+        var texts: [String] = []
+        let body = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !body.isEmpty { texts.append(body) }
+
+        for section in sections where section.contentType == .text || section.contentType == .checklist || section.contentType == .code || section.contentType == .quote {
+            let t = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty { texts.append(t) }
+        }
+
+        for (_, value) in note.interstitialContent {
+            let t = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty { texts.append(t) }
+        }
+
+        let combined = texts.joined(separator: "\n")
+        // Need meaningful content (at least 10 chars) to generate a title
+        guard combined.count >= 10 else {
+            print("🤖 [AI Title] Skipped — content too short (\(combined.count) chars)")
+            return
+        }
+
+        print("🤖 [AI Title] Generating for note \(noteId.prefix(8))… (\(combined.count) chars)")
+
+        // Truncate to avoid sending too much text
+        let truncated = String(combined.prefix(500))
+
+        Task {
+            do {
+                let title = try await ClaudeService.generateTitle(from: truncated)
+                guard !title.isEmpty else {
+                    print("🤖 [AI Title] API returned empty title")
+                    return
+                }
+                try await noteRepository.updateNoteAITitle(noteId, aiTitle: title)
+                print("🤖 [AI Title] Saved: \"\(title)\"")
+            } catch {
+                print("🤖 [AI Title] FAILED: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// All tags for display: user hashtags + AI-generated concept tags, deduplicated.
+    var allTags: [String] {
+        let manual = note?.tags ?? []
+        let ai = note?.aiTags ?? []
+        var seen = Set<String>()
+        var result: [String] = []
+        for tag in manual + ai {
+            let lower = tag.lowercased()
+            if seen.insert(lower).inserted {
+                result.append(tag)
+            }
+        }
+        return result
+    }
+
+    /// Tags that came from AI only (not present in manual tags). Used for display styling.
+    var aiOnlyTags: Set<String> {
+        let manualLower = Set((note?.tags ?? []).map { $0.lowercased() })
+        return Set((note?.aiTags ?? []).map { $0.lowercased() }.filter { !manualLower.contains($0) })
+    }
+
+    /// Remove a tag from both manual and AI tag arrays.
+    func removeTag(_ tag: String) async {
+        var manualTags = note?.tags ?? []
+        manualTags.removeAll { $0.lowercased() == tag.lowercased() }
+        try? await noteRepository.updateTags(noteId, tags: manualTags)
+
+        var aiTags = note?.aiTags ?? []
+        aiTags.removeAll { $0.lowercased() == tag.lowercased() }
+        try? await noteRepository.updateNoteAITags(noteId, aiTags: aiTags)
+    }
+
+    /// Generate AI concept tags for notes with substantial content.
+    func generateAITagsIfNeeded() {
+        guard let note = note else {
+            print("🏷️ [AI Tags] Skipped — note is nil")
+            return
+        }
+
+        // Don't regenerate if already has AI tags
+        guard note.aiTags.isEmpty else {
+            print("🏷️ [AI Tags] Skipped — already has AI tags: \(note.aiTags)")
+            return
+        }
+
+        // Gather all text content
+        var texts: [String] = []
+        let body = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !body.isEmpty { texts.append(body) }
+
+        for section in sections where section.contentType == .text || section.contentType == .checklist || section.contentType == .code || section.contentType == .quote {
+            let t = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty { texts.append(t) }
+        }
+
+        for (_, value) in note.interstitialContent {
+            let t = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty { texts.append(t) }
+        }
+
+        let combined = texts.joined(separator: "\n")
+        // Only tag substantial notes (100+ chars) — skip small jots
+        guard combined.count >= 100 else {
+            print("🏷️ [AI Tags] Skipped — content too short (\(combined.count) chars, need 100+)")
+            return
+        }
+
+        print("🏷️ [AI Tags] Generating for note \(noteId.prefix(8))… (\(combined.count) chars)")
+
+        let truncated = String(combined.prefix(500))
+
+        Task {
+            do {
+                let tags = try await ClaudeService.generateTags(from: truncated)
+                guard !tags.isEmpty else {
+                    print("🏷️ [AI Tags] API returned empty tags")
+                    return
+                }
+                try await noteRepository.updateNoteAITags(noteId, aiTags: tags)
+                print("🏷️ [AI Tags] Saved: \(tags)")
+            } catch {
+                print("🏷️ [AI Tags] FAILED: \(error.localizedDescription)")
+            }
+        }
+    }
+
     func copySection(_ sectionId: String) {
         guard let root = sections.first(where: { $0.id == sectionId }) else {
             print("📋 Copy FAILED: section \(sectionId.prefix(8)) not found in \(sections.count) sections")

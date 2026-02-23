@@ -110,7 +110,6 @@ final class InsightRepository: ObservableObject {
         try await database.read { db in
             var query = Insight
                 .filter(Insight.Columns.insightType == type.rawValue)
-                .filter(Insight.Columns.status != InsightStatus.dismissed.rawValue)
 
             if let noteId = sourceNoteId {
                 query = query.filter(Insight.Columns.sourceNoteId == noteId)

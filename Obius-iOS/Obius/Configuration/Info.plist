@@ -28,6 +28,10 @@
     <key>SUPABASE_ANON_KEY</key>
     <string>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNxaXhueWtpYXlmeXpycmNqaXBzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk1NzA5NDEsImV4cCI6MjA4NTE0Njk0MX0.h3XIwWspXoTYf7SOgGamLngc11itXwO-xYqLd2rOopA</string>
 
+    <!-- Claude API -->
+    <key>CLAUDE_API_KEY</key>
+    <string>$(CLAUDE_API_KEY)</string>
+
     <!-- API Configuration -->
     <key>OBIUS_API_BASE_URL</key>
     <string>$(OBIUS_API_BASE_URL)</string>

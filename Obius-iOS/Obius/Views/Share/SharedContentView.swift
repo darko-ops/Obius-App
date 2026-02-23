@@ -29,8 +29,7 @@ struct SharedContentView: View {
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Image("ObiusLogo")
-                        .renderingMode(.template)
-                        .foregroundStyle(.primary)
+                        .renderingMode(.original)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") {

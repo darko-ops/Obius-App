@@ -125,6 +125,24 @@ final class NoteRepository: ObservableObject {
         }
     }
 
+    func updateNoteAITitle(_ noteId: String, aiTitle: String?) async throws {
+        try await database.write { db in
+            guard var note = try Note.fetchOne(db, key: noteId) else { return }
+            note.aiTitle = aiTitle
+            note.touch()
+            try note.update(db)
+        }
+    }
+
+    func updateNoteAITags(_ noteId: String, aiTags: [String]) async throws {
+        try await database.write { db in
+            guard var note = try Note.fetchOne(db, key: noteId) else { return }
+            note.aiTags = aiTags
+            note.touch()
+            try note.update(db)
+        }
+    }
+
     func togglePinned(_ noteId: String) async throws {
         try await database.write { db in
             guard var note = try Note.fetchOne(db, key: noteId) else { return }
@@ -184,6 +202,13 @@ final class NoteRepository: ObservableObject {
                 UPDATE sections
                 SET deletedAt = ?, syncStatus = 'pending', localVersion = localVersion + 1
                 WHERE noteId = ?
+            """, arguments: [Int64(Date().timeIntervalSince1970 * 1000), noteId])
+
+            // Dismiss any insights linked to this note
+            try db.execute(sql: """
+                UPDATE insights
+                SET status = 'dismissed', updatedAt = ?
+                WHERE sourceNoteId = ? AND status != 'dismissed'
             """, arguments: [Int64(Date().timeIntervalSince1970 * 1000), noteId])
         }
     }

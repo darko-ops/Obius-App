@@ -4,10 +4,12 @@ import PhotosUI
 struct NoteEditorView: View {
     @EnvironmentObject var appState: AppState
     let noteId: String
+    var targetSectionId: String? = nil
 
     var body: some View {
         NoteEditorContent(
             noteId: noteId,
+            targetSectionId: targetSectionId,
             noteRepository: appState.noteRepository,
             sectionRepository: appState.sectionRepository,
             handleRepository: appState.handleRepository
@@ -90,9 +92,11 @@ private struct NoteEditorContent: View {
     @State private var titleVisible = true
 
     let noteId: String
+    let targetSectionId: String?
 
-    init(noteId: String, noteRepository: NoteRepository, sectionRepository: SectionRepository, handleRepository: HandleRepository) {
+    init(noteId: String, targetSectionId: String? = nil, noteRepository: NoteRepository, sectionRepository: SectionRepository, handleRepository: HandleRepository) {
         self.noteId = noteId
+        self.targetSectionId = targetSectionId
         _viewModel = StateObject(wrappedValue: NoteEditorViewModel(
             noteId: noteId,
             noteRepository: noteRepository,
@@ -103,11 +107,12 @@ private struct NoteEditorContent: View {
 
     var body: some View {
         mainContent
-            .navigationTitle(titleVisible ? "" : viewModel.displayTitle)
+            .navigationTitle("")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-            .animation(.easeInOut(duration: 0.2), value: titleVisible)
+            .toolbarBackground(Color.black, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbar { toolbarContent }
             .onChange(of: viewModel.focusedSectionId) { _, newValue in
                 focusedSectionId = newValue
@@ -129,9 +134,38 @@ private struct NoteEditorContent: View {
                 }
             }
             .onDisappear {
+                viewModel.generateAITitleIfNeeded()
+                viewModel.generateAITagsIfNeeded()
                 Task {
                     await viewModel.cleanupEmptyNoteIfNeeded()
                 }
+            }
+            .task {
+                // Scroll to target section from insight navigation
+                guard let targetId = targetSectionId else { return }
+                // Wait for sections to load
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                guard viewModel.getSection(targetId) != nil else { return }
+                // Expand collapsed ancestors top-down
+                var ancestorIds: [String] = []
+                var currentId: String? = targetId
+                while let cid = currentId,
+                      let section = viewModel.getSection(cid),
+                      let parentId = section.parentSectionId {
+                    ancestorIds.append(parentId)
+                    currentId = parentId
+                }
+                for ancestorId in ancestorIds.reversed() {
+                    if let ancestor = viewModel.getSection(ancestorId), ancestor.isCollapsed {
+                        try? await viewModel.toggleCollapse(ancestorId)
+                    }
+                }
+                // Expand the target itself if collapsed
+                if let target = viewModel.getSection(targetId), target.isCollapsed {
+                    try? await viewModel.toggleCollapse(targetId)
+                }
+                // Trigger scroll via focusedSectionId
+                viewModel.focusedSectionId = targetId
             }
             .overlay {
                 if viewModel.isLoading {
@@ -563,6 +597,20 @@ private struct NoteEditorContent: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            if titleVisible {
+                Image("ObiusLogo")
+                    .renderingMode(.template)
+                    .foregroundStyle(.secondary)
+                    .transition(.opacity)
+            } else {
+                Text(viewModel.displayTitle)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .transition(.opacity)
+            }
+        }
+
         ToolbarItemGroup(placement: .primaryAction) {
             primaryToolbarItems
         }
@@ -1148,7 +1196,8 @@ private struct NoteEditorContent: View {
     @ViewBuilder
     private var loopsAndTagsView: some View {
         let handles = viewModel.pageHandles
-        let tags = viewModel.note?.tags ?? []
+        let tags = viewModel.allTags
+        let aiOnly = viewModel.aiOnlyTags
 
         if !handles.isEmpty || !tags.isEmpty || showingTagInput {
             ScrollView(.horizontal, showsIndicators: false) {
@@ -1166,16 +1215,17 @@ private struct NoteEditorContent: View {
                             )
                     }
 
-                    // Tag bubbles
+                    // Tag bubbles (manual + AI merged)
                     ForEach(tags, id: \.self) { tag in
+                        let isAI = aiOnly.contains(tag.lowercased())
                         Text("#\(tag)")
                             .font(.caption.bold())
-                            .foregroundStyle(.yellow)
+                            .foregroundStyle(isAI ? .cyan : .yellow)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
                             .background(
                                 Capsule()
-                                    .fill(Color.yellow.opacity(0.12))
+                                    .fill(isAI ? Color.cyan.opacity(0.12) : Color.yellow.opacity(0.12))
                             )
                             .contextMenu {
                                 Button(role: .destructive) {
@@ -1269,9 +1319,7 @@ private struct NoteEditorContent: View {
     }
 
     private func removeTag(_ tag: String) {
-        var current = viewModel.note?.tags ?? []
-        current.removeAll { $0 == tag }
-        Task { try? await viewModel.updateTags(current) }
+        Task { await viewModel.removeTag(tag) }
     }
 
     private func saveTitle() {

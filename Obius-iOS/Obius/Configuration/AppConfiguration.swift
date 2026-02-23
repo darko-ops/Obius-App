@@ -55,6 +55,16 @@ enum AppConfiguration {
         return key
     }
 
+    // MARK: - Claude API
+
+    static var claudeAPIKey: String? {
+        guard let key = Bundle.main.infoDictionary?["CLAUDE_API_KEY"] as? String,
+              !key.isEmpty, !key.hasPrefix("$("), key != "YOUR_API_KEY_HERE" else {
+            return nil
+        }
+        return key
+    }
+
     // MARK: - API
 
     static var apiBaseURL: String {

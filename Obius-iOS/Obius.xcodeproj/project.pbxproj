@@ -17,6 +17,7 @@
 		B8A1D0010000000000000008 /* HandleManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000008 /* HandleManager.swift */; };
 		B8A1D0010000000000000009 /* NetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000009 /* NetworkMonitor.swift */; };
 		B8A1D0010000000000000010 /* SupabaseClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000010 /* SupabaseClient.swift */; };
+		B8A1D0100000000000000001 /* ClaudeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0100000000000000001 /* ClaudeService.swift */; };
 		B8A1D0010000000000000011 /* SyncTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000011 /* SyncTypes.swift */; };
 		B8A1D0010000000000000012 /* ColdStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000012 /* ColdStore.swift */; };
 		B8A1D0010000000000000013 /* CommitModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000013 /* CommitModule.swift */; };
@@ -181,6 +182,7 @@
 		B8A1F0010000000000000103 /* HashtagHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HashtagHelper.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000009 /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000010 /* SupabaseClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseClient.swift; sourceTree = "<group>"; };
+		B8A1F0100000000000000001 /* ClaudeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeService.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000011 /* SyncTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncTypes.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000012 /* ColdStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColdStore.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000013 /* CommitModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitModule.swift; sourceTree = "<group>"; };
@@ -235,6 +237,8 @@
 		B8A1F0030000000000000001 /* ActivityViewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityViewSheet.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000062 /* AudioNodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioNodeView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000063 /* AudioRecorderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorderView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000200 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		B8A1F0010000000000000201 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 		B8A1F0010000000000000088 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B8A1F0010000000000000090 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B8A1F0010000000000000096 /* Inter-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Inter-Regular.ttf"; sourceTree = "<group>"; };
@@ -353,6 +357,8 @@
 			isa = PBXGroup;
 			children = (
 				B8A1F0010000000000000004 /* AppConfiguration.swift */,
+				B8A1F0010000000000000200 /* Debug.xcconfig */,
+				B8A1F0010000000000000201 /* Release.xcconfig */,
 				B8A1F0010000000000000088 /* Info.plist */,
 			);
 			path = Configuration;
@@ -400,6 +406,7 @@
 		B8A1G0010000000000000007 /* Network */ = {
 			isa = PBXGroup;
 			children = (
+				B8A1F0100000000000000001 /* ClaudeService.swift */,
 				B8A1F0010000000000000009 /* NetworkMonitor.swift */,
 				B8A1F0010000000000000010 /* SupabaseClient.swift */,
 				B8A1F0010000000000000011 /* SyncTypes.swift */,
@@ -831,6 +838,7 @@
 				B8A1D0040000000000000001 /* AppearanceManager.swift in Sources */,
 				B8A1D0010000000000000009 /* NetworkMonitor.swift in Sources */,
 				B8A1D0010000000000000010 /* SupabaseClient.swift in Sources */,
+				B8A1D0100000000000000001 /* ClaudeService.swift in Sources */,
 				B8A1D0010000000000000011 /* SyncTypes.swift in Sources */,
 				B8A1D0010000000000000012 /* ColdStore.swift in Sources */,
 				B8A1D0010000000000000013 /* CommitModule.swift in Sources */,
@@ -950,6 +958,7 @@
 /* Begin XCBuildConfiguration section */
 		B8A1J0010000000000000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = B8A1F0010000000000000200 /* Debug.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -1013,6 +1022,7 @@
 		};
 		B8A1J0010000000000000002 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = B8A1F0010000000000000201 /* Release.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;

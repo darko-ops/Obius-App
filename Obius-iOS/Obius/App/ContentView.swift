@@ -122,7 +122,7 @@ struct MainTabView: View {
                         .environmentObject(appState.insightRepository)
                 }
                 .tabItem {
-                    Image(systemName: "brain")
+                    Image(systemName: "house.fill")
                 }
                 .tag(1)
 

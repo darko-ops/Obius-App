@@ -5,7 +5,7 @@ import Combine
 final class DatabaseManager {
     private let migrator: DatabaseMigrator
 
-    static let schemaVersion = 29
+    static let schemaVersion = 30
 
     /// The App Group container path for the shared database
     static var appGroupDatabaseURL: URL? {
@@ -712,6 +712,17 @@ final class DatabaseManager {
 
             try db.execute(sql: """
                 UPDATE syncMetadata SET schemaVersion = 29
+            """)
+        }
+
+        // v30: Add aiTags column to notes for AI-generated concept tags
+        migrator.registerMigration("v30_note_ai_tags") { db in
+            try db.alter(table: "notes") { t in
+                t.add(column: "aiTags", .text).notNull().defaults(to: "[]")
+            }
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 30
             """)
         }
 

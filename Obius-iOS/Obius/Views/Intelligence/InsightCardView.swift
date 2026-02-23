@@ -7,6 +7,7 @@ struct InsightCardView: View {
     let onTrack: () -> Void
     let onDismiss: () -> Void
     let onTap: () -> Void
+    var onDeleteNote: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -79,6 +80,24 @@ struct InsightCardView: View {
                     .clipShape(Capsule())
                 }
 
+                if insight.insightType == .nonsenseContent, let onDeleteNote {
+                    Button {
+                        onDeleteNote()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "trash")
+                                .font(.caption2)
+                            Text("Delete")
+                                .font(.caption.weight(.medium))
+                        }
+                        .foregroundStyle(.red)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.red.opacity(0.1))
+                        .clipShape(Capsule())
+                    }
+                }
+
                 Spacer()
             }
         }
@@ -131,7 +150,7 @@ struct TrackedInsightChip: View {
                 .lineLimit(3)
                 .truncationMode(.tail)
         }
-        .frame(width: 150, height: 100, alignment: .topLeading)
+        .frame(width: 130, height: 100, alignment: .topLeading)
         .padding(10)
         .background(Color(UIColor.secondarySystemGroupedBackground))
         .overlay(
@@ -151,6 +170,8 @@ struct InsightDetailSheet: View {
     let onTrack: (() -> Void)?
     let onDismiss: (() -> Void)?
     let onUntrack: (() -> Void)?
+    var onDeleteNote: (() -> Void)? = nil
+    var onGoToNote: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
 
@@ -186,6 +207,25 @@ struct InsightDetailSheet: View {
                     Text(formattedDate)
                         .font(.caption)
                         .foregroundStyle(.tertiary)
+
+                    // Go to note
+                    if let onGoToNote, insight.sourceNoteId != nil {
+                        Button {
+                            dismiss()
+                            onGoToNote()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.right.circle")
+                                Text("Go to Note")
+                            }
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.accentColor.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
 
                     Divider()
 
@@ -238,6 +278,25 @@ struct InsightDetailSheet: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
                             .background(Color.orange.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
+
+                    // Delete page button for nonsense content
+                    if insight.insightType == .nonsenseContent, let onDeleteNote {
+                        Button(role: .destructive) {
+                            onDeleteNote()
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "trash")
+                                Text("Delete Page")
+                            }
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.red)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.red.opacity(0.1))
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                         }
                     }

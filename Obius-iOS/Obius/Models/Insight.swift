@@ -11,37 +11,49 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable {
     case growingNote     // Note accumulating many sections quickly
     case lonelyHandle    // Handle only referenced in one place
     case connection      // (future) Two notes share overlapping themes
+    case nonsenseContent // Page with meaningless/gibberish content
+    case upcomingEcho    // Echo firing within 24 hours
+    case conceptCluster  // 3+ notes share the same hashtag
 
     var icon: String {
         switch self {
-        case .suggestedTask: return "checkmark.circle"
-        case .openQuestion:  return "questionmark.bubble"
-        case .staleContent:  return "clock.arrow.circlepath"
-        case .growingNote:   return "chart.line.uptrend.xyaxis"
-        case .lonelyHandle:  return "link"
-        case .connection:    return "arrow.triangle.branch"
+        case .suggestedTask:  return "checkmark.circle"
+        case .openQuestion:   return "questionmark.bubble"
+        case .staleContent:   return "clock.arrow.circlepath"
+        case .growingNote:    return "chart.line.uptrend.xyaxis"
+        case .lonelyHandle:   return "link"
+        case .connection:     return "arrow.triangle.branch"
+        case .nonsenseContent: return "trash.circle"
+        case .upcomingEcho:   return "bell.badge"
+        case .conceptCluster: return "number"
         }
     }
 
     var label: String {
         switch self {
-        case .suggestedTask: return "Task"
-        case .openQuestion:  return "Question"
-        case .staleContent:  return "Stale"
-        case .growingNote:   return "Growing"
-        case .lonelyHandle:  return "Lonely"
-        case .connection:    return "Connection"
+        case .suggestedTask:  return "Task"
+        case .openQuestion:   return "Question"
+        case .staleContent:   return "Stale"
+        case .growingNote:    return "Growing"
+        case .lonelyHandle:   return "Lonely"
+        case .connection:     return "Connection"
+        case .nonsenseContent: return "Cleanup"
+        case .upcomingEcho:   return "Echo"
+        case .conceptCluster: return "Cluster"
         }
     }
 
     var tint: InsightTint {
         switch self {
-        case .suggestedTask: return .green
-        case .openQuestion:  return .yellow
-        case .staleContent:  return .gray
-        case .growingNote:   return .purple
-        case .lonelyHandle:  return .orange
-        case .connection:    return .blue
+        case .suggestedTask:  return .green
+        case .openQuestion:   return .yellow
+        case .staleContent:   return .gray
+        case .growingNote:    return .purple
+        case .lonelyHandle:   return .orange
+        case .connection:     return .blue
+        case .nonsenseContent: return .red
+        case .upcomingEcho:   return .orange
+        case .conceptCluster: return .blue
         }
     }
 }
@@ -49,7 +61,7 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable {
 // MARK: - InsightTint
 
 enum InsightTint: String, Codable {
-    case green, yellow, purple, gray, blue, orange
+    case green, yellow, purple, gray, blue, orange, red
 
     var color: Color {
         switch self {
@@ -59,6 +71,7 @@ enum InsightTint: String, Codable {
         case .gray:   return .gray
         case .blue:   return .blue
         case .orange: return .orange
+        case .red:    return .red
         }
     }
 }

@@ -7,9 +7,10 @@ struct IntelligenceView: View {
     @State private var messages: [ChatMessage] = []
     @State private var isLoading = false
     @State private var isScanning = false
-    @State private var hasScannedOnce = false
     @State private var selectedInsight: Insight?
     @State private var showCreateSheet = false
+    @State private var navigateToNote: Note?
+    @State private var navigateSectionId: String?
     @FocusState private var isInputFocused: Bool
 
     private var insightEngine: InsightEngine {
@@ -69,18 +70,9 @@ struct IntelligenceView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    Task { await runScan() }
-                } label: {
-                    if isScanning {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                }
-                .disabled(isScanning)
+            ToolbarItem(placement: .principal) {
+                Image("ObiusLogo")
+                    .renderingMode(.original)
             }
         }
         .sheet(item: $selectedInsight) { insight in
@@ -103,7 +95,22 @@ struct IntelligenceView: View {
                         try? await insightRepository.untrackInsight(insight.id)
                         haptic(.light)
                     }
-                }
+                },
+                onDeleteNote: insight.insightType == .nonsenseContent ? {
+                    Task {
+                        if let noteId = insight.sourceNoteId {
+                            try? await appState.noteRepository.deleteNote(noteId)
+                            try? await insightRepository.dismissInsight(insight.id)
+                            haptic(.success)
+                        }
+                    }
+                } : nil,
+                onGoToNote: insight.sourceNoteId != nil ? {
+                    if let note = appState.noteRepository.notes.first(where: { $0.id == insight.sourceNoteId }) {
+                        navigateSectionId = insight.sourceSectionId
+                        navigateToNote = note
+                    }
+                } : nil
             )
         }
         .sheet(isPresented: $showCreateSheet) {
@@ -120,12 +127,10 @@ struct IntelligenceView: View {
             }
         }
         .task {
-            // Auto-scan on first appearance if no insights exist
-            if !hasScannedOnce
-                && insightRepository.surfacedInsights.isEmpty
-                && insightRepository.trackedInsights.isEmpty {
-                await runScan()
-            }
+            await runScan()
+        }
+        .navigationDestination(item: $navigateToNote) { note in
+            NoteEditorView(noteId: note.id, targetSectionId: navigateSectionId)
         }
     }
 
@@ -157,7 +162,16 @@ struct IntelligenceView: View {
                     },
                     onTap: {
                         selectedInsight = insight
-                    }
+                    },
+                    onDeleteNote: insight.insightType == .nonsenseContent ? {
+                        Task {
+                            if let noteId = insight.sourceNoteId {
+                                try? await appState.noteRepository.deleteNote(noteId)
+                                try? await insightRepository.dismissInsight(insight.id)
+                                haptic(.success)
+                            }
+                        }
+                    } : nil
                 )
                 .transition(.asymmetric(
                     insertion: .opacity,
@@ -171,21 +185,9 @@ struct IntelligenceView: View {
 
     private var trackedSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("TRACKING")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                Button {
-                    showCreateSheet = true
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.secondary)
-                }
-            }
+            Text("TRACKING")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
@@ -202,6 +204,22 @@ struct IntelligenceView: View {
                                 }
                             }
                         )
+                    }
+
+                    // + button at the end of the row
+                    Button {
+                        showCreateSheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 44, height: 44)
+                            .background(Color(UIColor.secondarySystemGroupedBackground))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.gray.opacity(0.25), lineWidth: 1)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
                 }
             }
@@ -222,7 +240,7 @@ struct IntelligenceView: View {
             Text("Intelligence")
                 .font(.title2.weight(.semibold))
 
-            Text("Insights about your notes will appear here. Tap refresh to scan for tasks, questions, and patterns.")
+            Text("Insights about your notes will appear here automatically.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -275,7 +293,6 @@ struct IntelligenceView: View {
         isScanning = true
         await insightEngine.scan()
         isScanning = false
-        hasScannedOnce = true
     }
 
     private func sendMessage() {
@@ -287,13 +304,31 @@ struct IntelligenceView: View {
         messageText = ""
         isLoading = true
 
-        // TODO: Integrate with actual AI backend
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            let response = ChatMessage(
-                role: .assistant,
-                content: "I'm not connected to an AI backend yet. This is a placeholder response. Once connected, I'll be able to help you explore your notes and answer questions!"
-            )
-            messages.append(response)
+        Task {
+            do {
+                let apiMessages = messages.map {
+                    ClaudeService.Message(
+                        role: $0.role == .user ? "user" : "assistant",
+                        content: $0.content
+                    )
+                }
+
+                let notes = appState.noteRepository.notes
+                let recentTitles = notes.prefix(10).compactMap(\.title).joined(separator: ", ")
+                let context = "Total notes: \(notes.count). Recent: \(recentTitles)"
+
+                let reply = try await ClaudeService.send(
+                    messages: apiMessages,
+                    noteContext: context
+                )
+
+                messages.append(ChatMessage(role: .assistant, content: reply))
+            } catch {
+                messages.append(ChatMessage(
+                    role: .assistant,
+                    content: "Something went wrong: \(error.localizedDescription)"
+                ))
+            }
             isLoading = false
         }
     }
