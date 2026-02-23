@@ -1,6 +1,9 @@
 // Debug Configuration
 // Obius iOS App
 
+// Import local secrets (gitignored)
+#include? "Secrets.xcconfig"
+
 // Build Settings
 DEBUG_INFORMATION_FORMAT = dwarf-with-dsym
 SWIFT_OPTIMIZATION_LEVEL = -Onone

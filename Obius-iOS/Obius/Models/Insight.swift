@@ -14,6 +14,12 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable {
     case nonsenseContent // Page with meaningless/gibberish content
     case upcomingEcho    // Echo firing within 24 hours
     case conceptCluster  // 3+ notes share the same hashtag
+    case aiSuggestion    // AI-powered suggestion (echo, intent, connection, handle)
+    case activeLoop      // Handle edited recently + used on 2+ pages
+    case dormantLoop     // Handle not edited in 14+ days
+    case emergingLoop    // Handle used on 3+ pages this week
+    case loopConnection  // Two handles appear on the same page
+    case suggestedEcho   // AI-detected temporal phrase suggesting an Echo
 
     var icon: String {
         switch self {
@@ -26,6 +32,12 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable {
         case .nonsenseContent: return "trash.circle"
         case .upcomingEcho:   return "bell.badge"
         case .conceptCluster: return "number"
+        case .aiSuggestion:   return "sparkles"
+        case .activeLoop:     return "arrow.triangle.2.circlepath"
+        case .dormantLoop:    return "moon.zzz"
+        case .emergingLoop:   return "arrow.up.right"
+        case .loopConnection: return "link.badge.plus"
+        case .suggestedEcho:  return "bell.and.waves.left.and.right"
         }
     }
 
@@ -40,6 +52,12 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable {
         case .nonsenseContent: return "Cleanup"
         case .upcomingEcho:   return "Echo"
         case .conceptCluster: return "Cluster"
+        case .aiSuggestion:   return "AI"
+        case .activeLoop:     return "Loop"
+        case .dormantLoop:    return "Dormant"
+        case .emergingLoop:   return "Emerging"
+        case .loopConnection: return "Connected"
+        case .suggestedEcho:  return "Echo"
         }
     }
 
@@ -54,6 +72,12 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable {
         case .nonsenseContent: return .red
         case .upcomingEcho:   return .orange
         case .conceptCluster: return .blue
+        case .aiSuggestion:   return .blue
+        case .activeLoop:     return .green
+        case .dormantLoop:    return .gray
+        case .emergingLoop:   return .purple
+        case .loopConnection: return .blue
+        case .suggestedEcho:  return .orange
         }
     }
 }
@@ -142,10 +166,57 @@ extension Insight {
     /// Tasks and questions dedup per-note (consolidated), others include sectionId.
     var dedupKey: String {
         switch insightType {
-        case .suggestedTask, .openQuestion:
+        case .suggestedTask, .openQuestion, .suggestedEcho:
+            // One insight per note — consolidated
             return "\(insightType.rawValue)|\(sourceNoteId ?? "")|"
         default:
             return "\(insightType.rawValue)|\(sourceNoteId ?? "")|\(sourceSectionId ?? "")"
+        }
+    }
+}
+
+// MARK: - Display (AI subtype-aware)
+
+extension Insight {
+    /// Icon that reflects the AI suggestion subtype, or falls back to the insight type icon.
+    var displayIcon: String {
+        guard insightType == .aiSuggestion, let subtype = sourceSectionId else {
+            return insightType.icon
+        }
+        switch subtype {
+        case "echo_suggestion":   return "bell.badge"
+        case "intent_correction": return "arrow.triangle.swap"
+        case "connection":        return "arrow.triangle.branch"
+        case "handle_promotion":  return "link"
+        default:                  return insightType.icon
+        }
+    }
+
+    /// Label that reflects the AI suggestion subtype.
+    var displayLabel: String {
+        guard insightType == .aiSuggestion, let subtype = sourceSectionId else {
+            return insightType.label
+        }
+        switch subtype {
+        case "echo_suggestion":   return "Echo"
+        case "intent_correction": return "Intent"
+        case "connection":        return "Link"
+        case "handle_promotion":  return "Handle"
+        default:                  return insightType.label
+        }
+    }
+
+    /// Tint that reflects the AI suggestion subtype.
+    var displayTint: InsightTint {
+        guard insightType == .aiSuggestion, let subtype = sourceSectionId else {
+            return insightType.tint
+        }
+        switch subtype {
+        case "echo_suggestion":   return .orange
+        case "intent_correction": return .yellow
+        case "connection":        return .blue
+        case "handle_promotion":  return .purple
+        default:                  return insightType.tint
         }
     }
 }

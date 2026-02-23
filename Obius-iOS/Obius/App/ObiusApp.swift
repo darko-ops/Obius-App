@@ -176,6 +176,54 @@ class AppState: ObservableObject {
         if AuthManager.shared.isAuthenticated {
             await syncEngine.sync()
         }
+
+        // Seed first-run demo note
+        await seedFirstRunNoteIfNeeded()
+    }
+
+    private func seedFirstRunNoteIfNeeded() async {
+        let key = "hasSeededFirstRunNote"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+
+        do {
+            // 1. Create the demo note
+            let note = try await noteRepository.createNote(title: "Welcome to Obius")
+
+            // 2. Create two handles (loops)
+            let groceryHandle = try await handleRepository.createHandle(
+                name: "grocery_list", content: "Milk, Eggs, Bread"
+            )
+            let meetingHandle = try await handleRepository.createHandle(
+                name: "meeting_notes", content: "Discuss project timeline"
+            )
+
+            // 3. Create sections: intro text, 2 portal sections, explanation text
+            let introSection = try await sectionRepository.createSection(
+                noteId: note.id, content: "This note demonstrates Loops — synced content blocks."
+            )
+            let portalSection1 = try await sectionRepository.createSection(
+                noteId: note.id, content: "", afterSectionId: introSection.id
+            )
+            try await sectionRepository.linkSectionToHandle(
+                sectionId: portalSection1.id, handleId: groceryHandle.id
+            )
+            let portalSection2 = try await sectionRepository.createSection(
+                noteId: note.id, content: "", afterSectionId: portalSection1.id
+            )
+            try await sectionRepository.linkSectionToHandle(
+                sectionId: portalSection2.id, handleId: meetingHandle.id
+            )
+            _ = try await sectionRepository.createSection(
+                noteId: note.id,
+                content: "Edit a Loop here — it updates everywhere it appears.",
+                afterSectionId: portalSection2.id
+            )
+
+            print("[FirstRun] Seeded demo note with 2 loop portals")
+        } catch {
+            print("[FirstRun] Failed to seed demo note: \(error)")
+        }
     }
 
     func triggerSync() async {

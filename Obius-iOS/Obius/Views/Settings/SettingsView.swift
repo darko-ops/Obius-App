@@ -55,12 +55,6 @@ struct SettingsView: View {
             // Privacy Section
             SwiftUI.Section("Privacy") {
                 NavigationLink {
-                    PrivacyModeView()
-                } label: {
-                    Label("Privacy Mode", systemImage: "lock.shield")
-                }
-
-                NavigationLink {
                     DataManagementView()
                 } label: {
                     Label("Data Management", systemImage: "externaldrive")
@@ -131,47 +125,6 @@ struct SettingsView: View {
             EditProfileView()
                 .environmentObject(authManager)
         }
-    }
-}
-
-// MARK: - Privacy Mode View
-
-struct PrivacyModeView: View {
-    @State private var privacyMode = "standard"
-
-    var body: some View {
-        List {
-            SwiftUI.Section {
-                Picker("Privacy Mode", selection: $privacyMode) {
-                    Text("Standard").tag("standard")
-                    Text("Private").tag("private")
-                }
-                .pickerStyle(.inline)
-            } footer: {
-                Text(privacyMode == "standard"
-                    ? "Notes sync to cloud and AI features are enabled."
-                    : "Notes stay local only. No cloud sync or AI features.")
-            }
-
-            SwiftUI.Section {
-                if privacyMode == "standard" {
-                    Label("Cloud sync enabled", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    Label("AI summaries enabled", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    Label("Semantic search enabled", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                } else {
-                    Label("Notes stored locally only", systemImage: "lock.fill")
-                        .foregroundStyle(.orange)
-                    Label("No data sent to servers", systemImage: "lock.fill")
-                        .foregroundStyle(.orange)
-                    Label("Local search only", systemImage: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .navigationTitle("Privacy Mode")
     }
 }
 

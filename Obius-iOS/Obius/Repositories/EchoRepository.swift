@@ -87,6 +87,9 @@ final class EchoRepository: ObservableObject {
             guard var echo = try Echo.fetchOne(db, key: id) else { return }
             echo.deactivate()
             try echo.update(db)
+
+            // Dismiss upcomingEcho insights for this echo's handle
+            Self.dismissEchoInsights(handleId: echo.handleId, db: db)
         }
     }
 
@@ -140,7 +143,13 @@ final class EchoRepository: ObservableObject {
 
     func deleteEcho(id: String) async throws {
         try await database.write { db in
+            // Fetch the echo first to get its handleId for insight cleanup
+            let echo = try Echo.fetchOne(db, key: id)
             try Echo.deleteOne(db, key: id)
+
+            if let handleId = echo?.handleId {
+                Self.dismissEchoInsights(handleId: handleId, db: db)
+            }
         }
     }
 
@@ -149,6 +158,30 @@ final class EchoRepository: ObservableObject {
             try Echo
                 .filter(Echo.Columns.handleId == handleId)
                 .deleteAll(db)
+
+            Self.dismissEchoInsights(handleId: handleId, db: db)
+        }
+    }
+
+    // MARK: - Insight Cleanup
+
+    /// Dismiss upcomingEcho insights whose sourceSectionId matches a section on this handle.
+    private static func dismissEchoInsights(handleId: String, db: Database) {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        // Find sections belonging to this handle
+        let sectionIds = (try? Section
+            .filter(Section.Columns.handleId == handleId)
+            .fetchAll(db)
+            .map(\.id)) ?? []
+
+        guard !sectionIds.isEmpty else { return }
+
+        for sectionId in sectionIds {
+            try? db.execute(sql: """
+                UPDATE insights
+                SET status = 'dismissed', updatedAt = ?
+                WHERE insightType = 'upcomingEcho' AND sourceSectionId = ? AND status != 'dismissed'
+            """, arguments: [now, sectionId])
         }
     }
 }

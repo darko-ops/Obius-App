@@ -26,10 +26,14 @@ final class InsightEngine {
     /// Runs all detectors, deduplicates, and bulk-inserts new insights.
     func scan() async {
         let notes = noteRepository.notes.filter { !$0.isDeleted }
+        print("[InsightEngine] scan() started — \(notes.count) notes, API key: \(AppConfiguration.claudeAPIKey != nil ? "present" : "MISSING")")
 
         // Skip scan entirely if notes haven't loaded yet — avoids wiping
         // existing insights via garbage collection on an empty list.
-        guard !notes.isEmpty else { return }
+        guard !notes.isEmpty else {
+            print("[InsightEngine] scan() aborted — no notes loaded yet")
+            return
+        }
 
         let validNoteIds = Set(notes.map(\.id))
 
@@ -58,6 +62,12 @@ final class InsightEngine {
         newInsights.append(contentsOf: detectNonsenseContent(notes: notes, sectionsByNote: sectionsByNote))
         newInsights.append(contentsOf: detectUpcomingEchoes(sectionsByNote: sectionsByNote))
         newInsights.append(contentsOf: detectConceptClusters(notes: notes, sectionsByNote: sectionsByNote))
+        newInsights.append(contentsOf: detectActiveLoops(sectionsByNote: sectionsByNote))
+        newInsights.append(contentsOf: detectDormantLoops(sectionsByNote: sectionsByNote))
+        newInsights.append(contentsOf: detectEmergingLoops(sectionsByNote: sectionsByNote))
+        newInsights.append(contentsOf: detectLoopConnections(sectionsByNote: sectionsByNote))
+        newInsights.append(contentsOf: await detectTemporalEchoes(notes: notes, sectionsByNote: sectionsByNote))
+        newInsights.append(contentsOf: await detectAISuggestions(notes: notes, sectionsByNote: sectionsByNote))
 
         // Batch dedup against all existing insights (surfaced, tracked, dismissed)
         let existingKeys = (try? await insightRepository.existingInsightKeys()) ?? []
@@ -67,9 +77,12 @@ final class InsightEngine {
         if !deduped.isEmpty {
             do {
                 try await insightRepository.createInsights(deduped)
+                print("[InsightEngine] Inserted \(deduped.count) new insight(s): \(deduped.map { "\($0.insightType.rawValue)|\($0.title)" })")
             } catch {
                 print("[InsightEngine] Bulk insert failed: \(error)")
             }
+        } else {
+            print("[InsightEngine] No new insights to insert (all \(newInsights.count) deduped)")
         }
 
         // Purge old dismissed insights
@@ -572,6 +585,402 @@ final class InsightEngine {
             ))
 
             if insights.count >= 5 { return insights }
+        }
+
+        return insights
+    }
+
+    // MARK: - AI Suggestions
+
+    /// In-memory cooldown — resets on app launch so rebuilds always get a fresh scan.
+    private static var lastAIScanTime: Int64 = 0
+    private static let aiScanCooldownMs: Int64 = 5 * 60 * 1000 // 5 minutes
+
+    private func detectAISuggestions(notes: [Note], sectionsByNote: [String: [Section]]) async -> [Insight] {
+        // API key guard
+        guard AppConfiguration.claudeAPIKey != nil else {
+            print("[InsightEngine] AI skipped — no API key")
+            return []
+        }
+
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+
+        // Rate limit: skip if last AI scan was < 5 minutes ago (resets on app launch)
+        if Self.lastAIScanTime > 0 && (now - Self.lastAIScanTime) < Self.aiScanCooldownMs {
+            print("[InsightEngine] AI skipped — cooldown (\(Int((now - Self.lastAIScanTime) / 1000))s since last scan)")
+            return []
+        }
+
+        // Pick the most recently edited notes (max 10)
+        let batch = Array(notes.sorted { $0.updatedAt > $1.updatedAt }.prefix(10))
+        guard !batch.isEmpty else { return [] }
+        let validNoteIds = Set(batch.map(\.id))
+        print("[InsightEngine] AI scanning \(batch.count) note(s)")
+
+        // Build summary string — use explicit "noteId:" label so Claude copies it verbatim
+        var summaryParts: [String] = []
+        for note in batch {
+            let sections = sectionsByNote[note.id] ?? []
+            let intentLabel = note.intent.rawValue
+            let title = note.displayTitle(sections: sections)
+            let bodyPreview = String(note.body.prefix(300))
+
+            let sectionPreviews = sections
+                .filter { $0.contentType == .text || $0.contentType == .checklist || $0.contentType == .quote }
+                .prefix(3)
+                .map { String($0.content.prefix(200)) }
+                .joined(separator: " | ")
+
+            // Include interstitial content (text between sections)
+            let interstitialPreview = note.interstitialContent.values
+                .map { String($0.prefix(100)) }
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .prefix(3)
+                .joined(separator: " | ")
+
+            var summary = "noteId: \(note.id)\nTitle: \"\(title)\" (intent: \(intentLabel))\nBody: \(bodyPreview)\nSections: \(sectionPreviews)"
+            if !interstitialPreview.isEmpty {
+                summary += "\nBetween sections: \(interstitialPreview)"
+            }
+            summaryParts.append(summary)
+        }
+        let summaryString = summaryParts.joined(separator: "\n---\n")
+
+        do {
+            let responseText = try await ClaudeService.analyzeNotes(summaryString)
+            print("[InsightEngine] AI raw response: \(responseText)")
+
+            // Update cooldown after successful call
+            Self.lastAIScanTime = now
+
+            // Extract JSON array from response
+            guard let startIdx = responseText.firstIndex(of: "["),
+                  let endIdx = responseText.lastIndex(of: "]") else {
+                print("[InsightEngine] AI — no JSON array found in response")
+                return []
+            }
+            let jsonString = String(responseText[startIdx...endIdx])
+            guard let jsonData = jsonString.data(using: .utf8),
+                  let suggestions = try JSONSerialization.jsonObject(with: jsonData) as? [[String: Any]] else {
+                print("[InsightEngine] AI — failed to parse JSON array")
+                return []
+            }
+
+            print("[InsightEngine] AI parsed \(suggestions.count) suggestion(s)")
+
+            // Map to Insight objects (max 5), validating noteId against actual notes
+            var insights: [Insight] = []
+            for suggestion in suggestions.prefix(5) {
+                guard let type = suggestion["type"] as? String,
+                      let noteId = suggestion["noteId"] as? String,
+                      let title = suggestion["title"] as? String,
+                      let body = suggestion["body"] as? String else {
+                    print("[InsightEngine] AI — skipping suggestion with missing fields: \(suggestion)")
+                    continue
+                }
+
+                // Validate noteId matches an actual note — prevents orphan garbage collection
+                guard validNoteIds.contains(noteId) else {
+                    print("[InsightEngine] AI — skipping suggestion with unknown noteId: \(noteId)")
+                    continue
+                }
+
+                // Skip echo suggestions — handled by dedicated temporal echo detector
+                if type == "echo_suggestion" { continue }
+
+                // Collect related note IDs — supports array or single string
+                var relatedIds: [String] = []
+                if let array = suggestion["relatedNoteIds"] as? [String] {
+                    relatedIds = array.filter { validNoteIds.contains($0) }
+                } else if let single = suggestion["relatedNoteId"] as? String,
+                          validNoteIds.contains(single) {
+                    relatedIds = [single]
+                }
+                // Store as comma-separated string (nil if empty)
+                let relatedNoteId: String? = relatedIds.isEmpty ? nil : relatedIds.joined(separator: ",")
+
+                insights.append(Insight(
+                    insightType: .aiSuggestion,
+                    title: title,
+                    body: body,
+                    sourceNoteId: noteId,
+                    sourceSectionId: type,  // dedup key: different subtypes don't collide
+                    relatedNoteId: relatedNoteId
+                ))
+            }
+            print("[InsightEngine] AI returning \(insights.count) valid insight(s)")
+            return insights
+        } catch {
+            print("[InsightEngine] AI suggestion detection failed: \(error)")
+            return []
+        }
+    }
+
+    // MARK: - Temporal Echo Suggestions
+
+    /// In-memory cooldown for temporal echo detection — separate from AI suggestions.
+    private static var lastTemporalScanTime: Int64 = 0
+    private static let temporalScanCooldownMs: Int64 = 5 * 60 * 1000 // 5 minutes
+
+    private func detectTemporalEchoes(notes: [Note], sectionsByNote: [String: [Section]]) async -> [Insight] {
+        guard AppConfiguration.claudeAPIKey != nil else { return [] }
+
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        if Self.lastTemporalScanTime > 0 && (now - Self.lastTemporalScanTime) < Self.temporalScanCooldownMs {
+            return []
+        }
+
+        // Skip if no handles exist (echoes attach to handles)
+        let allHandles = handleRepository.handles
+        guard !allHandles.isEmpty else { return [] }
+
+        // Build note summaries (most recently edited, max 10)
+        let batch = Array(notes.sorted { $0.updatedAt > $1.updatedAt }.prefix(10))
+        guard !batch.isEmpty else { return [] }
+
+        var summaryParts: [String] = []
+        for note in batch {
+            let sections = sectionsByNote[note.id] ?? []
+            let title = note.displayTitle(sections: sections)
+            let bodyPreview = String(note.body.prefix(300))
+            let sectionPreviews = sections
+                .filter { $0.contentType == .text || $0.contentType == .checklist }
+                .prefix(5)
+                .map { s -> String in
+                    let handleTag = s.handleId.flatMap { hid in allHandles.first(where: { $0.id == hid }) }
+                        .map { "@\($0.displayName): " } ?? ""
+                    return handleTag + String(s.content.prefix(200))
+                }
+                .joined(separator: " | ")
+
+            summaryParts.append("noteId: \(note.id)\nTitle: \"\(title)\"\nBody: \(bodyPreview)\nSections: \(sectionPreviews)")
+        }
+        let noteSummaries = summaryParts.joined(separator: "\n---\n")
+
+        // Build handle list for context
+        let handleLines = allHandles.prefix(20).map { "id: \($0.id), @\($0.displayName)" }
+        let handleContext = handleLines.joined(separator: "\n")
+
+        // Skip notes that already have echoes — don't suggest duplicates
+        let echoHandleIds = Set(EchoManager.shared.activeEchoes.map(\.handleId))
+
+        do {
+            let suggestions = try await ClaudeService.extractTemporalEchoes(noteSummaries, handles: handleContext)
+            Self.lastTemporalScanTime = now
+
+            var insights: [Insight] = []
+            var seenNotes = Set<String>()
+            for suggestion in suggestions {
+                // One suggestion per note
+                guard seenNotes.insert(suggestion.noteId).inserted else { continue }
+
+                let isExistingHandle = suggestion.handleId != "new" && suggestion.handleId != "none"
+
+                // Skip if the existing handle already has an echo
+                if isExistingHandle && echoHandleIds.contains(suggestion.handleId) { continue }
+
+                // Look up the note title for the insight card
+                let noteTitle = batch.first(where: { $0.id == suggestion.noteId })
+                    .map { $0.displayTitle(sections: sectionsByNote[$0.id] ?? []) } ?? "a note"
+
+                let recurring = suggestion.isRecurring
+                    ? "Every \(suggestion.intervalValue) \(suggestion.intervalUnit)"
+                    : ""
+
+                // Store echo config in relatedNoteId as JSON for the Create Echo form
+                let configJSON: String
+                if let data = try? JSONEncoder().encode(suggestion),
+                   let str = String(data: data, encoding: .utf8) {
+                    configJSON = str
+                } else {
+                    continue
+                }
+
+                let body = recurring.isEmpty
+                    ? "\"\(suggestion.phrase)\" in '\(noteTitle)'"
+                    : "\"\(suggestion.phrase)\" in '\(noteTitle)' — \(recurring)"
+
+                insights.append(Insight(
+                    insightType: .suggestedEcho,
+                    title: suggestion.phrase.prefix(1).uppercased() + suggestion.phrase.dropFirst(),
+                    body: body,
+                    sourceNoteId: suggestion.noteId,
+                    sourceSectionId: suggestion.noteId, // dedup per note
+                    relatedNoteId: configJSON
+                ))
+            }
+            return insights
+        } catch {
+            print("[InsightEngine] Temporal echo detection failed: \(error)")
+            return []
+        }
+    }
+
+    // MARK: - Active Loops
+
+    private func detectActiveLoops(sectionsByNote: [String: [Section]]) -> [Insight] {
+        let handles = handleRepository.handles
+        let sevenDaysAgo = Int64(Date().timeIntervalSince1970 * 1000) - (7 * 86_400_000)
+        var insights: [Insight] = []
+
+        // Build handle → (section count, first noteId) map
+        var handleRefCount: [String: Int] = [:]
+        var handleFirstNoteId: [String: String] = [:]
+        for (noteId, sections) in sectionsByNote {
+            for section in sections {
+                if let handleId = section.handleId {
+                    handleRefCount[handleId, default: 0] += 1
+                    if handleFirstNoteId[handleId] == nil {
+                        handleFirstNoteId[handleId] = noteId
+                    }
+                }
+            }
+        }
+
+        for handle in handles {
+            let count = handleRefCount[handle.id] ?? 0
+            guard count >= 2, handle.updatedAt > sevenDaysAgo else { continue }
+
+            insights.append(Insight(
+                insightType: .activeLoop,
+                title: "@\(handle.displayName) is active across \(count) pages",
+                body: "This loop is frequently used and recently updated",
+                sourceNoteId: handleFirstNoteId[handle.id],
+                sourceSectionId: handle.id
+            ))
+
+            if insights.count >= 5 { return insights }
+        }
+
+        return insights
+    }
+
+    // MARK: - Dormant Loops
+
+    private func detectDormantLoops(sectionsByNote: [String: [Section]]) -> [Insight] {
+        let handles = handleRepository.handles
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let fourteenDaysMs: Int64 = 14 * 86_400_000
+        var insights: [Insight] = []
+
+        // Build handle → first noteId map
+        var handleFirstNoteId: [String: String] = [:]
+        var handleHasSections: Set<String> = []
+        for (noteId, sections) in sectionsByNote {
+            for section in sections {
+                if let handleId = section.handleId {
+                    handleHasSections.insert(handleId)
+                    if handleFirstNoteId[handleId] == nil {
+                        handleFirstNoteId[handleId] = noteId
+                    }
+                }
+            }
+        }
+
+        for handle in handles {
+            guard handleHasSections.contains(handle.id) else { continue }
+            guard handle.updatedAt < now - fourteenDaysMs else { continue }
+
+            let daysSince = Int((now - handle.updatedAt) / 86_400_000)
+            insights.append(Insight(
+                insightType: .dormantLoop,
+                title: "@\(handle.displayName) hasn't been updated in \(daysSince) days",
+                body: "Consider refreshing or archiving this loop",
+                sourceNoteId: handleFirstNoteId[handle.id],
+                sourceSectionId: handle.id
+            ))
+
+            if insights.count >= 5 { return insights }
+        }
+
+        return insights
+    }
+
+    // MARK: - Emerging Loops
+
+    private func detectEmergingLoops(sectionsByNote: [String: [Section]]) -> [Insight] {
+        let handles = handleRepository.handles
+        let sevenDaysAgo = Int64(Date().timeIntervalSince1970 * 1000) - (7 * 86_400_000)
+        var insights: [Insight] = []
+
+        // Count portal sections created this week per handle, and total portals
+        var handleRecentPortals: [String: Int] = [:]
+        var handleTotalPortals: [String: Int] = [:]
+        var handleFirstNoteId: [String: String] = [:]
+        for (noteId, sections) in sectionsByNote {
+            for section in sections {
+                guard let handleId = section.handleId else { continue }
+                handleTotalPortals[handleId, default: 0] += 1
+                if handleFirstNoteId[handleId] == nil {
+                    handleFirstNoteId[handleId] = noteId
+                }
+                if section.createdAt > sevenDaysAgo {
+                    handleRecentPortals[handleId, default: 0] += 1
+                }
+            }
+        }
+
+        for handle in handles {
+            let total = handleTotalPortals[handle.id] ?? 0
+            let recent = handleRecentPortals[handle.id] ?? 0
+            guard total >= 3, recent >= 1 else { continue }
+
+            insights.append(Insight(
+                insightType: .emergingLoop,
+                title: "@\(handle.displayName) is spreading — now on \(total) pages",
+                body: "\(recent) new reference(s) added this week",
+                sourceNoteId: handleFirstNoteId[handle.id],
+                sourceSectionId: handle.id
+            ))
+
+            if insights.count >= 3 { return insights }
+        }
+
+        return insights
+    }
+
+    // MARK: - Loop Connections
+
+    private func detectLoopConnections(sectionsByNote: [String: [Section]]) -> [Insight] {
+        var insights: [Insight] = []
+
+        // Build noteId → set of handleIds map
+        var noteHandles: [String: Set<String>] = [:]
+        for (noteId, sections) in sectionsByNote {
+            for section in sections {
+                if let handleId = section.handleId {
+                    noteHandles[noteId, default: []].insert(handleId)
+                }
+            }
+        }
+
+        // Find pairs of handles that co-occur on the same note
+        var seenPairs = Set<String>()
+        let handleLookup = Dictionary(uniqueKeysWithValues: handleRepository.handles.map { ($0.id, $0) })
+
+        for (noteId, handleIds) in noteHandles {
+            let sorted = handleIds.sorted()
+            guard sorted.count >= 2 else { continue }
+
+            for i in 0..<sorted.count {
+                for j in (i + 1)..<sorted.count {
+                    let pairKey = "\(sorted[i])|\(sorted[j])"
+                    guard seenPairs.insert(pairKey).inserted else { continue }
+
+                    guard let handle1 = handleLookup[sorted[i]],
+                          let handle2 = handleLookup[sorted[j]] else { continue }
+
+                    insights.append(Insight(
+                        insightType: .loopConnection,
+                        title: "@\(handle1.displayName) and @\(handle2.displayName) appear together",
+                        body: "These loops co-occur on the same page",
+                        sourceNoteId: noteId,
+                        sourceSectionId: "\(handle1.id),\(handle2.id)"
+                    ))
+
+                    if insights.count >= 5 { return insights }
+                }
+            }
         }
 
         return insights

@@ -833,14 +833,7 @@ struct SectionView: View {
             Label("Commit Node", systemImage: "arrow.down.doc")
         }
 
-        // 7. Apply Template
-        Button {
-            onApplyTemplate()
-        } label: {
-            Label("Apply Template", systemImage: "doc.on.doc.fill")
-        }
-
-        // 8. Duplicate (copy + paste in one action)
+        // 7. Duplicate (copy + paste in one action)
         Button {
             onCopy()
             onPaste()

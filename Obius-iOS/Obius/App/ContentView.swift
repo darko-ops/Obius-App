@@ -105,6 +105,7 @@ struct MainTabView: View {
     @State private var pendingEchoId: String?
     @State private var bannerEcho: Echo?
     @State private var showBanner = false
+    @State private var bannerContexts: [PortalContext] = []
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -135,15 +136,40 @@ struct MainTabView: View {
                 .tag(2)
             }
 
-            // In-app echo alert banner
+            // In-app echo alert banner with context
             if showBanner, let echo = bannerEcho {
-                EchoAlertBanner(echo: echo) {
-                    withAnimation { showBanner = false }
-                    pendingEchoId = echo.id
-                    selectedTab = 2
-                } onDismiss: {
-                    withAnimation { showBanner = false }
+                VStack(spacing: 0) {
+                    EchoContextCard(
+                        echo: echo,
+                        handleName: echoManager.getHandleName(for: echo),
+                        portalContexts: bannerContexts,
+                        onNavigate: { noteId in
+                            withAnimation { showBanner = false }
+                            // Navigate to the note via Intelligence tab
+                            pendingEchoId = echo.id
+                            selectedTab = 2
+                        }
+                    )
+                    .overlay(alignment: .topTrailing) {
+                        Button {
+                            withAnimation { showBanner = false }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.secondary)
+                                .padding(8)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation { showBanner = false }
+                        pendingEchoId = echo.id
+                        selectedTab = 2
+                    }
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
                 .transition(.move(edge: .top).combined(with: .opacity))
                 .zIndex(100)
             }
@@ -157,57 +183,25 @@ struct MainTabView: View {
         .onChange(of: echoManager.firedEcho) { _, echo in
             guard let echo else { return }
             bannerEcho = echo
+            bannerContexts = [] // Show immediately, contexts load async
             withAnimation(.spring(duration: 0.4)) { showBanner = true }
             echoManager.firedEcho = nil
-            // Auto-dismiss after 5 seconds
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+
+            // Load portal context in background
+            Task {
+                let contexts = await EchoContextCard.buildContexts(
+                    handleId: echo.handleId,
+                    handleRepository: appState.handleRepository,
+                    noteRepository: appState.noteRepository
+                )
+                withAnimation { bannerContexts = contexts }
+            }
+
+            // Auto-dismiss after 8 seconds (longer with context card)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
                 withAnimation { showBanner = false }
             }
         }
-    }
-}
-
-// MARK: - In-App Echo Alert Banner
-
-struct EchoAlertBanner: View {
-    let echo: Echo
-    let onTap: () -> Void
-    let onDismiss: () -> Void
-    @StateObject private var echoManager = EchoManager.shared
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "dot.radiowaves.left.and.right")
-                .font(.title3)
-                .foregroundStyle(.yellow)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Echo Fired")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Text("@\(echoManager.getHandleName(for: echo))")
-                    .font(.subheadline.weight(.medium))
-            }
-
-            Spacer()
-
-            Button {
-                onDismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .contentShape(Rectangle())
-        .onTapGesture { onTap() }
     }
 }
 

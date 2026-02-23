@@ -31,8 +31,6 @@ private struct NotesListContent: View {
     @State private var selectedNote: Note?
     @State private var sectionPreviews: [String: String] = [:]
     @State private var autoTitles: [String: String] = [:]
-    @State private var showingTemplates = false
-    @State private var templateTargetNoteId: String?
     @State private var showingCommitConfirmation = false
     @State private var lastCommitName: String?
     @State private var pageCommitItem: PageCommitItem?
@@ -379,27 +377,6 @@ private struct NotesListContent: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: isSelectionMode)
-        .sheet(isPresented: $showingTemplates) {
-            TemplateListView { template in
-                Task {
-                    if let noteId = templateTargetNoteId {
-                        // Apply template to the note by adding sections
-                        // Template content appears as bold prefix, user can type after it
-                        for item in template.sections {
-                            let sectionType: SectionType = item.itemType == .node ? .fold : .line
-                            try? await sectionRepository.createSection(
-                                noteId: noteId,
-                                content: item.content,  // Template text is in content
-                                sectionType: sectionType,
-                                isTemplateContent: true,
-                                templatePrefix: item.content  // Tracks protected text
-                            )
-                        }
-                    }
-                    templateTargetNoteId = nil
-                }
-            }
-        }
         .sheet(item: $pageCommitItem) { item in
             PageCommitSheet(
                 noteId: item.noteId,
@@ -508,14 +485,6 @@ private struct NotesListContent: View {
                 }
 
                 Divider()
-
-                // Apply Template
-                Button {
-                    templateTargetNoteId = note.id
-                    showingTemplates = true
-                } label: {
-                    Label("Apply Template", systemImage: "doc.on.doc")
-                }
 
                 // Commit Page
                 Button {

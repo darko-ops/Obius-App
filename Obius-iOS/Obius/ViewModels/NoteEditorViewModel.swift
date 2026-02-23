@@ -18,6 +18,8 @@ final class NoteEditorViewModel: ObservableObject {
     @Published var isLoading: Bool = true
     @Published var focusedSectionId: String?
     @Published var copiedSections: [Section] = []
+    @Published var suggestedEntities: [ExtractedEntity] = []
+    private var entityExtractionTask: Task<Void, Never>?
 
     // Computed hierarchical structure
     var sectionTree: [SectionNode] {
@@ -195,11 +197,13 @@ final class NoteEditorViewModel: ObservableObject {
     func updateBody(_ body: String, richText: String? = nil) async throws {
         try await noteRepository.updateNoteBody(noteId, body: body, richText: richText)
         syncHashtags()
+        triggerEntityExtraction()
     }
 
     func updateInterstitialContent(afterSectionId: String?, content: String, richText: String? = nil) async throws {
         try await noteRepository.updateInterstitialContent(noteId, afterSectionId: afterSectionId, content: content, richText: richText)
         syncHashtags()
+        triggerEntityExtraction()
     }
 
     func getInterstitialContent(afterSectionId: String?) -> String {
@@ -687,93 +691,6 @@ final class NoteEditorViewModel: ObservableObject {
         try await sectionRepository.toggleLock(sectionId)
     }
 
-    /// Apply a template by creating sections from the template
-    /// Template content is bold, undeletable, but user can add text around it
-    func applyTemplate(_ template: SectionTemplate) async throws {
-        // Get the last section to add after
-        let lastSectionId = sections.last?.id
-
-        var previousSectionId = lastSectionId
-        var firstNewSectionId: String?
-
-        for templateSection in template.sections {
-            // Map template item type to section type
-            let sectionType: SectionType = templateSection.itemType == .line ? .line : .fold
-
-            // Create the section with template content in the content field
-            // templatePrefix tracks what portion is protected from deletion
-            let newSection = try await sectionRepository.createSection(
-                noteId: noteId,
-                content: templateSection.content,  // Template text is in content
-                sectionType: sectionType,
-                afterSectionId: previousSectionId,
-                isTemplateContent: true,
-                templatePrefix: templateSection.content  // Tracks protected text
-            )
-
-            if firstNewSectionId == nil {
-                firstNewSectionId = newSection.id
-            }
-
-            // Set intent if not default (only for folds)
-            if sectionType == .fold && templateSection.intent != .idea {
-                try await sectionRepository.setIntent(newSection.id, intent: templateSection.intent)
-            }
-
-            // Set indent level if not 0
-            if templateSection.indentLevel > 0 {
-                try await sectionRepository.setIndentLevel(newSection.id, level: templateSection.indentLevel)
-            }
-
-            previousSectionId = newSection.id
-        }
-
-        // Focus the first new section
-        if let firstId = firstNewSectionId {
-            focusedSectionId = firstId
-        }
-    }
-
-    /// Apply a template before a specific section (template sections appear above, existing content stays below)
-    /// Template content is bold, undeletable, but user can add text around it
-    func applyTemplateToSection(_ template: SectionTemplate, beforeSectionId: String) async throws {
-        // Find the section before the target section to insert after
-        guard let targetIndex = sections.firstIndex(where: { $0.id == beforeSectionId }) else { return }
-
-        // Get the section ID to insert after (the one before our target, or nil if target is first)
-        let afterSectionId = targetIndex > 0 ? sections[targetIndex - 1].id : nil
-
-        var previousSectionId = afterSectionId
-
-        for templateSection in template.sections {
-            // Map template item type to section type
-            let sectionType: SectionType = templateSection.itemType == .line ? .line : .fold
-
-            // Create the section with template content in the content field
-            // templatePrefix tracks what portion is protected from deletion
-            let newSection = try await sectionRepository.createSection(
-                noteId: noteId,
-                content: templateSection.content,  // Template text is in content
-                sectionType: sectionType,
-                afterSectionId: previousSectionId,
-                isTemplateContent: true,
-                templatePrefix: templateSection.content  // Tracks protected text
-            )
-
-            // Set intent if not default (only for folds)
-            if sectionType == .fold && templateSection.intent != .idea {
-                try await sectionRepository.setIntent(newSection.id, intent: templateSection.intent)
-            }
-
-            // Set indent level if not 0
-            if templateSection.indentLevel > 0 {
-                try await sectionRepository.setIndentLevel(newSection.id, level: templateSection.indentLevel)
-            }
-
-            previousSectionId = newSection.id
-        }
-    }
-
     // MARK: - Parent/Child Management (Möbius Navigation)
     
     /// Set the parent section ID (for drag-to-indent)
@@ -949,6 +866,7 @@ final class NoteEditorViewModel: ObservableObject {
             try await sectionRepository.updateContent(sectionId, content: content, richText: richText)
         }
         syncHashtags()
+        triggerEntityExtraction()
     }
 
     /// Detect if content starts with @HandleName and hydrate section with that handle
@@ -962,6 +880,32 @@ final class NoteEditorViewModel: ObservableObject {
         try await linkToExistingHandle(sectionId: sectionId, handleId: handle.id)
 
         return handle
+    }
+
+    // MARK: - Entity Extraction
+
+    func triggerEntityExtraction() {
+        entityExtractionTask?.cancel()
+        entityExtractionTask = Task {
+            try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 second debounce
+            guard !Task.isCancelled else { return }
+            guard sections.count >= 3 else { return }
+
+            let sectionData = sections.prefix(20).map { (id: $0.id, content: $0.content) }
+            let existingHandleNames = Set(HandleManager.shared.handles.map(\.name))
+
+            do {
+                let entities = try await ClaudeService.extractEntities(from: sectionData)
+                let filtered = entities.filter { !existingHandleNames.contains($0.handleName) }
+                await MainActor.run { suggestedEntities = filtered }
+            } catch {
+                print("[EntityExtraction] Failed: \(error)")
+            }
+        }
+    }
+
+    func dismissEntity(_ entity: ExtractedEntity) {
+        suggestedEntities.removeAll { $0.name == entity.name }
     }
 
     /// Create a new section linked to an existing handle

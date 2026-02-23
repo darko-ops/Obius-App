@@ -61,8 +61,6 @@ private struct NoteEditorContent: View {
     @State private var newTagText = ""
     @FocusState private var tagFieldFocused: Bool
     @State private var isReordering = false
-    @State private var showingTemplates = false
-    @State private var templateTargetSectionId: String?
     @State private var showingHandleSheet = false
     @State private var handleSheetSectionId: String?
     @State private var showingCommitConfirmation = false
@@ -230,18 +228,6 @@ private struct NoteEditorContent: View {
             } message: {
                 Text(shareError ?? "")
             }
-            .sheet(isPresented: $showingTemplates) {
-                TemplateListView { template in
-                    Task {
-                        if let sectionId = templateTargetSectionId {
-                            try? await viewModel.applyTemplateToSection(template, beforeSectionId: sectionId)
-                        } else {
-                            try? await viewModel.applyTemplate(template)
-                        }
-                        templateTargetSectionId = nil
-                    }
-                }
-            }
             .sheet(isPresented: $showingHandleSheet) {
                 HandleNameSheet(
                     existingHandles: handleManager.handles,
@@ -331,11 +317,6 @@ private struct NoteEditorContent: View {
                     imagePickerPreselectedAssetIds = []
                 }
             }
-            .onChange(of: showingTemplates) { _, isShowing in
-                if !isShowing {
-                    templateTargetSectionId = nil
-                }
-            }
             .onChange(of: showingHandleSheet) { _, isShowing in
                 if !isShowing {
                     handleSheetSectionId = nil
@@ -363,6 +344,30 @@ private struct NoteEditorContent: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     headerContent(currentParent: currentParent, nonEmptySectionsEmpty: nonEmptySections.isEmpty)
+
+                    if möbiusNavigation.isAtRoot && !viewModel.suggestedEntities.isEmpty {
+                        EntitySuggestionBanner(
+                            entities: viewModel.suggestedEntities,
+                            onPromote: { entity in
+                                Task {
+                                    guard let sectionId = entity.sectionId ?? viewModel.sections.first?.id else { return }
+                                    do {
+                                        _ = try await viewModel.promoteToHandle(sectionId: sectionId, handleName: entity.handleName)
+                                        viewModel.dismissEntity(entity)
+                                    } catch {
+                                        print("[EntityBanner] Promote failed: \(error)")
+                                    }
+                                }
+                            },
+                            onDismiss: { entity in
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    viewModel.dismissEntity(entity)
+                                }
+                            }
+                        )
+                        .padding(.horizontal)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
 
                     sectionListView(nonEmptySections: nonEmptySections, visibleSections: visibleSections)
                         .padding(.horizontal)
@@ -486,10 +491,7 @@ private struct NoteEditorContent: View {
             onDrillIn: { id in
                 withAnimation(.möbiusUnfold) { möbiusNavigation.drillInto(id) }
             },
-            onApplyTemplate: { id in
-                templateTargetSectionId = id
-                showingTemplates = true
-            },
+            onApplyTemplate: { _ in },
             onCreateLoop: { id in
                 handleSheetSectionId = id
                 showingHandleSheet = true
@@ -629,17 +631,7 @@ private struct NoteEditorContent: View {
             }
         }
 
-        templatesButton
         mainMenu
-    }
-
-    @ViewBuilder
-    private var templatesButton: some View {
-        Button {
-            showingTemplates = true
-        } label: {
-            Image(systemName: "doc.on.doc")
-        }
     }
 
     @ViewBuilder

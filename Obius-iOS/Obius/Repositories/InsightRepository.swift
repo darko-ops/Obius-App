@@ -134,19 +134,79 @@ final class InsightRepository: ObservableObject {
 
     // MARK: - Garbage Collection
 
-    /// Removes surfaced insights whose source note no longer exists.
+    /// Removes or dismisses insights whose references no longer exist.
     func removeOrphanedInsights(validNoteIds: Set<String>) async throws {
+        let activeEchoHandleIds = Set(EchoManager.shared.activeEchoes.map(\.handleId))
+
         try await database.write { db in
-            let surfaced = try Insight
-                .filter(Insight.Columns.status == InsightStatus.surfaced.rawValue)
-                .filter(Insight.Columns.sourceNoteId != nil)
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+
+            let active = try Insight
+                .filter(Insight.Columns.status != InsightStatus.dismissed.rawValue)
                 .fetchAll(db)
 
-            for insight in surfaced {
-                if let noteId = insight.sourceNoteId, !validNoteIds.contains(noteId) {
-                    try Insight.deleteOne(db, key: insight.id)
+            for var insight in active {
+                // Upcoming echo insights: purge surfaced ones (detector recreates valid ones each scan).
+                // For tracked ones, dismiss if the echo's handle no longer has an active echo.
+                if insight.insightType == .upcomingEcho {
+                    if insight.status == .surfaced {
+                        try Insight.deleteOne(db, key: insight.id)
+                    } else if let sectionId = insight.sourceSectionId {
+                        // Look up the handle for this section to check if its echo still exists
+                        let handleStillActive = try Section.fetchOne(db, key: sectionId)
+                            .flatMap { $0.handleId }
+                            .map { activeEchoHandleIds.contains($0) } ?? false
+                        if !handleStillActive {
+                            insight.status = .dismissed
+                            insight.updatedAt = now
+                            try insight.update(db)
+                        }
+                    }
+                    continue
+                }
+
+                guard insight.sourceNoteId != nil else { continue }
+                let sourceOrphaned = insight.sourceNoteId.map { !validNoteIds.contains($0) } ?? false
+
+                // Clean relatedNoteId references
+                var relatedCleaned = false
+                if let related = insight.relatedNoteId {
+                    let ids = related.split(separator: ",").map(String.init)
+                    let cleaned = ids.filter { validNoteIds.contains($0) }
+                    let newValue = cleaned.isEmpty ? nil : cleaned.joined(separator: ",")
+                    if newValue != related {
+                        insight.relatedNoteId = newValue
+                        relatedCleaned = true
+                    }
+                }
+
+                if sourceOrphaned {
+                    if insight.status == .surfaced {
+                        try Insight.deleteOne(db, key: insight.id)
+                    } else {
+                        insight.status = .dismissed
+                        insight.updatedAt = now
+                        try insight.update(db)
+                    }
+                } else if relatedCleaned {
+                    insight.updatedAt = now
+                    try insight.update(db)
                 }
             }
+        }
+    }
+
+    // MARK: - Echo Cleanup
+
+    /// Dismiss all upcomingEcho insights (used when an echo is deleted).
+    func dismissEchoInsights() async throws {
+        try await database.write { db in
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            try db.execute(sql: """
+                UPDATE insights
+                SET status = 'dismissed', updatedAt = ?
+                WHERE insightType = 'upcomingEcho' AND status != 'dismissed'
+            """, arguments: [now])
         }
     }
 

@@ -10,102 +10,88 @@ struct InsightCardView: View {
     var onDeleteNote: (() -> Void)? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Top row: type badge + timestamp
-            HStack {
-                // Type badge
-                HStack(spacing: 4) {
-                    Image(systemName: insight.insightType.icon)
+        HStack(alignment: .top, spacing: 0) {
+            // Left: content
+            VStack(alignment: .leading, spacing: 10) {
+                // Top row: type badge + timestamp
+                HStack {
+                    HStack(spacing: 4) {
+                        Image(systemName: insight.displayIcon)
+                            .font(.caption2)
+                        Text(insight.displayLabel)
+                            .font(.caption2.weight(.medium))
+                    }
+                    .foregroundStyle(insight.displayTint.color)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(insight.displayTint.color.opacity(0.15))
+                    .clipShape(Capsule())
+
+                    Spacer()
+
+                    Text(relativeTimestamp)
                         .font(.caption2)
-                    Text(insight.insightType.label)
-                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.tertiary)
                 }
-                .foregroundStyle(insight.insightType.tint.color)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(insight.insightType.tint.color.opacity(0.15))
-                .clipShape(Capsule())
 
-                Spacer()
+                // Title
+                Text(insight.title)
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(2)
 
-                Text(relativeTimestamp)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                // Body
+                if !insight.body.isEmpty {
+                    Text(insight.body)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
             }
 
-            // Title
-            Text(insight.title)
-                .font(.subheadline.weight(.medium))
-                .lineLimit(2)
-
-            // Body
-            if !insight.body.isEmpty {
-                Text(insight.body)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-            }
-
-            // Action row
-            HStack(spacing: 10) {
+            // Right: action buttons
+            VStack(spacing: 6) {
                 Button {
                     onTrack()
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "star")
-                            .font(.caption2)
-                        Text("Track")
-                            .font(.caption.weight(.medium))
-                    }
-                    .foregroundStyle(insight.insightType.tint.color)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(insight.insightType.tint.color.opacity(0.12))
-                    .clipShape(Capsule())
+                    Image(systemName: "star")
+                        .font(.caption)
+                        .foregroundStyle(insight.displayTint.color)
+                        .frame(width: 32, height: 32)
+                        .background(insight.displayTint.color.opacity(0.12))
+                        .clipShape(Circle())
                 }
 
                 Button {
                     onDismiss()
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "xmark")
-                            .font(.caption2)
-                        Text("Dismiss")
-                            .font(.caption.weight(.medium))
-                    }
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.gray.opacity(0.1))
-                    .clipShape(Capsule())
+                    Image(systemName: "xmark")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 32, height: 32)
+                        .background(Color.gray.opacity(0.1))
+                        .clipShape(Circle())
                 }
 
                 if insight.insightType == .nonsenseContent, let onDeleteNote {
                     Button {
                         onDeleteNote()
                     } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "trash")
-                                .font(.caption2)
-                            Text("Delete")
-                                .font(.caption.weight(.medium))
-                        }
-                        .foregroundStyle(.red)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.red.opacity(0.1))
-                        .clipShape(Capsule())
+                        Image(systemName: "trash")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .frame(width: 32, height: 32)
+                            .background(Color.red.opacity(0.1))
+                            .clipShape(Circle())
                     }
                 }
-
-                Spacer()
             }
+            .padding(.leading, 10)
         }
         .padding(14)
         .background(Color(UIColor.secondarySystemGroupedBackground))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(insight.insightType.tint.color.opacity(0.2), lineWidth: 1)
+                .stroke(insight.displayTint.color.opacity(0.2), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .contentShape(Rectangle())
@@ -131,12 +117,12 @@ struct TrackedInsightChip: View {
         VStack(alignment: .leading, spacing: 4) {
             // Type badge
             HStack(spacing: 4) {
-                Image(systemName: insight.insightType.icon)
+                Image(systemName: insight.displayIcon)
                     .font(.system(size: 9))
-                Text(insight.insightType.label)
+                Text(insight.displayLabel)
                     .font(.system(size: 10, weight: .medium))
             }
-            .foregroundStyle(insight.insightType.tint.color)
+            .foregroundStyle(insight.displayTint.color)
 
             // Title
             Text(insight.title)
@@ -155,7 +141,7 @@ struct TrackedInsightChip: View {
         .background(Color(UIColor.secondarySystemGroupedBackground))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(insight.insightType.tint.color.opacity(0.25), lineWidth: 1)
+                .stroke(insight.displayTint.color.opacity(0.25), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .contentShape(Rectangle())
@@ -171,32 +157,49 @@ struct UpcomingEchoCard: View {
     let onLongPress: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Image(systemName: "bell.badge")
-                .font(.title3)
-                .foregroundStyle(.orange)
+        VStack(alignment: .leading, spacing: 4) {
+            // Type badge
+            HStack(spacing: 4) {
+                Image(systemName: "bell.badge")
+                    .font(.system(size: 9))
+                Text("Echo")
+                    .font(.system(size: 10, weight: .medium))
+            }
+            .foregroundStyle(.orange)
 
+            // Title
             Text(insight.title.replacingOccurrences(of: "Echo: ", with: ""))
                 .font(.caption.weight(.medium))
-                .lineLimit(1)
+                .lineLimit(2)
 
-            Text(insight.body)
+            // Body preview
+            Text(insight.body.isEmpty ? " " : insight.body)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
+                .lineLimit(3)
+                .truncationMode(.tail)
         }
-        .frame(width: 120, height: 80, alignment: .topLeading)
-        .padding(10)
+        .frame(width: 130, height: 50, alignment: .topLeading)
+        .padding(5)
         .background(Color(UIColor.secondarySystemGroupedBackground))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                .stroke(Color.orange.opacity(0.25), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .contentShape(Rectangle())
         .onTapGesture { onTap() }
         .onLongPressGesture { onLongPress() }
     }
+}
+
+// MARK: - Insight Reference
+
+struct InsightReference: Identifiable {
+    var id: String { noteId + (sectionId ?? "") }
+    let noteId: String
+    let title: String
+    let sectionId: String?
 }
 
 // MARK: - Insight Detail Sheet
@@ -207,9 +210,17 @@ struct InsightDetailSheet: View {
     let onDismiss: (() -> Void)?
     let onUntrack: (() -> Void)?
     var onDeleteNote: (() -> Void)? = nil
-    var onGoToNote: (() -> Void)? = nil
+    var references: [InsightReference] = []
+    var onNavigate: ((InsightReference) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
+    @State private var showCreateEcho = false
+    @State private var echoCreated = false
+
+    private var isEchoSuggestion: Bool {
+        insight.insightType == .suggestedEcho ||
+        (insight.insightType == .aiSuggestion && insight.sourceSectionId == "echo_suggestion")
+    }
 
     var body: some View {
         NavigationStack {
@@ -217,15 +228,15 @@ struct InsightDetailSheet: View {
                 VStack(alignment: .leading, spacing: 16) {
                     // Type badge
                     HStack(spacing: 6) {
-                        Image(systemName: insight.insightType.icon)
+                        Image(systemName: insight.displayIcon)
                             .font(.subheadline)
-                        Text(insight.insightType.label)
+                        Text(insight.displayLabel)
                             .font(.subheadline.weight(.medium))
                     }
-                    .foregroundStyle(insight.insightType.tint.color)
+                    .foregroundStyle(insight.displayTint.color)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
-                    .background(insight.insightType.tint.color.opacity(0.15))
+                    .background(insight.displayTint.color.opacity(0.15))
                     .clipShape(Capsule())
 
                     // Title
@@ -244,21 +255,53 @@ struct InsightDetailSheet: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
 
-                    // Go to note
-                    if let onGoToNote, insight.sourceNoteId != nil {
+                    // References
+                    if !references.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("REFERENCED")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+
+                            ForEach(references) { ref in
+                                Button {
+                                    onNavigate?(ref)
+                                    dismiss()
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "doc.text")
+                                            .font(.subheadline)
+                                            .foregroundStyle(.secondary)
+                                        Text(ref.title)
+                                            .font(.subheadline.weight(.medium))
+                                            .foregroundStyle(.primary)
+                                        Spacer()
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                    .padding(.vertical, 10)
+                                    .padding(.horizontal, 12)
+                                    .background(Color(UIColor.tertiarySystemGroupedBackground))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                }
+                            }
+                        }
+                    }
+
+                    // Create Echo button for echo suggestions
+                    if isEchoSuggestion {
                         Button {
-                            dismiss()
-                            onGoToNote()
+                            showCreateEcho = true
                         } label: {
                             HStack(spacing: 6) {
-                                Image(systemName: "arrow.right.circle")
-                                Text("Go to Note")
+                                Image(systemName: "bell.badge")
+                                Text("Create Echo")
                             }
                             .font(.subheadline.weight(.medium))
-                            .foregroundStyle(Color.accentColor)
+                            .foregroundStyle(.orange)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
-                            .background(Color.accentColor.opacity(0.1))
+                            .background(Color.orange.opacity(0.12))
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                         }
                     }
@@ -277,10 +320,10 @@ struct InsightDetailSheet: View {
                                     Text("Track")
                                 }
                                 .font(.subheadline.weight(.medium))
-                                .foregroundStyle(insight.insightType.tint.color)
+                                .foregroundStyle(insight.displayTint.color)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 10)
-                                .background(insight.insightType.tint.color.opacity(0.12))
+                                .background(insight.displayTint.color.opacity(0.12))
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
                             }
 
@@ -301,20 +344,38 @@ struct InsightDetailSheet: View {
                             }
                         }
                     } else if insight.status == .tracked {
-                        Button {
-                            onUntrack?()
-                            dismiss()
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "star.slash")
-                                Text("Untrack")
+                        HStack(spacing: 12) {
+                            Button {
+                                onUntrack?()
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "star.slash")
+                                    Text("Untrack")
+                                }
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.orange)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                                .background(Color.orange.opacity(0.1))
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
                             }
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.orange)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(Color.orange.opacity(0.1))
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                            Button {
+                                onDismiss?()
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "xmark")
+                                    Text("Dismiss")
+                                }
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                                .background(Color.gray.opacity(0.1))
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                            }
                         }
                     }
 
@@ -348,6 +409,17 @@ struct InsightDetailSheet: View {
             }
         }
         .presentationDetents([.medium])
+        .sheet(isPresented: $showCreateEcho) {
+            CreateEchoFromInsightSheet(insight: insight) {
+                echoCreated = true
+            }
+        }
+        .onChange(of: showCreateEcho) { _, isPresented in
+            if !isPresented && echoCreated {
+                onTrack?()
+                dismiss()
+            }
+        }
     }
 
     private var formattedDate: String {
@@ -356,6 +428,255 @@ struct InsightDetailSheet: View {
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return formatter.string(from: date)
+    }
+}
+
+// MARK: - Create Echo From Insight
+
+struct CreateEchoFromInsightSheet: View {
+    let insight: Insight
+    let onCreated: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var useExistingHandle: Bool
+    @State private var selectedHandleId: String?
+    @State private var newHandleName: String
+    @State private var startDate: Date
+    @State private var isRecurring: Bool
+    @State private var intervals: [EchoInterval]
+    @State private var isCreating = false
+
+    private var handles: [Handle] {
+        HandleManager.shared.handles
+    }
+
+    private var trimmedHandleName: String {
+        newHandleName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canCreate: Bool {
+        if useExistingHandle {
+            return selectedHandleId != nil
+        } else {
+            return trimmedHandleName.count >= 2
+        }
+    }
+
+    init(insight: Insight, onCreated: @escaping () -> Void) {
+        self.insight = insight
+        self.onCreated = onCreated
+
+        let allHandles = HandleManager.shared.handles
+
+        // Defaults
+        var initUseExisting = !allHandles.isEmpty
+        var initHandleId: String?
+        var initHandleName = ""
+        var initDate = Date().addingTimeInterval(3600)
+        var initRecurring = false
+        var initIntervals = [EchoInterval(value: 1, unit: .days)]
+
+        // Pre-fill from AI suggestion config stored in relatedNoteId
+        if insight.insightType == .suggestedEcho,
+           let json = insight.relatedNoteId,
+           let data = json.data(using: .utf8) {
+            do {
+                let s = try JSONDecoder().decode(ClaudeService.TemporalEchoSuggestion.self, from: data)
+                print("[EchoFromInsight] Decoded suggestion — handle: \(s.handleName), date: \(s.fireDateISO), recurring: \(s.isRecurring)")
+
+                // Handle
+                let existsInHandles = s.handleId != "new" && s.handleId != "none"
+                    && allHandles.contains(where: { $0.id == s.handleId })
+                if existsInHandles {
+                    initUseExisting = true
+                    initHandleId = s.handleId
+                } else {
+                    initUseExisting = false
+                    initHandleName = s.handleName
+                }
+
+                // Fire date
+                if let date = Self.parseISO8601(s.fireDateISO) {
+                    initDate = max(date, Date().addingTimeInterval(60))
+                    print("[EchoFromInsight] Parsed date: \(initDate)")
+                } else {
+                    print("[EchoFromInsight] Failed to parse date: \(s.fireDateISO)")
+                }
+
+                // Recurrence
+                initRecurring = s.isRecurring
+                if s.isRecurring, let unit = EchoIntervalUnit(rawValue: s.intervalUnit) {
+                    initIntervals = [EchoInterval(value: max(1, s.intervalValue), unit: unit)]
+                }
+            } catch {
+                print("[EchoFromInsight] JSON decode failed: \(error)\nRaw: \(json)")
+            }
+        }
+
+        _useExistingHandle = State(initialValue: initUseExisting)
+        _selectedHandleId = State(initialValue: initHandleId)
+        _newHandleName = State(initialValue: initHandleName)
+        _startDate = State(initialValue: initDate)
+        _isRecurring = State(initialValue: initRecurring)
+        _intervals = State(initialValue: initIntervals)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                // Context from the AI suggestion
+                SwiftUI.Section {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(insight.title)
+                            .font(.subheadline.weight(.medium))
+                        if !insight.body.isEmpty {
+                            Text(insight.body)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                // Handle
+                SwiftUI.Section("Handle") {
+                    if !handles.isEmpty {
+                        Picker("", selection: $useExistingHandle) {
+                            Text("Existing").tag(true)
+                            Text("New").tag(false)
+                        }
+                        .pickerStyle(.segmented)
+                        .listRowSeparator(.hidden)
+                    }
+
+                    if useExistingHandle && !handles.isEmpty {
+                        Picker("Handle", selection: $selectedHandleId) {
+                            Text("Select a handle...").tag(nil as String?)
+                            ForEach(handles) { handle in
+                                Text("@\(handle.displayName)").tag(handle.id as String?)
+                            }
+                        }
+                    } else {
+                        TextField("Handle name", text: $newHandleName)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                        if !trimmedHandleName.isEmpty && trimmedHandleName.count < 2 {
+                            Text("Name must be at least 2 characters")
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                        }
+                    }
+                }
+
+                // Schedule
+                SwiftUI.Section("Schedule") {
+                    DatePicker(
+                        "Fire Date",
+                        selection: $startDate,
+                        in: Date()...,
+                        displayedComponents: [.date, .hourAndMinute]
+                    )
+
+                    Toggle("Recurring", isOn: $isRecurring)
+
+                    if isRecurring {
+                        ForEach($intervals) { $interval in
+                            HStack {
+                                Text("Every")
+                                    .font(.subheadline)
+                                Stepper(value: $interval.value, in: 1...999) {
+                                    Text("\(interval.value)")
+                                        .font(.title3.monospacedDigit().weight(.semibold))
+                                        .frame(minWidth: 32)
+                                }
+                                Picker("Unit", selection: $interval.unit) {
+                                    ForEach(EchoIntervalUnit.allCases, id: \.self) { unit in
+                                        Text(interval.value == 1 ? unit.singularName : unit.displayName)
+                                            .tag(unit)
+                                    }
+                                }
+                                .labelsHidden()
+                            }
+                        }
+
+                        if intervals.count < 5 {
+                            Button {
+                                withAnimation {
+                                    intervals.append(EchoInterval(value: 1, unit: .hours))
+                                }
+                            } label: {
+                                Label("Add Cadence", systemImage: "plus.circle.fill")
+                                    .font(.subheadline.weight(.medium))
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Create Echo")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create") { createEcho() }
+                        .fontWeight(.semibold)
+                        .disabled(!canCreate || isCreating)
+                }
+            }
+        }
+        .presentationDetents([.large])
+    }
+
+    private static func parseISO8601(_ string: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+
+        // With fractional seconds
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: string) { return date }
+
+        // Standard
+        formatter.formatOptions = [.withInternetDateTime]
+        if let date = formatter.date(from: string) { return date }
+
+        // Date-only (e.g. "2026-02-26")
+        formatter.formatOptions = [.withFullDate]
+        if let date = formatter.date(from: string) { return date }
+
+        // Fallback for loose formats the AI might return
+        let fallback = DateFormatter()
+        fallback.locale = Locale(identifier: "en_US_POSIX")
+        fallback.timeZone = TimeZone.current
+        for fmt in ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd HH:mm"] {
+            fallback.dateFormat = fmt
+            if let date = fallback.date(from: string) { return date }
+        }
+
+        return nil
+    }
+
+    private func createEcho() {
+        isCreating = true
+        Task {
+            do {
+                let handleId: String
+                if useExistingHandle, let existing = selectedHandleId {
+                    handleId = existing
+                } else {
+                    let handle = try await HandleManager.shared.createHandle(name: trimmedHandleName)
+                    handleId = handle.id
+                }
+                _ = try await EchoManager.shared.createEcho(
+                    handleId: handleId,
+                    isRecurring: isRecurring,
+                    intervals: isRecurring ? intervals : [],
+                    fireDate: startDate
+                )
+                onCreated()
+                dismiss()
+            } catch {
+                isCreating = false
+            }
+        }
     }
 }
 

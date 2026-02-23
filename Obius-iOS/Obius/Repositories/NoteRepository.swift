@@ -204,18 +204,63 @@ final class NoteRepository: ObservableObject {
                 WHERE noteId = ?
             """, arguments: [Int64(Date().timeIntervalSince1970 * 1000), noteId])
 
-            // Dismiss any insights linked to this note
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+
+            // Dismiss any insights whose primary source is this note
             try db.execute(sql: """
                 UPDATE insights
                 SET status = 'dismissed', updatedAt = ?
                 WHERE sourceNoteId = ? AND status != 'dismissed'
-            """, arguments: [Int64(Date().timeIntervalSince1970 * 1000), noteId])
+            """, arguments: [now, noteId])
+
+            // Clean this note ID from relatedNoteId references
+            let affected = try Insight
+                .filter(Insight.Columns.relatedNoteId != nil)
+                .fetchAll(db)
+
+            for var insight in affected {
+                guard let related = insight.relatedNoteId else { continue }
+                let ids = related.split(separator: ",").map(String.init)
+                let cleaned = ids.filter { $0 != noteId }
+                let newValue = cleaned.isEmpty ? nil : cleaned.joined(separator: ",")
+                if newValue != related {
+                    insight.relatedNoteId = newValue
+                    insight.updatedAt = now
+                    try insight.update(db)
+                }
+            }
         }
     }
 
     func permanentlyDelete(_ noteId: String) async throws {
         try await database.write { db in
             try Note.deleteOne(db, key: noteId)
+
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+
+            // Dismiss insights whose primary source is this note
+            try db.execute(sql: """
+                UPDATE insights
+                SET status = 'dismissed', updatedAt = ?
+                WHERE sourceNoteId = ? AND status != 'dismissed'
+            """, arguments: [now, noteId])
+
+            // Clean this note ID from relatedNoteId references
+            let affected = try Insight
+                .filter(Insight.Columns.relatedNoteId != nil)
+                .fetchAll(db)
+
+            for var insight in affected {
+                guard let related = insight.relatedNoteId else { continue }
+                let ids = related.split(separator: ",").map(String.init)
+                let cleaned = ids.filter { $0 != noteId }
+                let newValue = cleaned.isEmpty ? nil : cleaned.joined(separator: ",")
+                if newValue != related {
+                    insight.relatedNoteId = newValue
+                    insight.updatedAt = now
+                    try insight.update(db)
+                }
+            }
         }
     }
 
