@@ -87,13 +87,7 @@ struct InsightCardView: View {
             }
             .padding(.leading, 10)
         }
-        .padding(14)
-        .background(Color(UIColor.secondarySystemGroupedBackground))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(insight.displayTint.color.opacity(0.2), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .padding(.vertical, 10)
         .contentShape(Rectangle())
         .onTapGesture { onTap() }
     }
@@ -138,7 +132,7 @@ struct TrackedInsightChip: View {
         }
         .frame(width: 130, height: 100, alignment: .topLeading)
         .padding(10)
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(Color(UIColor.secondarySystemBackground))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(insight.displayTint.color.opacity(0.25), lineWidth: 1)
@@ -181,7 +175,7 @@ struct UpcomingEchoCard: View {
         }
         .frame(width: 130, height: 50, alignment: .topLeading)
         .padding(5)
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(Color(UIColor.secondarySystemBackground))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(Color.orange.opacity(0.25), lineWidth: 1)

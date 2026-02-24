@@ -43,14 +43,30 @@ struct LibraryView: View {
                 RoundedSearchBar(text: $searchQuery, placeholder: "Search \(selectedSection.rawValue.lowercased())")
                     .padding(.horizontal)
 
-                // Section picker
-                Picker("Section", selection: $selectedSection) {
+                // Section filter
+                HStack(spacing: 20) {
+                    Spacer()
                     ForEach(LibrarySection.allCases, id: \.self) { section in
-                        Label(section.rawValue, systemImage: section.icon)
-                            .tag(section)
+                        let isSelected = selectedSection == section
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                selectedSection = section
+                            }
+                        } label: {
+                            VStack(spacing: 6) {
+                                Text(section.rawValue)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(isSelected ? .primary : .secondary)
+
+                                // Underline
+                                Rectangle()
+                                    .fill(isSelected ? Color.primary : .clear)
+                                    .frame(height: 2)
+                            }
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
-                .pickerStyle(.segmented)
                 .padding(.horizontal)
 
                 // Content
@@ -323,8 +339,8 @@ struct LoopsListView: View {
             ForEach(filteredHandles) { handle in
                 LoopRowView(handle: handle)
                     .padding(.horizontal)
-                    .padding(.vertical, 12)
-                    .background(Color(.secondarySystemBackground))
+                    .padding(.vertical, 6)
+                    .background(Color(.systemBackground))
                     .cornerRadius(12)
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -341,15 +357,35 @@ struct LoopsListView: View {
 struct LoopRowView: View {
     let handle: Handle
 
-    private static let handleColor = Color(red: 0.72, green: 0.32, blue: 0.82)
+    private var relativeTime: String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        let date = Date(timeIntervalSince1970: Double(handle.updatedAt) / 1000)
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(handle.formattedName)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Self.handleColor)
+        HStack(spacing: 0) {
+            // Spine: 4px wide, intent-colored
+            RoundedRectangle(cornerRadius: 2)
+                .fill(handle.intent.color)
+                .frame(width: 4)
 
+            VStack(alignment: .leading, spacing: 3) {
+                // Row 1: Name + time
+                HStack(spacing: 6) {
+                    Text(handle.formattedName)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    Text(relativeTime)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                // Row 2: Content preview
                 if !handle.preview.isEmpty {
                     Text(handle.preview)
                         .font(.caption)
@@ -357,14 +393,9 @@ struct LoopRowView: View {
                         .lineLimit(1)
                 }
             }
-
-            Spacer()
-
-            Image(systemName: "chevron.right")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+            .padding(.leading, 10)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
     }
 }
 
@@ -674,8 +705,8 @@ struct CommitsListView: View {
                 case .node(let node):
                     NodeCommitRowView(node: node)
                         .padding(.horizontal)
-                        .padding(.vertical, 12)
-                        .background(Color(.secondarySystemBackground))
+                        .padding(.vertical, 6)
+                        .background(Color(.systemBackground))
                         .cornerRadius(12)
                         .contentShape(Rectangle())
                         .onTapGesture {
@@ -690,10 +721,9 @@ struct CommitsListView: View {
                         }
                 case .page(let commit, let noteName):
                     CommitRowView(commit: commit, noteName: noteName, viewCount: commitViewCounts[commit.hash] ?? 0)
-                        .padding(.leading, commit.isAutoCommit ? 0 : 16)
-                        .padding(.trailing, 16)
-                        .padding(.vertical, commit.isAutoCommit ? 10 : 12)
-                        .background(Color(.secondarySystemBackground))
+                        .padding(.horizontal)
+                        .padding(.vertical, 6)
+                        .background(Color(.systemBackground))
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                         .contentShape(Rectangle())
                         .onTapGesture {
@@ -847,48 +877,55 @@ struct NodeCommitDisplay: Identifiable {
 struct NodeCommitRowView: View {
     let node: NodeCommitDisplay
 
-    private var formattedDate: String {
+    private var relativeTime: String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
         let date = Date(timeIntervalSince1970: Double(node.content.createdAt) / 1000)
-        let formatter = DateFormatter()
-        formatter.dateFormat = "M.dd.yyyy"
-        return formatter.string(from: date)
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            // Node indicator
-            Circle()
+        HStack(spacing: 0) {
+            // Spine: 4px wide, blue for node commits
+            RoundedRectangle(cornerRadius: 2)
                 .fill(Color.blue)
-                .frame(width: 8, height: 8)
+                .frame(width: 4)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(node.name)
-                    .font(.headline)
-                    .lineLimit(1)
+            VStack(alignment: .leading, spacing: 3) {
+                // Row 1: Name + short ID pill + time
+                HStack(spacing: 6) {
+                    Text(node.name)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
 
-                if let shortId = node.content.shortId {
-                    Text("#\(shortId)")
-                        .font(.caption2.monospaced())
+                    Spacer()
+
+                    if let shortId = node.content.shortId {
+                        Text("#\(shortId)")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.blue)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.blue.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
+
+                    Text(relativeTime)
+                        .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
-            }
 
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 4) {
+                // Row 2: Source note title
                 if let sourceTitle = node.content.sourceNoteTitle {
                     Text("from \(sourceTitle)")
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-
-                Text(formattedDate)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
+            .padding(.leading, 10)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
     }
 }
 
@@ -1170,102 +1207,75 @@ struct CommitRowView: View {
     let noteName: String
     var viewCount: Int = 0
 
-    private var formattedDate: String {
+    private var relativeTime: String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
         let date = Date(timeIntervalSince1970: Double(commit.createdAt) / 1000)
-        let formatter = DateFormatter()
-        formatter.dateFormat = "M.dd.yyyy"
-        return formatter.string(from: date)
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 
-    private var shortHash: String {
-        let hash = commit.hash.replacingOccurrences(of: "sha256:", with: "")
-        return String(hash.prefix(8))
+    /// Spine color: accent for manual, orange for auto
+    private var spineColor: Color {
+        commit.isAutoCommit ? .orange : .accentColor
     }
 
     var body: some View {
-        if commit.isAutoCommit {
-            autoCommitRow
-        } else {
-            manualCommitRow
-        }
-    }
-
-    private var manualCommitRow: some View {
-        HStack(spacing: 12) {
-            Circle()
-                .fill(Color.accentColor)
-                .frame(width: 8, height: 8)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(commit.name ?? noteName)
-                    .font(.headline)
-                    .lineLimit(1)
-
-                Text("#\(commit.shortId)")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.tertiary)
-            }
-
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 4) {
-                if commit.name != nil {
-                    Text("from \(noteName)")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-
-                Text(formattedDate)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                if viewCount > 0 {
-                    Label("\(viewCount)", systemImage: "eye")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    private var autoCommitRow: some View {
         HStack(spacing: 0) {
-            // Gradient lip with sideways "Auto" label
-            ZStack {
-                LinearGradient(
-                    colors: [Color.orange.opacity(0.2), Color.orange.opacity(0)],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-
+            // Auto label sits to the left of the spine
+            if commit.isAutoCommit {
                 Text("Auto")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.orange)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.orange.opacity(0.12))
+                    .clipShape(Capsule())
             }
-            .frame(width: 40)
-            .padding(.vertical, -10)
 
-            HStack {
-                Text(commit.name ?? noteName)
-                    .font(.subheadline)
-                    .lineLimit(1)
+            // Spine: 4px wide
+            RoundedRectangle(cornerRadius: 2)
+                .fill(spineColor)
+                .frame(width: 4)
 
-                Spacer()
+            VStack(alignment: .leading, spacing: 3) {
+                // Row 1: Name + pills + time
+                HStack(spacing: 6) {
+                    Text(commit.name ?? noteName)
+                        .font(.subheadline.weight(commit.isAutoCommit ? .regular : .semibold))
+                        .lineLimit(1)
 
-                if viewCount > 0 {
-                    Label("\(viewCount)", systemImage: "eye")
+                    Spacer()
+
+                    Text("#\(commit.shortId)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(spineColor)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(spineColor.opacity(0.12))
+                        .clipShape(Capsule())
+
+                    if viewCount > 0 {
+                        Label("\(viewCount)", systemImage: "eye")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text(relativeTime)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.tertiary)
                 }
 
-                Text(formattedDate)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                // Row 2: Source note (if named commit)
+                if commit.name != nil {
+                    Text("from \(noteName)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
-            .padding(.leading, 6)
+            .padding(.leading, 10)
         }
+        .padding(.vertical, 6)
     }
 }
 

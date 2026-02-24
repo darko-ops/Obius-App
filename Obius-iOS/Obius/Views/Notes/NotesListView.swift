@@ -427,7 +427,7 @@ private struct NotesListContent: View {
             NoteRowView(note: note, sectionContent: sectionPreviews[note.id], autoTitle: autoTitles[note.id])
         }
         .contentShape(Rectangle())
-        .listRowBackground(Color(.secondarySystemBackground))
+        .listRowBackground(Color(.systemBackground))
         .onTapGesture {
             if isSelectionMode {
                 withAnimation(.easeInOut(duration: 0.15)) {

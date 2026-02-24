@@ -418,7 +418,7 @@ struct IntelligenceView: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
-        .background(.bar)
+        .background(Color(UIColor.secondarySystemBackground))
     }
 
     // MARK: - Actions

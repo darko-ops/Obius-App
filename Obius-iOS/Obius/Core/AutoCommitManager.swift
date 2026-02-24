@@ -27,7 +27,7 @@ class AutoCommitManager {
     }
 
     /// Checks whether a day boundary has been crossed since the last check,
-    /// and creates auto-commits for any notes modified before today.
+    /// and creates auto-commits for notes the user edited yesterday.
     func checkAndAutoCommit() async {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
@@ -44,12 +44,15 @@ class AutoCommitManager {
         // 2. Same calendar day — nothing to do
         guard lastCheckDate < today else { return }
 
-        // 3. Day boundary crossed — iterate all non-deleted notes
+        // 3. Day boundary crossed — only auto-commit notes edited between
+        //    the last check and today (i.e. yesterday's edits, not older ones)
+        let lastCheckMs = Int64(lastCheckDate.timeIntervalSince1970 * 1000)
+        let todayMs = Int64(today.timeIntervalSince1970 * 1000)
         let notes = noteRepository.notes
 
         for note in notes {
             do {
-                try await autoCommitIfNeeded(note: note, today: today)
+                try await autoCommitIfNeeded(note: note, editWindowStartMs: lastCheckMs, editWindowEndMs: todayMs)
             } catch {
                 // Log but don't block other notes
                 print("[AutoCommit] Failed for note \(note.id): \(error.localizedDescription)")
@@ -60,12 +63,12 @@ class AutoCommitManager {
         UserDefaults.standard.set(today.timeIntervalSince1970, forKey: Self.lastCheckDateKey)
     }
 
-    private func autoCommitIfNeeded(note: Note, today: Date) async throws {
-        let calendar = Calendar.current
-        let noteUpdatedDate = Date(timeIntervalSince1970: Double(note.updatedAt) / 1000)
+    private func autoCommitIfNeeded(note: Note, editWindowStartMs: Int64, editWindowEndMs: Int64) async throws {
+        // Skip deleted pages
+        if note.isDeleted { return }
 
-        // Skip notes modified today — they'll be committed tomorrow
-        if calendar.isDate(noteUpdatedDate, inSameDayAs: today) {
+        // Only auto-commit notes edited within the window (since last check, before today)
+        guard note.updatedAt >= editWindowStartMs && note.updatedAt < editWindowEndMs else {
             return
         }
 
@@ -88,6 +91,7 @@ class AutoCommitManager {
         }
 
         // Format the commit name: "Page Title · Feb 19"
+        let noteUpdatedDate = Date(timeIntervalSince1970: Double(note.updatedAt) / 1000)
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d"
         let dateLabel = formatter.string(from: noteUpdatedDate)
