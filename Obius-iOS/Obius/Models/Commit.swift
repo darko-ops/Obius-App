@@ -284,49 +284,6 @@ struct CommitHashContent: Codable {
     let mediaRefs: [MediaReference]
 }
 
-// MARK: - NodeCommitContent
-
-/// Content for a node (section) commit stored as a named .obx file.
-/// Unlike full note commits, these are named by the user and store a single section.
-struct NodeCommitContent: Codable {
-    let version: Int
-    let name: String           // User-provided name (filename without .obx)
-    let shortId: String?       // Human reference e.g. #OBX-A1B2-C3D4
-    let hash: String?          // SHA-256 content hash
-    let createdAt: Int64
-    let section: CommitSectionSnapshot
-    let sourceNoteId: String   // The note this node came from
-    let sourceNoteTitle: String?
-
-    init(
-        version: Int = 1,
-        name: String,
-        shortId: String? = Commit.generateShortId(),
-        hash: String? = nil,
-        createdAt: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
-        section: CommitSectionSnapshot,
-        sourceNoteId: String,
-        sourceNoteTitle: String?
-    ) {
-        self.version = version
-        self.name = name
-        self.shortId = shortId
-        self.hash = hash
-        self.createdAt = createdAt
-        self.section = section
-        self.sourceNoteId = sourceNoteId
-        self.sourceNoteTitle = sourceNoteTitle
-    }
-}
-
-// MARK: - CommitType
-
-/// Distinguishes between page commits and node commits
-enum CommitType: String, Codable {
-    case page = "page"   // Full note commit (hash-based naming)
-    case node = "node"   // Single section commit (user-named)
-}
-
 // MARK: - CommitError
 
 enum CommitError: Error, LocalizedError {

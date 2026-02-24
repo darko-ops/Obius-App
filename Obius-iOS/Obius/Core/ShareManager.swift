@@ -283,8 +283,7 @@ final class ShareManager: ObservableObject {
                 userDisplayName: comment.userDisplayName,
                 userEmail: comment.userId == currentUserId ? currentUserEmail : nil,
                 body: comment.body,
-                createdAt: comment.createdAt,
-                sealedCommitHash: comment.sealedCommitHash
+                createdAt: comment.createdAt
             )
         }
 
@@ -409,8 +408,7 @@ final class ShareManager: ObservableObject {
             userDisplayName: displayName,
             userEmail: user.email,
             body: body,
-            createdAt: ISO8601DateFormatter().string(from: Date()),
-            sealedCommitHash: nil
+            createdAt: ISO8601DateFormatter().string(from: Date())
         )
     }
 

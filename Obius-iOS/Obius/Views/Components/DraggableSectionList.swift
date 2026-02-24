@@ -25,7 +25,6 @@ struct DraggableSectionList: View {
     let onApplyTemplate: (String) -> Void  // Apply template to section
     let onCreateLoop: (String) -> Void  // Handle Loop: Create new handle from section
     let onUnlinkHandle: (String) -> Void  // Handle Loop: Unlink section from handle
-    let onCommit: (String) -> Void  // Commit the note containing this container
     let onShare: (String) -> Void  // Share this node
     let onCopy: (String) -> Void  // Copy this node to clipboard
     let onPaste: (String) -> Void  // Paste copied node after this node
@@ -79,7 +78,6 @@ struct DraggableSectionList: View {
                         onApplyTemplate: { onApplyTemplate(section.id) },
                         onCreateLoop: { onCreateLoop(section.id) },
                         onUnlinkHandle: { onUnlinkHandle(section.id) },
-                        onCommit: { onCommit(section.id) },
                         onShare: { onShare(section.id) },
                         onCopy: { onCopy(section.id) },
                         onPaste: { onPaste(section.id) },
@@ -174,7 +172,6 @@ struct DraggableSectionRow: View {
     let onApplyTemplate: () -> Void
     let onCreateLoop: () -> Void  // Handle Loop support
     let onUnlinkHandle: () -> Void  // Handle Loop support
-    let onCommit: () -> Void  // Commit container
     let onShare: () -> Void  // Share node
     let onCopy: () -> Void  // Copy node to clipboard
     let onPaste: () -> Void  // Paste copied node after this node
@@ -208,7 +205,6 @@ struct DraggableSectionRow: View {
                 onApplyTemplate: onApplyTemplate,
                 onCreateLoop: onCreateLoop,
                 onUnlinkHandle: onUnlinkHandle,
-                onCommit: onCommit,
                 onShare: onShare,
                 onCopy: onCopy,
                 onPaste: onPaste,
@@ -833,7 +829,6 @@ enum HapticFeedback {
                     onApplyTemplate: { _ in },
                     onCreateLoop: { _ in },
                     onUnlinkHandle: { _ in },
-                    onCommit: { _ in },
                     onShare: { _ in },
                     onCopy: { _ in },
                     onPaste: { _ in },

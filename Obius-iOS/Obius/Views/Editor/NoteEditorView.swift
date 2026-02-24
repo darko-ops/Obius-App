@@ -65,7 +65,6 @@ private struct NoteEditorContent: View {
     @State private var handleSheetSectionId: String?
     @State private var showingCommitConfirmation = false
     @State private var lastCommitName: String?
-    @State private var nodeCommitSectionId: NodeCommitItem?
     @State private var pageCommitItem: PageCommitItem?
     @State private var shareSectionId: String?
     @State private var shareItems: [Any] = []
@@ -187,16 +186,6 @@ private struct NoteEditorContent: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .animation(.spring(response: 0.3), value: showingCommitConfirmation)
                 }
-            }
-            .sheet(item: $nodeCommitSectionId) { item in
-                NodeCommitSheet(
-                    sectionId: item.sectionId,
-                    onCommit: { name in
-                        Task {
-                            await commitNode(sectionId: item.sectionId, name: name)
-                        }
-                    }
-                )
             }
             .sheet(item: $pageCommitItem) { item in
                 PageCommitSheet(
@@ -499,9 +488,6 @@ private struct NoteEditorContent: View {
             onUnlinkHandle: { id in
                 Task { try? await viewModel.unlinkFromHandle(sectionId: id) }
             },
-            onCommit: { sectionId in
-                nodeCommitSectionId = NodeCommitItem(sectionId: sectionId)
-            },
             onShare: { sectionId in
                 Task {
                     await createShareLink(for: sectionId)
@@ -755,22 +741,6 @@ private struct NoteEditorContent: View {
             return .idea
         }
         return section.intent
-    }
-
-    private func commitNode(sectionId: String, name: String) async {
-        do {
-            _ = try await appState.commitModule.createNodeCommit(sectionId: sectionId, name: name)
-            lastCommitName = name
-            showingCommitConfirmation = true
-            nodeCommitSectionId = nil
-
-            // Auto-hide after 2 seconds
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                showingCommitConfirmation = false
-            }
-        } catch {
-            print("Failed to create node commit: \(error)")
-        }
     }
 
     private func sharePageDirectly() async {
@@ -1796,110 +1766,6 @@ struct BodyTextView: UIViewRepresentable {
     }
 }
 #endif
-
-// MARK: - NodeCommitItem
-
-/// Identifiable wrapper for presenting node commit sheet.
-struct NodeCommitItem: Identifiable {
-    let id = UUID()
-    let sectionId: String
-}
-
-// MARK: - NodeCommitSheet
-
-/// Sheet for naming a node commit before saving.
-struct NodeCommitSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject var appState: AppState
-
-    let sectionId: String
-    let onCommit: (String) -> Void
-
-    @State private var commitName = ""
-    @State private var errorMessage: String?
-    @FocusState private var isNameFocused: Bool
-
-    var body: some View {
-        VStack(spacing: 20) {
-            // Header
-            HStack {
-                Button("Cancel") {
-                    dismiss()
-                }
-                .foregroundStyle(.secondary)
-
-                Spacer()
-
-                Text("Commit Node")
-                    .font(.headline)
-
-                Spacer()
-
-                Button("Save") {
-                    saveCommit()
-                }
-                .fontWeight(.semibold)
-                .disabled(commitName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            .padding(.horizontal)
-            .padding(.top, 16)
-
-            // Name input
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Node Name")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-
-                HStack {
-                    TextField("Enter name", text: $commitName)
-                        .textFieldStyle(.roundedBorder)
-                        .focused($isNameFocused)
-                        .autocorrectionDisabled()
-                        #if os(iOS)
-                        .textInputAutocapitalization(.never)
-                        #endif
-                        .onSubmit {
-                            saveCommit()
-                        }
-
-                    Text(".obx")
-                        .foregroundStyle(.secondary)
-                }
-
-                if let error = errorMessage {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-            }
-            .padding(.horizontal)
-
-            Spacer()
-        }
-        .presentationDetents([.height(180)])
-        .onAppear {
-            isNameFocused = true
-        }
-    }
-
-    private func saveCommit() {
-        let trimmedName = commitName.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !trimmedName.isEmpty else {
-            errorMessage = "Please enter a name"
-            return
-        }
-
-        // Check if name is available
-        if !appState.commitModule.isNodeNameAvailable(trimmedName) {
-            errorMessage = "A node with this name already exists"
-            return
-        }
-
-        onCommit(trimmedName)
-        dismiss()
-    }
-}
 
 // MARK: - PageCommitItem
 

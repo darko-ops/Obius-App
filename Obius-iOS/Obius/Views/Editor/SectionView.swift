@@ -60,9 +60,6 @@ struct SectionView: View {
     let onCreateLoop: () -> Void  // Create a new handle from this section
     let onUnlinkHandle: () -> Void  // Unlink this section from its handle
 
-    // Commit callback
-    let onCommit: () -> Void  // Commit this node
-
     // Share callback
     let onShare: () -> Void  // Share this node
 
@@ -105,7 +102,6 @@ struct SectionView: View {
         onApplyTemplate: @escaping () -> Void = {},
         onCreateLoop: @escaping () -> Void = {},
         onUnlinkHandle: @escaping () -> Void = {},
-        onCommit: @escaping () -> Void = {},
         onShare: @escaping () -> Void = {},
         onCopy: @escaping () -> Void = {},
         onPaste: @escaping () -> Void = {},
@@ -133,7 +129,6 @@ struct SectionView: View {
         self.onApplyTemplate = onApplyTemplate
         self.onCreateLoop = onCreateLoop
         self.onUnlinkHandle = onUnlinkHandle
-        self.onCommit = onCommit
         self.onShare = onShare
         self.onCopy = onCopy
         self.onPaste = onPaste
@@ -825,15 +820,7 @@ struct SectionView: View {
             }
         }
 
-        // 6. Commit Node
-        Button {
-            onCommit()
-            HapticFeedback.notification(.success)
-        } label: {
-            Label("Commit Node", systemImage: "arrow.down.doc")
-        }
-
-        // 7. Duplicate (copy + paste in one action)
+        // 6. Duplicate (copy + paste in one action)
         Button {
             onCopy()
             onPaste()

@@ -38,7 +38,7 @@ enum OBXArchiver {
     /// Creates a zip archive containing `commit.json`, optional media entries, and a `manifest.json`.
     ///
     /// - Parameters:
-    ///   - commitJSON: The encoded `CommitContent` or `NodeCommitContent` JSON data.
+    ///   - commitJSON: The encoded `CommitContent` JSON data.
     ///   - commitHash: The deterministic commit hash (e.g. `"sha256:abc123..."`).
     ///   - mediaEntries: Media blobs to embed. Each tuple is `(archivePath, rawData)`.
     ///                   Archive paths should be `"media/sha256_<hex>"`.
@@ -238,16 +238,6 @@ enum OBXArchiver {
             return try JSONDecoder().decode(CommitContent.self, from: contents.commitJSON)
         } else {
             return try JSONDecoder().decode(CommitContent.self, from: data)
-        }
-    }
-
-    /// Decodes `NodeCommitContent` from raw .obx data, handling both zip and legacy JSON formats.
-    static func decodeNodeCommitContent(from data: Data) throws -> NodeCommitContent {
-        if isZipArchive(data) {
-            let contents = try readArchive(data: data)
-            return try JSONDecoder().decode(NodeCommitContent.self, from: contents.commitJSON)
-        } else {
-            return try JSONDecoder().decode(NodeCommitContent.self, from: data)
         }
     }
 

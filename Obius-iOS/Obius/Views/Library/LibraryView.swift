@@ -570,36 +570,22 @@ struct LoopDetailSheet: View {
 
 // MARK: - Commits List View
 
-/// A unified commit item that can be either a node or page commit, sorted together by date.
-enum CommitListItem: Identifiable {
-    case node(NodeCommitDisplay)
-    case page(Commit, noteName: String)
+/// A commit item for display in the commits list.
+struct CommitListItem: Identifiable {
+    let commit: Commit
+    let noteName: String
 
-    var id: String {
-        switch self {
-        case .node(let n): return "node_\(n.id)"
-        case .page(let c, _): return "page_\(c.id)"
-        }
-    }
-
-    var createdAt: Int64 {
-        switch self {
-        case .node(let n): return n.content.createdAt
-        case .page(let c, _): return c.createdAt
-        }
-    }
+    var id: String { "page_\(commit.id)" }
+    var createdAt: Int64 { commit.createdAt }
 }
 
 struct CommitsListView: View {
     @EnvironmentObject var appState: AppState
     @State private var commits: [Commit] = []
-    @State private var nodeCommits: [NodeCommitDisplay] = []
     @State private var noteNames: [String: String] = [:]
     @State private var isLoading = true
     @State private var selectedCommit: Commit?
-    @State private var selectedNode: NodeCommitDisplay?
-    @State private var storageStats: StorageStats?
-    @State private var shareSheetLink: ShareLink?
+@State private var shareSheetLink: ShareLink?
     @State private var sharePreview: String = ""
     @State private var shareError: String?
     @State private var isSharing = false
@@ -607,25 +593,17 @@ struct CommitsListView: View {
     var searchQuery: String = ""
 
     private var allItems: [CommitListItem] {
-        var items: [CommitListItem] = []
-        items += nodeCommits.map { .node($0) }
-        items += commits.map { .page($0, noteName: noteNames[$0.noteId] ?? $0.name ?? "Archived Commit") }
-        return items.sorted { $0.createdAt > $1.createdAt }
+        commits
+            .map { CommitListItem(commit: $0, noteName: noteNames[$0.noteId] ?? $0.name ?? "Archived Commit") }
+            .sorted { $0.createdAt > $1.createdAt }
     }
 
     private var filteredItems: [CommitListItem] {
         if searchQuery.isEmpty { return allItems }
         return allItems.filter { item in
-            switch item {
-            case .node(let n):
-                return n.name.localizedCaseInsensitiveContains(searchQuery) ||
-                    (n.content.sourceNoteTitle ?? "").localizedCaseInsensitiveContains(searchQuery) ||
-                    (n.content.shortId ?? "").localizedCaseInsensitiveContains(searchQuery)
-            case .page(let c, let noteName):
-                return (c.name ?? "").localizedCaseInsensitiveContains(searchQuery) ||
-                    noteName.localizedCaseInsensitiveContains(searchQuery) ||
-                    c.shortId.localizedCaseInsensitiveContains(searchQuery)
-            }
+            (item.commit.name ?? "").localizedCaseInsensitiveContains(searchQuery) ||
+                item.noteName.localizedCaseInsensitiveContains(searchQuery) ||
+                item.commit.shortId.localizedCaseInsensitiveContains(searchQuery)
         }
     }
 
@@ -637,11 +615,6 @@ struct CommitsListView: View {
                     .font(.title2.weight(.medium))
                     .foregroundStyle(.secondary)
                 Spacer()
-                if let stats = storageStats {
-                    Text(stats.formattedSize)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
             }
             .padding(.horizontal)
 
@@ -662,9 +635,6 @@ struct CommitsListView: View {
         }
         .sheet(item: $selectedCommit) { commit in
             CommitDetailSheet(commit: commit, noteName: noteNames[commit.noteId])
-        }
-        .sheet(item: $selectedNode) { node in
-            NodeCommitDetailSheet(node: node)
         }
         .sheet(item: $shareSheetLink) { link in
             NodeShareSheet(
@@ -701,62 +671,42 @@ struct CommitsListView: View {
     private var commitsList: some View {
         LazyVStack(spacing: 8) {
             ForEach(filteredItems) { item in
-                switch item {
-                case .node(let node):
-                    NodeCommitRowView(node: node)
-                        .padding(.horizontal)
-                        .padding(.vertical, 6)
-                        .background(Color(.systemBackground))
-                        .cornerRadius(12)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            selectedNode = node
+                CommitRowView(commit: item.commit, noteName: item.noteName, viewCount: commitViewCounts[item.commit.hash] ?? 0)
+                    .padding(.horizontal)
+                    .padding(.vertical, 6)
+                    .background(Color(.systemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        selectedCommit = item.commit
+                    }
+                    .contextMenu {
+                        Button {
+                            Task { await shareCommit(item.commit) }
+                        } label: {
+                            Label("Share", systemImage: "square.and.arrow.up")
                         }
-                        .contextMenu {
-                            Button {
-                                UIPasteboard.general.string = node.content.shortId ?? node.name
-                            } label: {
-                                Label("Copy ID", systemImage: "doc.on.doc")
-                            }
+
+                        Button {
+                            UIPasteboard.general.string = item.commit.shortId
+                        } label: {
+                            Label("Copy ID", systemImage: "doc.on.doc")
                         }
-                case .page(let commit, let noteName):
-                    CommitRowView(commit: commit, noteName: noteName, viewCount: commitViewCounts[commit.hash] ?? 0)
-                        .padding(.horizontal)
-                        .padding(.vertical, 6)
-                        .background(Color(.systemBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            selectedCommit = commit
+
+                        Button {
+                            UIPasteboard.general.string = item.commit.hash
+                        } label: {
+                            Label("Copy Hash", systemImage: "number")
                         }
-                        .contextMenu {
-                            Button {
-                                Task { await shareCommit(commit) }
-                            } label: {
-                                Label("Share", systemImage: "square.and.arrow.up")
-                            }
 
-                            Button {
-                                UIPasteboard.general.string = commit.shortId
-                            } label: {
-                                Label("Copy ID", systemImage: "doc.on.doc")
-                            }
+                        Divider()
 
-                            Button {
-                                UIPasteboard.general.string = commit.hash
-                            } label: {
-                                Label("Copy Hash", systemImage: "number")
-                            }
-
-                            Divider()
-
-                            Button(role: .destructive) {
-                                Task { await hideCommit(commit) }
-                            } label: {
-                                Label("Hide", systemImage: "eye.slash")
-                            }
+                        Button(role: .destructive) {
+                            Task { await hideCommit(item.commit) }
+                        } label: {
+                            Label("Hide", systemImage: "eye.slash")
                         }
-                }
+                    }
             }
         }
         .padding(.horizontal)
@@ -769,15 +719,6 @@ struct CommitsListView: View {
         do {
             // Load page commits
             commits = try await appState.commitRepository.getVisibleCommits()
-
-            // Load node commits with content
-            let nodeNames = appState.commitModule.getAllNodeCommits()
-            nodeCommits = nodeNames.compactMap { name in
-                if let content = try? appState.commitModule.getNodeCommit(name: name) {
-                    return NodeCommitDisplay(name: name, content: content)
-                }
-                return nil
-            }.sorted(by: { $0.content.createdAt > $1.content.createdAt })
 
             // Load note names for display
             for commit in commits {
@@ -798,8 +739,6 @@ struct CommitsListView: View {
             }
             commitViewCounts = counts
 
-            // Load storage stats
-            storageStats = try await appState.profileScanner.getStorageStats()
         } catch {
             print("Failed to load commits: \(error)")
         }
@@ -860,342 +799,6 @@ struct CommitsListView: View {
         } catch {
             shareError = error.localizedDescription
             print("Failed to share commit: \(error)")
-        }
-    }
-}
-
-// MARK: - Node Commit Display
-
-struct NodeCommitDisplay: Identifiable {
-    let id = UUID()
-    let name: String
-    let content: NodeCommitContent
-}
-
-// MARK: - Node Commit Row View
-
-struct NodeCommitRowView: View {
-    let node: NodeCommitDisplay
-
-    private var relativeTime: String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        let date = Date(timeIntervalSince1970: Double(node.content.createdAt) / 1000)
-        return formatter.localizedString(for: date, relativeTo: Date())
-    }
-
-    var body: some View {
-        HStack(spacing: 0) {
-            // Spine: 4px wide, blue for node commits
-            RoundedRectangle(cornerRadius: 2)
-                .fill(Color.blue)
-                .frame(width: 4)
-
-            VStack(alignment: .leading, spacing: 3) {
-                // Row 1: Name + short ID pill + time
-                HStack(spacing: 6) {
-                    Text(node.name)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-
-                    Spacer()
-
-                    if let shortId = node.content.shortId {
-                        Text("#\(shortId)")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Color.blue)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Color.blue.opacity(0.12))
-                            .clipShape(Capsule())
-                    }
-
-                    Text(relativeTime)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-
-                // Row 2: Source note title
-                if let sourceTitle = node.content.sourceNoteTitle {
-                    Text("from \(sourceTitle)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            .padding(.leading, 10)
-        }
-        .padding(.vertical, 6)
-    }
-}
-
-// MARK: - Node Commit Detail Sheet
-
-struct NodeCommitDetailSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject var appState: AppState
-    @EnvironmentObject var authManager: AuthManager
-    let node: NodeCommitDisplay
-    @State private var copiedField: String?
-    @State private var showingShareSheet = false
-    @State private var shareURL: URL?
-    @State private var shareTitle: String = ""
-    @State private var sharePreview: String = ""
-
-    private var creatorName: String {
-        authManager.currentUser?.email ?? "Local User"
-    }
-
-    private var formattedDate: String {
-        let date = Date(timeIntervalSince1970: Double(node.content.createdAt) / 1000)
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
-    }
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    // Commit badge (title + commit icon + ID)
-                    commitBadge
-
-                    // Metadata card
-                    metadataCard
-
-                    // Dot divider
-                    HStack(spacing: 6) {
-                        ForEach(0..<3, id: \.self) { _ in
-                            Circle()
-                                .fill(Color.gray.opacity(0.4))
-                                .frame(width: 5, height: 5)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
-
-                    // Section content
-                    CommitNodePreview(
-                        content: node.content.section.content,
-                        contentType: node.content.section.contentType,
-                        indentLevel: 0,
-                        sectionType: node.content.section.sectionType,
-                        mediaRepository: appState.mediaRepository
-                    )
-
-                    // Copy all button
-                    if node.content.section.contentType != "image" && node.content.section.contentType != "audio" {
-                        HStack {
-                            Spacer()
-                            Button {
-                                UIPasteboard.general.string = node.content.section.content
-                                copiedField = "copy_all"
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                    if copiedField == "copy_all" { copiedField = nil }
-                                }
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: copiedField == "copy_all" ? "checkmark" : "doc.on.doc")
-                                        .font(.caption)
-                                    Text(copiedField == "copy_all" ? "" : "")
-                                        .font(.caption.weight(.medium))
-                                }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(Color.gray.opacity(0.2))
-                                .foregroundStyle(copiedField == "copy_all" ? .green : .secondary)
-                                .clipShape(Capsule())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                .padding()
-            }
-            .background(Color(.systemBackground))
-            .navigationTitle("")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-                ToolbarItem(placement: .principal) {
-                    Image("ObiusLogo")
-                        .renderingMode(.original)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        Task { await shareNodeFromDetail() }
-                    } label: {
-                        Image(systemName: "square.and.arrow.up")
-                    }
-                }
-            }
-            .fullScreenCover(isPresented: $showingShareSheet) {
-                if let url = shareURL {
-                    NodeShareSheet(
-                        url: url,
-                        title: shareTitle,
-                        preview: sharePreview
-                    )
-                }
-            }
-        }
-    }
-
-    private var commitBadge: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // Title
-            if let title = node.content.sourceNoteTitle, !title.isEmpty {
-                Button {
-                    UIPasteboard.general.string = title
-                    copiedField = "badge_title"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        if copiedField == "badge_title" { copiedField = nil }
-                    }
-                } label: {
-                    Text(copiedField == "badge_title" ? "Copied" : title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(copiedField == "badge_title" ? .green : .primary)
-                        .lineLimit(1)
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity, alignment: .center)
-            }
-
-            // Commit icon + centered ID
-            ZStack {
-                HStack {
-                    HStack(spacing: 6) {
-                        Image(systemName: "doc.zipper")
-                            .font(.caption2)
-                        Text("Commit")
-                            .font(.caption2.weight(.medium))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Color.purple.opacity(0.15), in: Capsule())
-                    .foregroundStyle(.purple)
-                    Spacer()
-                }
-
-                Button {
-                    UIPasteboard.general.string = node.content.shortId ?? node.name
-                    copiedField = "nav_title"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        if copiedField == "nav_title" { copiedField = nil }
-                    }
-                } label: {
-                    Text(copiedField == "nav_title" ? "Copied" : "#\(node.content.shortId ?? node.name)")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(copiedField == "nav_title" ? .white : .green)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                        .background(Color.gray.opacity(0.2), in: Capsule())
-                }
-            }
-        }
-    }
-
-    private var metadataCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // .obx filename
-            copyableRow(
-                label: "File",
-                value: "\(node.name).obx",
-                field: "file",
-                valueFont: .subheadline.weight(.medium),
-                valueColor: .primary
-            )
-
-            // Creator
-            copyableRow(
-                label: "By",
-                value: creatorName,
-                field: "creator",
-                valueFont: .subheadline,
-                valueColor: .secondary
-            )
-
-            // Created date
-            copyableRow(
-                label: "Date",
-                value: formattedDate,
-                field: "date",
-                valueFont: .subheadline,
-                valueColor: .secondary
-            )
-
-            // Hash
-            if let hash = node.content.hash {
-                let bareHash = hash.replacingOccurrences(of: "sha256:", with: "")
-                copyableRow(
-                    label: "Hash",
-                    value: bareHash,
-                    field: "hash",
-                    valueFont: .system(.caption2, design: .monospaced),
-                    valueColor: .tertiary
-                )
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(UIColor.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-    }
-
-    private func copyableRow<S: ShapeStyle>(label: String, value: String, field: String, valueFont: Font, valueColor: S) -> some View {
-        Button {
-            UIPasteboard.general.string = value
-            copiedField = field
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                if copiedField == field { copiedField = nil }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Text(label)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                if copiedField == field {
-                    Text("Copied")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.green)
-                } else {
-                    Text(value)
-                        .font(valueFont)
-                        .foregroundStyle(valueColor)
-                        .lineLimit(1)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func shareNodeFromDetail() async {
-        do {
-            let content = node.content
-            let data = try JSONEncoder().encode(content)
-            guard let jsonString = String(data: data, encoding: .utf8) else { return }
-
-            let hash = content.hash ?? "node_\(node.name)"
-            let link = try await ShareManager.shared.createCommitShare(
-                commitHash: hash,
-                commitName: node.name,
-                commitShortId: content.shortId,
-                commitContent: jsonString
-            )
-
-            shareURL = URL(string: link.url)
-            shareTitle = node.name
-            sharePreview = String(content.section.content.prefix(200))
-            showingShareSheet = true
-        } catch {
-            print("Failed to share node commit: \(error)")
         }
     }
 }
@@ -1541,7 +1144,6 @@ struct CommitDetailSheet: View {
                 CommentThreadView(
                     comments: comments,
                     isAuthenticated: SupabaseManager.shared.isAuthenticated,
-                    isCommitShare: true,
                     onAddComment: { body in
                         await addComment(body: body)
                     }
@@ -1621,8 +1223,7 @@ struct CommitDetailSheet: View {
                     userDisplayName: comment.userDisplayName,
                     userEmail: userEmails[comment.userId],
                     body: comment.body,
-                    createdAt: comment.createdAt,
-                    sealedCommitHash: comment.sealedCommitHash
+                    createdAt: comment.createdAt
                 )
             }
         } catch {

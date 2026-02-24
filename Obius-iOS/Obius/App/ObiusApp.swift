@@ -100,7 +100,6 @@ class AppState: ObservableObject {
     let commitModule: CommitModule
     let autoCommitManager: AutoCommitManager
     let insightRepository: InsightRepository
-    let profileScanner: ProfileScanner
 
     @Published var isInitialized = false
 
@@ -138,10 +137,6 @@ class AppState: ObservableObject {
                 coldStore: coldStore
             )
             self.insightRepository = InsightRepository(database: database)
-            self.profileScanner = ProfileScanner(
-                coldStore: coldStore,
-                commitRepository: commitRepository
-            )
 
             // Initialize HandleManager singleton with repository
             HandleManager.shared.initialize(handleRepository: handleRepository)

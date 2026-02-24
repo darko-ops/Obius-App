@@ -2,7 +2,6 @@ import Foundation
 import GRDB
 
 /// A Comment on shared content (called "Handshake" in the UI).
-/// Comments on commit shares create sealed records with new hashes.
 struct Comment: Codable, Identifiable, Hashable {
     var id: String
     var shareLinkId: String             // FK to shareLinks
@@ -16,9 +15,6 @@ struct Comment: Codable, Identifiable, Hashable {
     var updatedAt: Int64
     var deletedAt: Int64?
 
-    /// For commit shares: the new version hash after this comment was added
-    var sealedCommitHash: String?
-
     init(
         id: String = UUID().uuidString,
         shareLinkId: String,
@@ -28,8 +24,7 @@ struct Comment: Codable, Identifiable, Hashable {
         body: String,
         createdAt: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
         updatedAt: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
-        deletedAt: Int64? = nil,
-        sealedCommitHash: String? = nil
+        deletedAt: Int64? = nil
     ) {
         self.id = id
         self.shareLinkId = shareLinkId
@@ -40,7 +35,6 @@ struct Comment: Codable, Identifiable, Hashable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
-        self.sealedCommitHash = sealedCommitHash
     }
 
     var isDeleted: Bool {
@@ -61,7 +55,6 @@ extension Comment: FetchableRecord, PersistableRecord {
         case id, shareLinkId, userId, userDisplayName
         case parentCommentId, body
         case createdAt, updatedAt, deletedAt
-        case sealedCommitHash
     }
 
     // MARK: - Relationships

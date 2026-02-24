@@ -21,7 +21,6 @@
 		B8A1D0010000000000000011 /* SyncTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000011 /* SyncTypes.swift */; };
 		B8A1D0010000000000000012 /* ColdStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000012 /* ColdStore.swift */; };
 		B8A1D0010000000000000013 /* CommitModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000013 /* CommitModule.swift */; };
-		B8A1D0010000000000000014 /* ProfileScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000014 /* ProfileScanner.swift */; };
 		B8A1D0010000000000000015 /* SyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000015 /* SyncEngine.swift */; };
 		B8A1D0010000000000000016 /* SyncOperationLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000016 /* SyncOperationLogger.swift */; };
 		B8A1D0010000000000000017 /* Debouncer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000017 /* Debouncer.swift */; };
@@ -139,7 +138,6 @@
 		B8A1F0010000000000000011 /* SyncTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncTypes.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000012 /* ColdStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColdStore.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000013 /* CommitModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitModule.swift; sourceTree = "<group>"; };
-		B8A1F0010000000000000014 /* ProfileScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileScanner.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000015 /* SyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncEngine.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000016 /* SyncOperationLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncOperationLogger.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000017 /* Debouncer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Debouncer.swift; sourceTree = "<group>"; };
@@ -349,7 +347,6 @@
 				B8A1F0010000000000000012 /* ColdStore.swift */,
 				B8A1F0010000000000000013 /* CommitModule.swift */,
 				B8A1F0070000000000000002 /* OBXArchiver.swift */,
-				B8A1F0010000000000000014 /* ProfileScanner.swift */,
 			);
 			path = Storage;
 			sourceTree = "<group>";
@@ -684,7 +681,6 @@
 				B8A1D0010000000000000011 /* SyncTypes.swift in Sources */,
 				B8A1D0010000000000000012 /* ColdStore.swift in Sources */,
 				B8A1D0010000000000000013 /* CommitModule.swift in Sources */,
-				B8A1D0010000000000000014 /* ProfileScanner.swift in Sources */,
 				B8A1D0010000000000000015 /* SyncEngine.swift in Sources */,
 				B8A1D0010000000000000016 /* SyncOperationLogger.swift in Sources */,
 				B8A1D0010000000000000017 /* Debouncer.swift in Sources */,

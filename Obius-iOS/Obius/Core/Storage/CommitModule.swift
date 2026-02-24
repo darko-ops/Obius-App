@@ -92,65 +92,6 @@ class CommitModule: ObservableObject {
         return commit
     }
 
-    // MARK: - Node Commit (Named)
-
-    /// Creates a named node commit for a single section.
-    /// - Parameters:
-    ///   - sectionId: The section to commit
-    ///   - name: The user-provided name (without .obx extension)
-    /// - Returns: The filename (name.obx)
-    func createNodeCommit(sectionId: String, name: String) async throws -> String {
-        // 1. Fetch the section
-        guard let section = try await sectionRepository.getSection(id: sectionId) else {
-            throw CommitError.sectionNotFound
-        }
-
-        // 2. Get the source note info
-        let note = try await noteRepository.getNote(id: section.noteId)
-
-        // 3. Create section snapshot
-        let sectionSnapshot = CommitSectionSnapshot(from: section)
-
-        // 4. Create node content
-        let nodeContent = NodeCommitContent(
-            name: name,
-            section: sectionSnapshot,
-            sourceNoteId: section.noteId,
-            sourceNoteTitle: note?.displayTitle
-        )
-
-        // 5. Write to Cold Store (hash is computed and embedded in the file)
-        let (filename, _) = try coldStore.writeNodeCommit(nodeContent, name: name)
-
-        return filename
-    }
-
-    /// Checks if a node commit name is available.
-    /// - Parameter name: The name to check
-    /// - Returns: true if the name is available
-    func isNodeNameAvailable(_ name: String) -> Bool {
-        !coldStore.nodeCommitExists(name: name)
-    }
-
-    /// Gets all node commits.
-    /// - Returns: Array of node names
-    func getAllNodeCommits() -> [String] {
-        coldStore.getAllNodeCommits()
-    }
-
-    /// Gets a node commit by name.
-    /// - Parameter name: The node name
-    /// - Returns: The node content
-    func getNodeCommit(name: String) throws -> NodeCommitContent {
-        try coldStore.readNodeCommit(name: name)
-    }
-
-    /// Deletes a node commit.
-    /// - Parameter name: The node name to delete
-    func deleteNodeCommit(name: String) throws {
-        try coldStore.deleteNodeCommit(name: name)
-    }
-
     // MARK: - Restore Commit
 
     /// Restores a note to a specific commit state.

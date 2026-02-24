@@ -31,7 +31,6 @@ struct RemoteCommentRow: Codable {
     let user_display_name: String?
     let parent_comment_id: String?
     let body: String
-    let sealed_commit_hash: String?
     let created_at: String
     let updated_at: String
     let deleted_at: String?
@@ -102,7 +101,6 @@ struct SharedComment: Decodable, Identifiable {
     let userEmail: String?
     let body: String
     let createdAt: String
-    let sealedCommitHash: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -110,7 +108,6 @@ struct SharedComment: Decodable, Identifiable {
         case userDisplayName = "user_display_name"
         case body
         case createdAt = "created_at"
-        case sealedCommitHash = "sealed_commit_hash"
     }
 
     init(from decoder: Decoder) throws {
@@ -120,18 +117,16 @@ struct SharedComment: Decodable, Identifiable {
         userDisplayName = try container.decodeIfPresent(String.self, forKey: .userDisplayName)
         body = try container.decode(String.self, forKey: .body)
         createdAt = try container.decode(String.self, forKey: .createdAt)
-        sealedCommitHash = try container.decodeIfPresent(String.self, forKey: .sealedCommitHash)
         userEmail = nil // Not stored in Supabase; populated locally when available
     }
 
-    init(id: String, userId: String, userDisplayName: String?, userEmail: String? = nil, body: String, createdAt: String, sealedCommitHash: String?) {
+    init(id: String, userId: String, userDisplayName: String?, userEmail: String? = nil, body: String, createdAt: String) {
         self.id = id
         self.userId = userId
         self.userDisplayName = userDisplayName
         self.userEmail = userEmail
         self.body = body
         self.createdAt = createdAt
-        self.sealedCommitHash = sealedCommitHash
     }
 }
 
@@ -140,7 +135,6 @@ struct SharedInteraction: Decodable, Identifiable {
     let userId: String
     let userDisplayName: String?
     let interactionType: String
-    let sealedCommitHash: String?
     let createdAt: String
 
     enum CodingKeys: String, CodingKey {
@@ -148,7 +142,6 @@ struct SharedInteraction: Decodable, Identifiable {
         case userId = "user_id"
         case userDisplayName = "user_display_name"
         case interactionType = "interaction_type"
-        case sealedCommitHash = "sealed_commit_hash"
         case createdAt = "created_at"
     }
 }

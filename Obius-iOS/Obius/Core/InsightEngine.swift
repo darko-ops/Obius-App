@@ -59,8 +59,7 @@ final class InsightEngine {
         newInsights.append(contentsOf: detectStaleContent(notes: notes))
         newInsights.append(contentsOf: detectGrowingNotes(notes: notes, sectionsByNote: sectionsByNote))
         newInsights.append(contentsOf: detectLonelyHandles(sectionsByNote: sectionsByNote))
-        newInsights.append(contentsOf: detectNonsenseContent(notes: notes, sectionsByNote: sectionsByNote))
-        newInsights.append(contentsOf: detectUpcomingEchoes(sectionsByNote: sectionsByNote))
+newInsights.append(contentsOf: detectUpcomingEchoes(sectionsByNote: sectionsByNote))
         newInsights.append(contentsOf: detectConceptClusters(notes: notes, sectionsByNote: sectionsByNote))
         newInsights.append(contentsOf: detectActiveLoops(sectionsByNote: sectionsByNote))
         newInsights.append(contentsOf: detectDormantLoops(sectionsByNote: sectionsByNote))
@@ -446,48 +445,6 @@ final class InsightEngine {
             ))
 
             if insights.count >= 3 { return insights }
-        }
-
-        return insights
-    }
-
-    // MARK: - Nonsense Content
-
-    private func detectNonsenseContent(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
-        var insights: [Insight] = []
-
-        for note in notes {
-            let sections = sectionsByNote[note.id] ?? []
-
-            // Gather all text content from the note
-            var allText = note.body
-            for section in sections where section.contentType == .text || section.contentType == .checklist || section.contentType == .quote || section.contentType == .code {
-                allText += " " + section.content
-            }
-            for (_, text) in note.interstitialContent {
-                allText += " " + text
-            }
-
-            let trimmed = allText.trimmingCharacters(in: .whitespacesAndNewlines)
-            // Skip empty or very short notes — not enough to judge
-            guard trimmed.count >= 10 else { continue }
-            // Skip notes with media sections (images/audio are meaningful without text)
-            let hasMedia = sections.contains { $0.contentType == .image || $0.contentType == .audio }
-            if hasMedia { continue }
-
-            if looksLikeNonsense(trimmed) {
-                let pageTitle = note.displayTitle(sections: sections)
-                let preview = String(trimmed.prefix(80))
-
-                insights.append(Insight(
-                    insightType: .nonsenseContent,
-                    title: "'\(pageTitle)' may be noise",
-                    body: "\"\(preview)\"",
-                    sourceNoteId: note.id
-                ))
-
-                if insights.count >= 3 { return insights }
-            }
         }
 
         return insights
@@ -986,52 +943,4 @@ final class InsightEngine {
         return insights
     }
 
-    /// Heuristic check for nonsense/gibberish text.
-    private func looksLikeNonsense(_ text: String) -> Bool {
-        let words = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
-
-        // Single repeated character strings like "aaaa" or "asdf"
-        if words.count <= 2 {
-            let cleaned = text.lowercased().filter { $0.isLetter }
-            if cleaned.count >= 5 {
-                let unique = Set(cleaned)
-                // Very few unique characters relative to length = repetitive gibberish
-                if unique.count <= 3 { return true }
-            }
-        }
-
-        // Check for keyboard mash: high ratio of consonant clusters
-        let letters = text.lowercased().filter { $0.isLetter }
-        guard letters.count >= 8 else { return false }
-
-        let vowels: Set<Character> = ["a", "e", "i", "o", "u"]
-        let vowelCount = letters.filter { vowels.contains($0) }.count
-        let vowelRatio = Double(vowelCount) / Double(letters.count)
-
-        // Normal English has ~38-40% vowels. Below 15% is likely gibberish.
-        if vowelRatio < 0.15 { return true }
-
-        // Check for excessive repeated characters (e.g. "hhhhhh", "kkkkk")
-        var maxRepeat = 1
-        var currentRepeat = 1
-        let chars = Array(letters)
-        for i in 1..<chars.count {
-            if chars[i] == chars[i - 1] {
-                currentRepeat += 1
-                maxRepeat = max(maxRepeat, currentRepeat)
-            } else {
-                currentRepeat = 1
-            }
-        }
-        if maxRepeat >= 5 { return true }
-
-        // Check for no real words: if text has 3+ "words" but average word length is extreme
-        if words.count >= 3 {
-            let avgLen = Double(words.map { $0.count }.reduce(0, +)) / Double(words.count)
-            // Very long "words" with no spaces = likely keyboard mash
-            if avgLen > 20 { return true }
-        }
-
-        return false
-    }
 }

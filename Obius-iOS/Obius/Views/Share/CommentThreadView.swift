@@ -3,7 +3,6 @@ import SwiftUI
 struct CommentThreadView: View {
     let comments: [SharedComment]
     let isAuthenticated: Bool
-    let isCommitShare: Bool
     let onAddComment: (String) async -> Void
 
     @State private var newCommentBody = ""
@@ -24,12 +23,6 @@ struct CommentThreadView: View {
                         .padding(.vertical, 2)
                         .background(.quaternary, in: Capsule())
                 }
-            }
-
-            if isCommitShare {
-                Text("Comments on snapshots create sealed records with new hashes.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             // Comment list

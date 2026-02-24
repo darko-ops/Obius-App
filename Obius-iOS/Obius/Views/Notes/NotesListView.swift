@@ -515,7 +515,7 @@ private struct NotesListContent: View {
                             }
                         }
                     } label: {
-                        Label("Move to Module", systemImage: "folder")
+                        Label("Move to Folder", systemImage: "folder")
                     }
                 }
 

@@ -114,6 +114,19 @@ final class ModuleRepository: ObservableObject {
         }
     }
 
+    // MARK: - Reorder
+
+    func reorderModules(ids: [String]) async throws {
+        try await database.write { db in
+            for (index, id) in ids.enumerated() {
+                guard var module = try Module.fetchOne(db, key: id) else { continue }
+                module.orderIndex = index
+                module.touch()
+                try module.update(db)
+            }
+        }
+    }
+
     // MARK: - Delete
 
     func deleteModule(id: String) async throws {
@@ -156,11 +169,11 @@ enum ModuleError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyName:
-            return "Module name cannot be empty"
+            return "Folder name cannot be empty"
         case .duplicateName(let name):
-            return "A module named '\(name)' already exists"
+            return "A folder named '\(name)' already exists"
         case .cannotModifyDefault:
-            return "Default modules cannot be modified"
+            return "Default folders cannot be modified"
         }
     }
 }

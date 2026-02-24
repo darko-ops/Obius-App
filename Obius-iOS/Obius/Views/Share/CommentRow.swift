@@ -26,17 +26,6 @@ struct CommentRow: View {
                 .font(.subheadline)
                 .textSelection(.enabled)
 
-            // Sealed hash badge (for commit comments)
-            if let hash = comment.sealedCommitHash {
-                HStack(spacing: 4) {
-                    Image(systemName: "lock.fill")
-                        .font(.caption2)
-                    Text(String(hash.prefix(12)))
-                        .font(.caption2.monospaced())
-                }
-                .foregroundStyle(.purple)
-                .padding(.top, 2)
-            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)

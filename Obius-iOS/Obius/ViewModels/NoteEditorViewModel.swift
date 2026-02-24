@@ -887,7 +887,7 @@ final class NoteEditorViewModel: ObservableObject {
     func triggerEntityExtraction() {
         entityExtractionTask?.cancel()
         entityExtractionTask = Task {
-            try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 second debounce
+            try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 second debounce
             guard !Task.isCancelled else { return }
             guard sections.count >= 3 else { return }
 

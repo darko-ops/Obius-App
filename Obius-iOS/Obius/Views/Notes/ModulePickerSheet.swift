@@ -10,29 +10,51 @@ struct ModulePickerSheet: View {
     @State private var newModuleStorageType: ModuleStorageType = .local
     @State private var showingDeleteConfirmation = false
     @State private var moduleToDelete: Module?
+    @State private var moduleToRename: Module?
+    @State private var renameText = ""
 
     var body: some View {
         NavigationStack {
             moduleList
                 .background(Color(.systemBackground))
-                .navigationTitle("Modules")
+                .navigationTitle("Folders")
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
                 #endif
                 .toolbar { toolbarContent }
-                .alert("New Module", isPresented: $showingAddModule) {
+                .alert("New Folder", isPresented: $showingAddModule) {
                     addModuleAlertContent
                 } message: {
-                    Text("Enter a name for the new module")
+                    Text("Enter a name for the new folder")
+                }
+                .alert("Rename Folder", isPresented: Binding(
+                    get: { moduleToRename != nil },
+                    set: { if !$0 { moduleToRename = nil } }
+                )) {
+                    TextField("Folder name", text: $renameText)
+                    Button("Save") {
+                        if let module = moduleToRename {
+                            let newName = renameText
+                            Task {
+                                try? await moduleRepository.renameModule(id: module.id, newName: newName)
+                            }
+                        }
+                        moduleToRename = nil
+                    }
+                    Button("Cancel", role: .cancel) {
+                        moduleToRename = nil
+                    }
+                } message: {
+                    Text("Enter a new name for this folder")
                 }
                 .confirmationDialog(
-                    "Delete \(moduleToDelete?.name ?? "")?",
+                    "Delete \"\(moduleToDelete?.name ?? "")\"?",
                     isPresented: $showingDeleteConfirmation,
                     titleVisibility: .visible
                 ) {
                     deleteConfirmationContent
                 } message: {
-                    Text("Notes in this module will be moved to Local.")
+                    Text("Notes in this folder will be moved to Local.")
                 }
         }
         .presentationDetents([.medium])
@@ -45,7 +67,15 @@ struct ModulePickerSheet: View {
             ForEach(moduleRepository.modules) { module in
                 moduleRow(module)
             }
+            .onMove { source, destination in
+                var ids = moduleRepository.modules.map { $0.id }
+                ids.move(fromOffsets: source, toOffset: destination)
+                Task {
+                    try? await moduleRepository.reorderModules(ids: ids)
+                }
+            }
         }
+        .environment(\.editMode, .constant(.active))
         #if os(iOS)
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
@@ -63,11 +93,18 @@ struct ModulePickerSheet: View {
         .listRowBackground(Color(.secondarySystemBackground))
         .contextMenu {
             if !module.isDefault {
+                Button {
+                    renameText = module.name
+                    moduleToRename = module
+                } label: {
+                    Label("Rename Folder", systemImage: "pencil")
+                }
+
                 Button(role: .destructive) {
                     moduleToDelete = module
                     showingDeleteConfirmation = true
                 } label: {
-                    Label("Delete Module", systemImage: "trash")
+                    Label("Delete Folder", systemImage: "trash")
                 }
             }
         }
@@ -116,7 +153,7 @@ struct ModulePickerSheet: View {
 
     @ViewBuilder
     private var addModuleAlertContent: some View {
-        TextField("Module name", text: $newModuleName)
+        TextField("Folder name", text: $newModuleName)
         Button("Local") {
             createNewModule(storageType: .local)
         }
