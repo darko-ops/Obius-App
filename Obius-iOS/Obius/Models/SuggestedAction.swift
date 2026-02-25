@@ -22,6 +22,7 @@ struct SuggestedAction: Identifiable {
         case scheduleEcho(ScheduleEchoParams)
         case setNoteIntent(SetNoteIntentParams)
         case promoteToHandle(PromoteToHandleParams)
+        case updateLoopContent(UpdateLoopContentParams)
     }
 
     struct ScheduleEchoParams {
@@ -45,13 +46,20 @@ struct SuggestedAction: Identifiable {
         let handleName: String
     }
 
+    struct UpdateLoopContentParams {
+        let handleId: String
+        let handleName: String
+        let newContent: String
+    }
+
     // MARK: - Display Properties
 
     var icon: String {
         switch actionType {
-        case .scheduleEcho:     return "bell.badge"
-        case .setNoteIntent:    return "tag"
-        case .promoteToHandle:  return "arrow.up.right.circle"
+        case .scheduleEcho:      return "bell.badge"
+        case .setNoteIntent:     return "tag"
+        case .promoteToHandle:   return "arrow.up.right.circle"
+        case .updateLoopContent: return "pencil.and.outline"
         }
     }
 
@@ -64,6 +72,8 @@ struct SuggestedAction: Identifiable {
             return "Set \(display) intent to \(p.intent)"
         case .promoteToHandle(let p):
             return "Promote to @\(p.handleName)"
+        case .updateLoopContent(let p):
+            return "Update @\(p.handleName)"
         }
     }
 
@@ -77,23 +87,28 @@ struct SuggestedAction: Identifiable {
             return "Change intent to \(p.intent)"
         case .promoteToHandle(let p):
             let preview = p.sectionPreview.prefix(60)
-            return "Create handle from: \(preview)"
+            return "Create loop from: \(preview)"
+        case .updateLoopContent(let p):
+            let preview = p.newContent.prefix(80)
+            return String(preview)
         }
     }
 
     var toolName: String {
         switch actionType {
-        case .scheduleEcho:     return "schedule_echo"
-        case .setNoteIntent:    return "set_note_intent"
-        case .promoteToHandle:  return "promote_to_handle"
+        case .scheduleEcho:      return "schedule_echo"
+        case .setNoteIntent:     return "set_note_intent"
+        case .promoteToHandle:   return "promote_to_handle"
+        case .updateLoopContent: return "update_loop_content"
         }
     }
 
     var tintColor: Color {
         switch actionType {
-        case .scheduleEcho:     return .orange
-        case .setNoteIntent:    return .blue
-        case .promoteToHandle:  return .purple
+        case .scheduleEcho:      return .orange
+        case .setNoteIntent:     return .blue
+        case .promoteToHandle:   return .purple
+        case .updateLoopContent: return .green
         }
     }
 
@@ -151,6 +166,18 @@ struct SuggestedAction: Identifiable {
                 handleName: handleName
             ))
 
+        case "update_loop_content":
+            guard let handleId = input["handle_id"] as? String,
+                  let handleName = input["handle_name"] as? String,
+                  let newContent = input["new_content"] as? String else {
+                return nil
+            }
+            actionType = .updateLoopContent(UpdateLoopContentParams(
+                handleId: handleId,
+                handleName: handleName,
+                newContent: newContent
+            ))
+
         default:
             return nil
         }
@@ -199,6 +226,9 @@ struct SuggestedAction: Identifiable {
                 handleName: p.handleName,
                 handleRepository: appState.handleRepository
             )
+
+        case .updateLoopContent(let p):
+            try await HandleManager.shared.updateContent(handleId: p.handleId, content: p.newContent)
         }
     }
 

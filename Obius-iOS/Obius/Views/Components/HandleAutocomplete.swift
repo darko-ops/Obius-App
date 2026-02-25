@@ -60,11 +60,11 @@ struct HandleAutocomplete: View {
                 .foregroundStyle(.secondary)
 
             if query.isEmpty {
-                Text("No handles yet")
+                Text("No loops yet")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
-                Text("No handles matching '\(query)'")
+                Text("No loops matching '\(query)'")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 

@@ -1,5 +1,7 @@
 // Anthropic Claude Client for Edge Functions
 
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
+
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')!;
 const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
 
@@ -18,8 +20,18 @@ export interface ClaudeResponse {
   stop_reason: string;
 }
 
+export interface ClaudeRawResponse {
+  content: unknown[];
+  model: string;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+  };
+  stop_reason: string;
+}
+
 /**
- * Send a message to Claude and get a response
+ * Send a message to Claude and get a response (text only).
  */
 export async function sendMessage(
   messages: ClaudeMessage[],
@@ -27,13 +39,14 @@ export async function sendMessage(
     maxTokens?: number;
     temperature?: number;
     system?: string;
+    model?: string;
   } = {}
 ): Promise<ClaudeResponse> {
   if (!ANTHROPIC_API_KEY) {
     throw new Error('ANTHROPIC_API_KEY not configured');
   }
 
-  const { maxTokens = 1024, temperature = 0.7, system } = options;
+  const { maxTokens = 1024, temperature = 0.7, system, model } = options;
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -43,7 +56,7 @@ export async function sendMessage(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: CLAUDE_MODEL,
+      model: model || CLAUDE_MODEL,
       max_tokens: maxTokens,
       temperature,
       system,
@@ -60,6 +73,62 @@ export async function sendMessage(
 
   return {
     content: data.content[0].text,
+    model: data.model,
+    usage: data.usage,
+    stop_reason: data.stop_reason,
+  };
+}
+
+/**
+ * Send a message to Claude and return the full raw response (including tool_use blocks).
+ */
+export async function sendRaw(
+  messages: ClaudeMessage[],
+  options: {
+    maxTokens?: number;
+    temperature?: number;
+    system?: string;
+    model?: string;
+    tools?: unknown[];
+  } = {}
+): Promise<ClaudeRawResponse> {
+  if (!ANTHROPIC_API_KEY) {
+    throw new Error('ANTHROPIC_API_KEY not configured');
+  }
+
+  const { maxTokens = 1024, temperature = 0.7, system, model, tools } = options;
+
+  const payload: Record<string, unknown> = {
+    model: model || CLAUDE_MODEL,
+    max_tokens: maxTokens,
+    temperature,
+    system,
+    messages,
+  };
+
+  if (tools && tools.length > 0) {
+    payload.tools = tools;
+  }
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(`Anthropic API error: ${error.error?.message || response.statusText}`);
+  }
+
+  const data = await response.json();
+
+  return {
+    content: data.content,
     model: data.model,
     usage: data.usage,
     stop_reason: data.stop_reason,
@@ -139,6 +208,33 @@ Respond with ONLY the title, no quotes or explanation.`,
   );
 
   return response.content.trim().slice(0, 50) || currentTitle;
+}
+
+/**
+ * Log token usage to the usage_log table. Fire-and-forget — errors are logged but never thrown.
+ */
+export async function logUsage(params: {
+  supabase: SupabaseClient;
+  userId: string;
+  action: string;
+  inputTokens: number;
+  outputTokens: number;
+  model: string;
+}): Promise<void> {
+  try {
+    const { error } = await params.supabase.from('usage_log').insert({
+      user_id: params.userId,
+      action: params.action,
+      input_tokens: params.inputTokens,
+      output_tokens: params.outputTokens,
+      model: params.model,
+    });
+    if (error) {
+      console.error('logUsage insert error:', error.message);
+    }
+  } catch (err) {
+    console.error('logUsage error:', err);
+  }
 }
 
 export { CLAUDE_MODEL };

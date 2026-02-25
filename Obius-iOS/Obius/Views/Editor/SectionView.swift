@@ -273,7 +273,7 @@ struct SectionView: View {
                                 UIPasteboard.general.string = handle.formattedName
                                 #endif
                             } label: {
-                                Label("Copy Handle Name", systemImage: "doc.on.doc")
+                                Label("Copy Loop Name", systemImage: "doc.on.doc")
                             }
                         }
                         .padding(6)

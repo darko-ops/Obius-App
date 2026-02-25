@@ -224,6 +224,7 @@ private struct NotesListContent: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
+                        .foregroundStyle(.gray)
                 }
 
                 // Add note button (hidden in selection mode)
@@ -241,6 +242,7 @@ private struct NotesListContent: View {
                         }
                     } label: {
                         Image(systemName: "plus")
+                            .foregroundStyle(.gray)
                     }
                 }
             }
@@ -515,7 +517,7 @@ private struct NotesListContent: View {
                             }
                         }
                     } label: {
-                        Label("Move to Folder", systemImage: "folder")
+                        Label("Move to Project", systemImage: "folder")
                     }
                 }
 

@@ -73,15 +73,15 @@ struct Handle: Codable, Identifiable, Hashable {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if trimmed.isEmpty {
-            return "Handle name cannot be empty"
+            return "Loop name cannot be empty"
         }
 
         if trimmed.count < 2 {
-            return "Handle name must be at least 2 characters"
+            return "Loop name must be at least 2 characters"
         }
 
         if trimmed.count > 50 {
-            return "Handle name must be 50 characters or less"
+            return "Loop name must be 50 characters or less"
         }
 
         // Only allow alphanumeric characters and underscores
@@ -90,7 +90,7 @@ struct Handle: Codable, Identifiable, Hashable {
         let range = NSRange(location: 0, length: trimmed.utf16.count)
 
         if regex?.firstMatch(in: trimmed, options: [], range: range) == nil {
-            return "Handle name can only contain letters, numbers, and underscores"
+            return "Loop name can only contain letters, numbers, and underscores"
         }
 
         return nil

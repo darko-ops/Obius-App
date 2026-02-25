@@ -45,7 +45,7 @@ struct HandleBadge: View {
                 NSPasteboard.general.setString(handle.formattedName, forType: .string)
                 #endif
             } label: {
-                Label("Copy Handle Name", systemImage: "doc.on.doc")
+                Label("Copy Loop Name", systemImage: "doc.on.doc")
             }
         }
     }

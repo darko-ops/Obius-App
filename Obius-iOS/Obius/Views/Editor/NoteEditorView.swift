@@ -87,6 +87,7 @@ private struct NoteEditorContent: View {
     @FocusState private var titleFocused: Bool
     @State private var emptyPlaceholder: String = PlaceholderProvider.next()
     @State private var titleVisible = true
+    @State private var showingHistory = false
 
     let noteId: String
     let targetSectionId: String?
@@ -197,6 +198,10 @@ private struct NoteEditorContent: View {
                         }
                     }
                 )
+            }
+            .sheet(isPresented: $showingHistory) {
+                PageHistorySheet(noteId: noteId, noteName: viewModel.displayTitle)
+                    .environmentObject(appState)
             }
             .sheet(isPresented: $showingNativeShare) {
                 if let url = shareURL {
@@ -642,6 +647,12 @@ private struct NoteEditorContent: View {
                 pageCommitItem = PageCommitItem(noteId: noteId, pageTitle: titleText)
             } label: {
                 Label("Commit Page", systemImage: "arrow.down.doc")
+            }
+
+            Button {
+                showingHistory = true
+            } label: {
+                Label("History", systemImage: "clock.arrow.circlepath")
             }
 
             Button {
@@ -1973,6 +1984,125 @@ struct AddContentBar: View {
             if isExpanded {
                 withAnimation(.easeOut(duration: 0.2)) { isExpanded = false }
             }
+        }
+    }
+}
+
+// MARK: - PageHistorySheet
+
+/// Shows the commit history for a specific note page.
+struct PageHistorySheet: View {
+    @EnvironmentObject var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    let noteId: String
+    let noteName: String
+
+    @State private var commits: [Commit] = []
+    @State private var isLoading = true
+    @State private var selectedCommit: Commit?
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                if isLoading {
+                    Spacer()
+                    ProgressView()
+                    Spacer()
+                } else if commits.isEmpty {
+                    Spacer()
+                    VStack(spacing: 8) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 36))
+                            .foregroundStyle(.secondary)
+                        Text("No History")
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                        Text("Commits for this page will appear here.")
+                            .font(.subheadline)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 8) {
+                            ForEach(commits) { commit in
+                                CommitRowView(commit: commit, noteName: noteName)
+                                    .padding(.horizontal)
+                                    .padding(.vertical, 6)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        selectedCommit = commit
+                                    }
+                                    .contextMenu {
+                                        Button {
+                                            UIPasteboard.general.string = commit.shortId
+                                        } label: {
+                                            Label("Copy ID", systemImage: "doc.on.doc")
+                                        }
+
+                                        Button {
+                                            UIPasteboard.general.string = commit.hash
+                                        } label: {
+                                            Label("Copy Hash", systemImage: "number")
+                                        }
+
+                                        Divider()
+
+                                        Button(role: .destructive) {
+                                            Task { await hideCommit(commit) }
+                                        } label: {
+                                            Label("Hide", systemImage: "eye.slash")
+                                        }
+                                    }
+                            }
+                        }
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+                    }
+                }
+            }
+            .background(Color.black)
+            .navigationTitle("History")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbarBackground(Color.black, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .task {
+                await loadCommits()
+            }
+            .sheet(item: $selectedCommit) { commit in
+                CommitDetailSheet(commit: commit, noteName: noteName)
+                    .environmentObject(appState)
+                    .environmentObject(AuthManager.shared)
+            }
+        }
+    }
+
+    private func loadCommits() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            let all = try await appState.commitRepository.getCommits(noteId: noteId)
+            commits = all.filter { !$0.isHidden }
+        } catch {
+            print("Failed to load page history: \(error)")
+        }
+    }
+
+    private func hideCommit(_ commit: Commit) async {
+        do {
+            try await appState.commitRepository.setHidden(true, id: commit.id)
+            commits.removeAll { $0.id == commit.id }
+        } catch {
+            print("Failed to hide commit: \(error)")
         }
     }
 }

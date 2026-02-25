@@ -17,21 +17,21 @@ struct ModulePickerSheet: View {
         NavigationStack {
             moduleList
                 .background(Color(.systemBackground))
-                .navigationTitle("Folders")
+                .navigationTitle("Projects")
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
                 #endif
                 .toolbar { toolbarContent }
-                .alert("New Folder", isPresented: $showingAddModule) {
+                .alert("New Project", isPresented: $showingAddModule) {
                     addModuleAlertContent
                 } message: {
-                    Text("Enter a name for the new folder")
+                    Text("Enter a name for the new project")
                 }
-                .alert("Rename Folder", isPresented: Binding(
+                .alert("Rename Project", isPresented: Binding(
                     get: { moduleToRename != nil },
                     set: { if !$0 { moduleToRename = nil } }
                 )) {
-                    TextField("Folder name", text: $renameText)
+                    TextField("Project name", text: $renameText)
                     Button("Save") {
                         if let module = moduleToRename {
                             let newName = renameText
@@ -45,7 +45,7 @@ struct ModulePickerSheet: View {
                         moduleToRename = nil
                     }
                 } message: {
-                    Text("Enter a new name for this folder")
+                    Text("Enter a new name for this project")
                 }
                 .confirmationDialog(
                     "Delete \"\(moduleToDelete?.name ?? "")\"?",
@@ -54,7 +54,7 @@ struct ModulePickerSheet: View {
                 ) {
                     deleteConfirmationContent
                 } message: {
-                    Text("Notes in this folder will be moved to Local.")
+                    Text("Notes in this project will be moved to Local.")
                 }
         }
         .presentationDetents([.medium])
@@ -97,14 +97,14 @@ struct ModulePickerSheet: View {
                     renameText = module.name
                     moduleToRename = module
                 } label: {
-                    Label("Rename Folder", systemImage: "pencil")
+                    Label("Rename Project", systemImage: "pencil")
                 }
 
                 Button(role: .destructive) {
                     moduleToDelete = module
                     showingDeleteConfirmation = true
                 } label: {
-                    Label("Delete Folder", systemImage: "trash")
+                    Label("Delete Project", systemImage: "trash")
                 }
             }
         }
@@ -153,7 +153,7 @@ struct ModulePickerSheet: View {
 
     @ViewBuilder
     private var addModuleAlertContent: some View {
-        TextField("Folder name", text: $newModuleName)
+        TextField("Project name", text: $newModuleName)
         Button("Local") {
             createNewModule(storageType: .local)
         }

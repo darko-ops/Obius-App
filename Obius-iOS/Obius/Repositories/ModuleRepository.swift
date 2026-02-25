@@ -169,11 +169,11 @@ enum ModuleError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyName:
-            return "Folder name cannot be empty"
+            return "Project name cannot be empty"
         case .duplicateName(let name):
-            return "A folder named '\(name)' already exists"
+            return "A project named '\(name)' already exists"
         case .cannotModifyDefault:
-            return "Default folders cannot be modified"
+            return "Default projects cannot be modified"
         }
     }
 }

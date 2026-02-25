@@ -532,7 +532,7 @@ struct CreateEchoFromInsightSheet: View {
                 }
 
                 // Handle
-                SwiftUI.Section("Handle") {
+                SwiftUI.Section("Loop") {
                     if !handles.isEmpty {
                         Picker("", selection: $useExistingHandle) {
                             Text("Existing").tag(true)
@@ -543,14 +543,14 @@ struct CreateEchoFromInsightSheet: View {
                     }
 
                     if useExistingHandle && !handles.isEmpty {
-                        Picker("Handle", selection: $selectedHandleId) {
-                            Text("Select a handle...").tag(nil as String?)
+                        Picker("Loop", selection: $selectedHandleId) {
+                            Text("Select a loop...").tag(nil as String?)
                             ForEach(handles) { handle in
                                 Text("@\(handle.displayName)").tag(handle.id as String?)
                             }
                         }
                     } else {
-                        TextField("Handle name", text: $newHandleName)
+                        TextField("Loop name", text: $newHandleName)
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
                         if !trimmedHandleName.isEmpty && trimmedHandleName.count < 2 {

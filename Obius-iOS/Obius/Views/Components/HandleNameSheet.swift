@@ -48,7 +48,7 @@ struct HandleNameSheet: View {
                                 .font(.title2.weight(.semibold))
                                 .foregroundStyle(.secondary)
 
-                            TextField("HandleName", text: $handleName)
+                            TextField("LoopName", text: $handleName)
                                 .font(.title2)
                                 #if os(iOS)
                                 .textInputAutocapitalization(.never)
@@ -81,7 +81,7 @@ struct HandleNameSheet: View {
                             .font(.caption)
                             .foregroundStyle(.red)
                     } else if nameAlreadyExists {
-                        Text("This handle already exists - select it below or choose a different name")
+                        Text("This loop already exists - select it below or choose a different name")
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
@@ -94,7 +94,7 @@ struct HandleNameSheet: View {
                 if !existingHandles.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text(normalizedName.isEmpty ? "Existing Handles" : "Matching Handles")
+                            Text(normalizedName.isEmpty ? "Existing Loops" : "Matching Loops")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.secondary)
 
@@ -110,7 +110,7 @@ struct HandleNameSheet: View {
                         .padding(.top, 12)
 
                         if filteredHandles.isEmpty && !normalizedName.isEmpty {
-                            Text("No matching handles")
+                            Text("No matching loops")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity)

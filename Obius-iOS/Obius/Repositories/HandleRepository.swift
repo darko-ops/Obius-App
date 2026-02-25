@@ -243,9 +243,9 @@ enum HandleError: LocalizedError {
         case .invalidName(let message):
             return message
         case .nameAlreadyExists(let name):
-            return "A handle named '@\(name)' already exists"
+            return "A loop named '@\(name)' already exists"
         case .notFound(let id):
-            return "Handle not found: \(id)"
+            return "Loop not found: \(id)"
         }
     }
 }

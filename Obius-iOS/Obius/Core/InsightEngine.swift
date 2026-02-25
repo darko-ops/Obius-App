@@ -26,7 +26,7 @@ final class InsightEngine {
     /// Runs all detectors, deduplicates, and bulk-inserts new insights.
     func scan() async {
         let notes = noteRepository.notes.filter { !$0.isDeleted }
-        print("[InsightEngine] scan() started — \(notes.count) notes, API key: \(AppConfiguration.claudeAPIKey != nil ? "present" : "MISSING")")
+        print("[InsightEngine] scan() started — \(notes.count) notes, authenticated: \(SupabaseManager.shared.isAuthenticated)")
 
         // Skip scan entirely if notes haven't loaded yet — avoids wiping
         // existing insights via garbage collection on an empty list.
@@ -554,9 +554,9 @@ newInsights.append(contentsOf: detectUpcomingEchoes(sectionsByNote: sectionsByNo
     private static let aiScanCooldownMs: Int64 = 5 * 60 * 1000 // 5 minutes
 
     private func detectAISuggestions(notes: [Note], sectionsByNote: [String: [Section]]) async -> [Insight] {
-        // API key guard
-        guard AppConfiguration.claudeAPIKey != nil else {
-            print("[InsightEngine] AI skipped — no API key")
+        // Auth guard — AI calls go through Supabase Edge Function
+        guard SupabaseManager.shared.isAuthenticated else {
+            print("[InsightEngine] AI skipped — not authenticated")
             return []
         }
 
@@ -680,7 +680,7 @@ newInsights.append(contentsOf: detectUpcomingEchoes(sectionsByNote: sectionsByNo
     private static let temporalScanCooldownMs: Int64 = 5 * 60 * 1000 // 5 minutes
 
     private func detectTemporalEchoes(notes: [Note], sectionsByNote: [String: [Section]]) async -> [Insight] {
-        guard AppConfiguration.claudeAPIKey != nil else { return [] }
+        guard SupabaseManager.shared.isAuthenticated else { return [] }
 
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         if Self.lastTemporalScanTime > 0 && (now - Self.lastTemporalScanTime) < Self.temporalScanCooldownMs {

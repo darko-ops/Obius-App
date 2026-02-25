@@ -47,7 +47,7 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable {
         case .openQuestion:   return "Question"
         case .staleContent:   return "Stale"
         case .growingNote:    return "Growing"
-        case .lonelyHandle:   return "Lonely"
+        case .lonelyHandle:   return "Lonely Loop"
         case .connection:     return "Connection"
         case .nonsenseContent: return "Cleanup"
         case .upcomingEcho:   return "Echo"
@@ -201,7 +201,7 @@ extension Insight {
         case "echo_suggestion":   return "Echo"
         case "intent_correction": return "Intent"
         case "connection":        return "Link"
-        case "handle_promotion":  return "Handle"
+        case "handle_promotion":  return "Loop"
         default:                  return insightType.label
         }
     }

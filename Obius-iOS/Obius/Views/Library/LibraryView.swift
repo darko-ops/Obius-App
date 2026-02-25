@@ -7,7 +7,6 @@ struct LibraryView: View {
     @StateObject private var echoManager = EchoManager.shared
     @State private var selectedSection: LibrarySection = .commits
     @State private var searchQuery = ""
-    @State private var showingSettings = false
     @State private var showingEditProfile = false
     @State private var selectedEcho: Echo?
     @StateObject private var profileImages = ProfileImageManager.shared
@@ -95,12 +94,6 @@ struct LibraryView: View {
                 }
             }
         }
-        .sheet(isPresented: $showingSettings) {
-            NavigationStack {
-                SettingsView()
-            }
-            .environmentObject(AppearanceManager.shared)
-        }
         .sheet(isPresented: $showingEditProfile) {
             EditProfileView()
                 .environmentObject(authManager)
@@ -152,21 +145,6 @@ struct LibraryView: View {
         VStack(spacing: 0) {
             // Banner — extends to very top of screen
             ZStack(alignment: .bottom) {
-                // Settings button at bottom-right of banner
-                Button {
-                    showingSettings = true
-                } label: {
-                    Image(systemName: "gearshape.fill")
-                        .font(.body)
-                        .foregroundStyle(.white)
-                        .padding(8)
-                        .background(Color.black.opacity(0.3))
-                        .clipShape(Circle())
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                .padding(.trailing, 16)
-                .padding(.bottom, 8)
-                .zIndex(1)
                 GeometryReader { geo in
                     let minY = geo.frame(in: .global).minY
                     let extraHeight = max(minY, 0)

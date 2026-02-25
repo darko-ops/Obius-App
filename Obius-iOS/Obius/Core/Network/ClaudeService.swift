@@ -1,10 +1,9 @@
 import Foundation
 
-/// Calls the Claude Messages API for Intelligence chat
+/// Proxies all AI calls through the Supabase ai-proxy Edge Function.
+/// The API key lives server-side — no client-side secrets needed.
+/// Uses direct URLSession calls to avoid the Supabase Swift SDK sending stale JWTs.
 enum ClaudeService {
-
-    private static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
-    private static let model = "claude-haiku-4-5-20251001"
 
     struct Message: Codable {
         let role: String
@@ -16,52 +15,58 @@ enum ClaudeService {
         let actions: [SuggestedAction]
     }
 
-    // MARK: - Tool Definitions
+    // MARK: - Request / Response Types
 
-    static let toolDefinitions: [[String: Any]] = [
-        [
-            "name": "schedule_echo",
-            "description": "Schedule an Echo (reminder/alert) on a handle. The user will see a confirmation card before it executes.",
-            "input_schema": [
-                "type": "object",
-                "properties": [
-                    "handle_id":      ["type": "string", "description": "The UUID of the handle to attach the echo to"],
-                    "handle_name":    ["type": "string", "description": "The display name of the handle (for the confirmation card)"],
-                    "is_recurring":   ["type": "boolean", "description": "Whether the echo repeats on an interval"],
-                    "interval_value": ["type": "integer", "description": "Numeric interval value (e.g. 3 for 'every 3 days')"],
-                    "interval_unit":  ["type": "string", "enum": ["minutes", "hours", "days", "weeks", "months"], "description": "Interval time unit"],
-                    "fire_date":      ["type": "string", "description": "ISO-8601 date-time for the first fire"]
-                ],
-                "required": ["handle_id", "handle_name", "is_recurring", "interval_value", "interval_unit", "fire_date"]
-            ] as [String: Any]
-        ],
-        [
-            "name": "set_note_intent",
-            "description": "Set the intent/category of a note. The user will see a confirmation card before it executes.",
-            "input_schema": [
-                "type": "object",
-                "properties": [
-                    "note_id":    ["type": "string", "description": "The UUID of the note"],
-                    "note_title": ["type": "string", "description": "The title of the note (for the confirmation card)"],
-                    "intent":     ["type": "string", "enum": ["idea", "question", "task", "evidence"], "description": "The intent to set"]
-                ],
-                "required": ["note_id", "note_title", "intent"]
-            ] as [String: Any]
-        ],
-        [
-            "name": "promote_to_handle",
-            "description": "Promote a section (node) to a handle (loop). The user will see a confirmation card before it executes.",
-            "input_schema": [
-                "type": "object",
-                "properties": [
-                    "section_id":      ["type": "string", "description": "The UUID of the section to promote"],
-                    "section_preview": ["type": "string", "description": "Short preview of the section content"],
-                    "handle_name":     ["type": "string", "description": "Name for the new handle (2-50 chars, letters/numbers/underscores)"]
-                ],
-                "required": ["section_id", "section_preview", "handle_name"]
-            ] as [String: Any]
-        ]
-    ]
+    private struct AIProxyRequest: Encodable {
+        let action: String
+        // Flexible payload fields — only set the ones each action needs.
+        var messages: [Message]?
+        var noteContext: String?
+        var content: String?
+        var noteSummaries: String?
+        var handles: String?
+        var sectionsText: String?
+    }
+
+    /// Response for actions that return a single text string.
+    private struct TextResponse: Decodable {
+        let text: String
+    }
+
+    // MARK: - Direct HTTP Helper
+
+    /// Call the ai-proxy edge function directly via URLSession.
+    /// Sends the anon key + current session JWT (if available), avoiding the
+    /// Supabase Swift SDK which can send stale/expired tokens.
+    private static func invokeProxy<T: Decodable>(_ request: AIProxyRequest) async throws -> T {
+        let data = try await invokeProxyRaw(request)
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    private static func invokeProxyRaw(_ request: AIProxyRequest) async throws -> Data {
+        let url = URL(string: "\(AppConfiguration.supabaseURL)/functions/v1/ai-proxy")!
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(AppConfiguration.supabaseAnonKey, forHTTPHeaderField: "apikey")
+
+        urlRequest.setValue("Bearer \(AppConfiguration.supabaseAnonKey)", forHTTPHeaderField: "Authorization")
+
+        urlRequest.httpBody = try JSONEncoder().encode(request)
+
+        let (data, response) = try await URLSession.shared.data(for: urlRequest)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ClaudeError.invalidResponse
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            let body = String(data: data, encoding: .utf8) ?? ""
+            throw ClaudeError.proxyError("HTTP \(httpResponse.statusCode): \(body)")
+        }
+
+        return data
+    }
 
     // MARK: - Send With Tools
 
@@ -70,51 +75,13 @@ enum ClaudeService {
         messages: [Message],
         noteContext: String
     ) async throws -> ToolResponse {
-        guard let apiKey = AppConfiguration.claudeAPIKey else {
-            throw ClaudeError.missingAPIKey
-        }
+        let request = AIProxyRequest(
+            action: "send_with_tools",
+            messages: messages,
+            noteContext: noteContext
+        )
 
-        let systemPrompt = """
-        You are the intelligence assistant inside Obius, a note-taking app. \
-        Answer questions about the user's notes and help them stay organised. \
-        Be concise and helpful.
-
-        You can suggest actions using your tools. The user will see each action \
-        as a card with Accept/Dismiss buttons — the action only executes if \
-        accepted. Suggest actions when clearly relevant. You may combine text \
-        with tool calls.
-
-        Available intents: idea (blue), question (yellow), task (green), evidence (purple).
-        Handle names: 2-50 chars, letters/numbers/underscores only.
-
-        Current workspace context:
-        \(noteContext)
-        """
-
-        let body: [String: Any] = [
-            "model": model,
-            "max_tokens": 1024,
-            "system": systemPrompt,
-            "tools": toolDefinitions,
-            "messages": messages.map { ["role": $0.role, "content": $0.content] }
-        ]
-
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let http = response as? HTTPURLResponse else {
-            throw ClaudeError.invalidResponse
-        }
-        guard http.statusCode == 200 else {
-            let detail = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw ClaudeError.apiError(statusCode: http.statusCode, detail: detail)
-        }
+        let data = try await invokeProxyRaw(request)
 
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let content = json["content"] as? [[String: Any]] else {
@@ -144,86 +111,18 @@ enum ClaudeService {
 
     /// Generate a short AI title (2-5 words) from note content.
     static func generateTitle(from content: String) async throws -> String {
-        guard let apiKey = AppConfiguration.claudeAPIKey else {
-            print("⚠️ [ClaudeService] API key not configured — set CLAUDE_API_KEY in Debug.xcconfig")
-            throw ClaudeError.missingAPIKey
-        }
-
-        let body: [String: Any] = [
-            "model": model,
-            "max_tokens": 30,
-            "system": "You are a title generator. Given note content, respond with ONLY a short title (2-5 words). No quotes, no punctuation, no explanation.",
-            "messages": [["role": "user", "content": "Generate a short title for this note:\n\n\(content)"]]
-        ]
-
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let http = response as? HTTPURLResponse else {
-            throw ClaudeError.invalidResponse
-        }
-        guard http.statusCode == 200 else {
-            let detail = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw ClaudeError.apiError(statusCode: http.statusCode, detail: detail)
-        }
-
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = json["content"] as? [[String: Any]],
-              let first = content.first,
-              let text = first["text"] as? String else {
-            throw ClaudeError.unexpectedBody
-        }
-
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let request = AIProxyRequest(action: "generate_title", content: content)
+        let response: TextResponse = try await invokeProxy(request)
+        return response.text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - Tag Generation
 
     /// Generate concept tags from note content. Returns 1-5 single-word tags.
     static func generateTags(from content: String) async throws -> [String] {
-        guard let apiKey = AppConfiguration.claudeAPIKey else {
-            print("⚠️ [ClaudeService] API key not configured — set CLAUDE_API_KEY in Debug.xcconfig")
-            throw ClaudeError.missingAPIKey
-        }
-
-        let body: [String: Any] = [
-            "model": model,
-            "max_tokens": 50,
-            "system": "You are a concept tagger. Given note content, identify the key themes or concepts. Respond with ONLY a comma-separated list of 1-5 single-word tags. No hashtags, no quotes, no explanation. Example: productivity, design, strategy",
-            "messages": [["role": "user", "content": "Generate concept tags for this note:\n\n\(content)"]]
-        ]
-
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let http = response as? HTTPURLResponse else {
-            throw ClaudeError.invalidResponse
-        }
-        guard http.statusCode == 200 else {
-            let detail = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw ClaudeError.apiError(statusCode: http.statusCode, detail: detail)
-        }
-
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = json["content"] as? [[String: Any]],
-              let first = content.first,
-              let text = first["text"] as? String else {
-            throw ClaudeError.unexpectedBody
-        }
-
-        return text
+        let request = AIProxyRequest(action: "generate_tags", content: content)
+        let response: TextResponse = try await invokeProxy(request)
+        return response.text
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
             .filter { !$0.isEmpty }
@@ -292,71 +191,14 @@ enum ClaudeService {
 
     /// Analyze notes for temporal phrases and suggest Echo configurations.
     static func extractTemporalEchoes(_ noteSummaries: String, handles: String) async throws -> [TemporalEchoSuggestion] {
-        guard let apiKey = AppConfiguration.claudeAPIKey else {
-            throw ClaudeError.missingAPIKey
-        }
+        let request = AIProxyRequest(
+            action: "extract_temporal_echoes",
+            noteSummaries: noteSummaries,
+            handles: handles
+        )
+        let response: TextResponse = try await invokeProxy(request)
 
-        let systemPrompt = """
-        You are a temporal phrase detector for Obius, a note-taking app with Echoes (reminders). \
-        Analyze the notes and identify temporal phrases that imply the user should be reminded \
-        about something. Examples: "follow up Thursday", "revisit in 2 weeks", "check back next month", \
-        "dentist appointment at 3pm", "deadline Friday", "every Monday".
-
-        You also receive a list of existing handles (loops). If a temporal phrase relates to a specific \
-        existing handle, use that handle's ID and displayName. Otherwise, set handleId to "new" and \
-        set handleName to a short, descriptive snake_case name derived from the context \
-        (e.g. "dentist_appointment", "client_followup", "weekly_standup"). \
-        NEVER use "none" as a handleName — always derive a meaningful name from the content.
-
-        Return a JSON array of objects with: \
-        "handleId" (UUID of an existing handle, or "new" if suggesting a new handle), \
-        "handleName" (display name — MUST be descriptive, e.g. "dentist_appointment" not "none"), \
-        "phrase" (the exact temporal phrase found in the note), \
-        "isRecurring" (boolean), \
-        "intervalValue" (integer, e.g. 1 for "every week"), \
-        "intervalUnit" (one of: minutes, hours, days, weeks, months), \
-        "fireDateISO" (ISO-8601 date-time for when the echo should first fire), \
-        "noteId" (the note's ID where the phrase was found).
-
-        For non-recurring echoes, set intervalValue=0 and intervalUnit="days". \
-        For recurring, set the appropriate interval. \
-        Use today's date context to compute fireDateISO from relative phrases like "Thursday" or "next week". \
-        Today is \(ISO8601DateFormatter().string(from: Date())). \
-        Max 3 suggestions. Return [] if nothing qualifies. \
-        Return ONLY the JSON array, no other text.
-        """
-
-        let body: [String: Any] = [
-            "model": model,
-            "max_tokens": 512,
-            "system": systemPrompt,
-            "messages": [["role": "user", "content": "Notes:\n\(noteSummaries)\n\nHandles:\n\(handles)"]]
-        ]
-
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let http = response as? HTTPURLResponse else {
-            throw ClaudeError.invalidResponse
-        }
-        guard http.statusCode == 200 else {
-            let detail = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw ClaudeError.apiError(statusCode: http.statusCode, detail: detail)
-        }
-
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = json["content"] as? [[String: Any]],
-              let first = content.first,
-              let text = first["text"] as? String else {
-            throw ClaudeError.unexpectedBody
-        }
-
+        let text = response.text
         guard let startIdx = text.firstIndex(of: "["),
               let endIdx = text.lastIndex(of: "]") else {
             return []
@@ -372,56 +214,11 @@ enum ClaudeService {
 
     /// Analyze note sections and suggest entities that could become Loops.
     static func extractEntities(from sections: [(id: String, content: String)]) async throws -> [ExtractedEntity] {
-        guard let apiKey = AppConfiguration.claudeAPIKey else {
-            throw ClaudeError.missingAPIKey
-        }
-
         let sectionsText = sections.map { "sectionId: \($0.id)\n\($0.content)" }.joined(separator: "\n---\n")
+        let request = AIProxyRequest(action: "extract_entities", sectionsText: sectionsText)
+        let response: TextResponse = try await invokeProxy(request)
 
-        let systemPrompt = """
-        Analyze the following note sections and identify recurring entities (people, places, projects, \
-        topics, lists) that the user references repeatedly or that would benefit from being a synced \
-        Loop (a content block that stays consistent across pages).
-
-        Return a JSON array of objects with: "name" (display name), "handleName" (lowercase, \
-        underscores, 2-50 chars), "reason" (1 sentence why), "sectionId" (which section contains it).
-
-        Only suggest entities that genuinely recur or would benefit from syncing. Max 3 suggestions. \
-        Return [] if nothing qualifies. Return ONLY the JSON array, no other text.
-        """
-
-        let body: [String: Any] = [
-            "model": model,
-            "max_tokens": 256,
-            "system": systemPrompt,
-            "messages": [["role": "user", "content": sectionsText]]
-        ]
-
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let http = response as? HTTPURLResponse else {
-            throw ClaudeError.invalidResponse
-        }
-        guard http.statusCode == 200 else {
-            let detail = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw ClaudeError.apiError(statusCode: http.statusCode, detail: detail)
-        }
-
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = json["content"] as? [[String: Any]],
-              let first = content.first,
-              let text = first["text"] as? String else {
-            throw ClaudeError.unexpectedBody
-        }
-
-        // Parse JSON array from response
+        let text = response.text
         guard let startIdx = text.firstIndex(of: "["),
               let endIdx = text.lastIndex(of: "]") else {
             return []
@@ -437,80 +234,26 @@ enum ClaudeService {
 
     /// Analyze note summaries and return AI-powered suggestions as a JSON array string.
     static func analyzeNotes(_ noteSummaries: String) async throws -> String {
-        guard let apiKey = AppConfiguration.claudeAPIKey else {
-            throw ClaudeError.missingAPIKey
-        }
-
-        let systemPrompt = """
-        You are an insight engine for Obius, a note-taking app. Analyze the provided notes \
-        and return a JSON array of suggestions. Each suggestion object must have: \
-        "type" (one of: intent_correction, connection, handle_promotion), \
-        "noteId" (the primary note's ID), "title" (short insight title), "body" (1-2 sentence explanation). \
-        When a suggestion involves additional notes, include "relatedNoteIds" as an array of their IDs \
-        (e.g. for connection: both related note IDs; for handle_promotion: all notes containing that concept).
-
-        Suggestion types:
-        - intent_correction: Note tagged as one intent but content suggests another (idea/question/task/evidence).
-        - connection: Two or more notes share overlapping themes or could reference each other.
-        - handle_promotion: A section/concept mentioned across notes that deserves its own handle (loop).
-
-        Do NOT suggest echo/reminder types — those are handled by a separate system. \
-        Return at most 5 suggestions. If nothing stands out, return []. \
-        Return ONLY the JSON array, no other text.
-        """
-
-        let body: [String: Any] = [
-            "model": model,
-            "max_tokens": 512,
-            "system": systemPrompt,
-            "messages": [["role": "user", "content": noteSummaries]]
-        ]
-
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let http = response as? HTTPURLResponse else {
-            throw ClaudeError.invalidResponse
-        }
-        guard http.statusCode == 200 else {
-            let detail = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw ClaudeError.apiError(statusCode: http.statusCode, detail: detail)
-        }
-
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = json["content"] as? [[String: Any]],
-              let first = content.first,
-              let text = first["text"] as? String else {
-            throw ClaudeError.unexpectedBody
-        }
-
-        return text
+        let request = AIProxyRequest(action: "analyze_notes", noteSummaries: noteSummaries)
+        let response: TextResponse = try await invokeProxy(request)
+        return response.text
     }
 
     // MARK: - Errors
 
     enum ClaudeError: LocalizedError {
-        case missingAPIKey
         case invalidResponse
-        case apiError(statusCode: Int, detail: String)
         case unexpectedBody
+        case proxyError(String)
 
         var errorDescription: String? {
             switch self {
-            case .missingAPIKey:
-                return "Claude API key is not configured."
             case .invalidResponse:
-                return "Received an invalid response from Claude."
-            case .apiError(let code, let detail):
-                return "Claude API error \(code): \(detail)"
+                return "Received an invalid response from the AI service."
             case .unexpectedBody:
-                return "Could not parse Claude response."
+                return "Could not parse AI response."
+            case .proxyError(let detail):
+                return "AI proxy error: \(detail)"
             }
         }
     }
