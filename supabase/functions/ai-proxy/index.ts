@@ -155,22 +155,6 @@ underscores, 2-50 chars), "reason" (1 sentence why), "sectionId" (which section 
 Only suggest entities that genuinely recur or would benefit from syncing. Max 3 suggestions. \
 Return [] if nothing qualifies. Return ONLY the JSON array, no other text.`;
 
-const ANALYZE_NOTES_SYSTEM = `You are an insight engine for Obius, a note-taking app. Analyze the provided notes \
-and return a JSON array of suggestions. Each suggestion object must have: \
-"type" (one of: intent_correction, connection, handle_promotion), \
-"noteId" (the primary note's ID), "title" (short insight title), "body" (1-2 sentence explanation). \
-When a suggestion involves additional notes, include "relatedNoteIds" as an array of their IDs \
-(e.g. for connection: both related note IDs; for handle_promotion: all notes containing that concept).
-
-Suggestion types:
-- intent_correction: Note tagged as one intent but content suggests another (idea/question/task/evidence).
-- connection: Two or more notes share overlapping themes or could reference each other.
-- handle_promotion: A section/concept mentioned across notes that deserves its own handle (loop).
-
-Do NOT suggest echo/reminder types — those are handled by a separate system. \
-Return at most 5 suggestions. If nothing stands out, return []. \
-Return ONLY the JSON array, no other text.`;
-
 // ---------- Action handlers ----------
 
 interface ActionRequest {
@@ -268,22 +252,6 @@ async function handleExtractEntities(body: ActionRequest, userId: string, supaba
   return jsonResponse({ text: response.content });
 }
 
-async function handleAnalyzeNotes(body: ActionRequest, userId: string, supabase: SupabaseClient) {
-  const noteSummaries = body.noteSummaries as string;
-  if (!noteSummaries) {
-    return errorResponse('INVALID_REQUEST', 'noteSummaries is required');
-  }
-
-  const response = await sendMessage(
-    [{ role: 'user', content: noteSummaries }],
-    { maxTokens: 512, system: ANALYZE_NOTES_SYSTEM, model: AI_MODEL }
-  );
-
-  logUsage({ supabase, userId, action: 'insight_scan', inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, model: response.model }).catch(() => {});
-
-  return jsonResponse({ text: response.content });
-}
-
 // ---------- Router ----------
 
 serve(async (req: Request) => {
@@ -316,8 +284,6 @@ serve(async (req: Request) => {
         return await handleExtractTemporalEchoes(body, userId, supabase);
       case 'extract_entities':
         return await handleExtractEntities(body, userId, supabase);
-      case 'analyze_notes':
-        return await handleAnalyzeNotes(body, userId, supabase);
       default:
         return errorResponse('UNKNOWN_ACTION', `Unknown action: ${action}`);
     }

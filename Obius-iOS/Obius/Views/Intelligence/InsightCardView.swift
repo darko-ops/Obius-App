@@ -1,45 +1,102 @@
 import SwiftUI
 
-// MARK: - Insight Card (Surfaced)
+// MARK: - Category Card (Summary for one insight category)
 
-struct InsightCardView: View {
+struct CategoryCardView: View {
+    let insightType: InsightType
+    let insights: [Insight]
+    let onTap: () -> Void
+
+    private var subtypeCounts: [(label: String, count: Int)] {
+        var counts: [String: Int] = [:]
+        for insight in insights {
+            let label = insight.displayLabel
+            counts[label, default: 0] += 1
+        }
+        return counts.sorted { $0.key < $1.key }.map { (label: $0.key, count: $0.value) }
+    }
+
+    private var summaryLine: String {
+        subtypeCounts.map { "\($0.count) \($0.label.lowercased())" }.joined(separator: " · ")
+    }
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 12) {
+                // Category icon
+                Image(systemName: insightType.icon)
+                    .font(.title3)
+                    .foregroundStyle(insightType.tint.color)
+                    .frame(width: 36, height: 36)
+                    .background(insightType.tint.color.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Text(insightType.label)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+
+                        Spacer()
+
+                        Text("\(insights.count) \(insights.count == 1 ? "item" : "items")")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(insightType.tint.color)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(insightType.tint.color.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
+
+                    if !summaryLine.isEmpty {
+                        Text(summaryLine)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 14)
+            .background(Color(UIColor.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Insight Row (for use in CategoryDetailSheet)
+
+struct InsightRowView: View {
     let insight: Insight
     let onTrack: () -> Void
     let onDismiss: () -> Void
     let onTap: () -> Void
-    var onDeleteNote: (() -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
-            // Left: content
-            VStack(alignment: .leading, spacing: 10) {
-                // Top row: type badge + timestamp
-                HStack {
-                    HStack(spacing: 4) {
-                        Image(systemName: insight.displayIcon)
-                            .font(.caption2)
-                        Text(insight.displayLabel)
-                            .font(.caption2.weight(.medium))
-                    }
-                    .foregroundStyle(insight.displayTint.color)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(insight.displayTint.color.opacity(0.15))
-                    .clipShape(Capsule())
-
-                    Spacer()
-
-                    Text(relativeTimestamp)
+            VStack(alignment: .leading, spacing: 8) {
+                // Subtype badge
+                HStack(spacing: 4) {
+                    Image(systemName: insight.displayIcon)
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                    Text(insight.displayLabel)
+                        .font(.caption2.weight(.medium))
                 }
+                .foregroundStyle(insight.displayTint.color)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(insight.displayTint.color.opacity(0.15))
+                .clipShape(Capsule())
 
-                // Title
                 Text(insight.title)
                     .font(.subheadline.weight(.medium))
                     .lineLimit(2)
 
-                // Body
                 if !insight.body.isEmpty {
                     Text(insight.body)
                         .font(.caption)
@@ -48,7 +105,8 @@ struct InsightCardView: View {
                 }
             }
 
-            // Right: action buttons
+            Spacer(minLength: 8)
+
             VStack(spacing: 6) {
                 Button {
                     onTrack()
@@ -71,32 +129,56 @@ struct InsightCardView: View {
                         .background(Color.gray.opacity(0.1))
                         .clipShape(Circle())
                 }
-
-                if insight.insightType == .nonsenseContent, let onDeleteNote {
-                    Button {
-                        onDeleteNote()
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                            .frame(width: 32, height: 32)
-                            .background(Color.red.opacity(0.1))
-                            .clipShape(Circle())
-                    }
-                }
             }
-            .padding(.leading, 10)
         }
         .padding(.vertical, 10)
         .contentShape(Rectangle())
         .onTapGesture { onTap() }
     }
+}
 
-    private var relativeTimestamp: String {
-        let date = Date(timeIntervalSince1970: Double(insight.createdAt) / 1000)
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+// MARK: - Category Detail Sheet
+
+/// Full-screen sheet listing individual insights within a single category.
+struct CategoryDetailSheet: View {
+    let insightType: InsightType
+    let insights: [Insight]
+    let onTrack: (Insight) -> Void
+    let onDismiss: (Insight) -> Void
+    let onSelectInsight: (Insight) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(insights) { insight in
+                        InsightRowView(
+                            insight: insight,
+                            onTrack: { onTrack(insight) },
+                            onDismiss: { onDismiss(insight) },
+                            onTap: { onSelectInsight(insight) }
+                        )
+                        .padding(.horizontal)
+
+                        if insight.id != insights.last?.id {
+                            Divider()
+                                .padding(.horizontal)
+                        }
+                    }
+                }
+                .padding(.vertical)
+            }
+            .navigationTitle(insightType.label)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.large])
     }
 }
 
@@ -212,8 +294,7 @@ struct InsightDetailSheet: View {
     @State private var echoCreated = false
 
     private var isEchoSuggestion: Bool {
-        insight.insightType == .suggestedEcho ||
-        (insight.insightType == .aiSuggestion && insight.sourceSectionId == "echo_suggestion")
+        insight.insightType == .reminder && insight.sourceSectionId == "suggested_echo"
     }
 
     var body: some View {
@@ -373,8 +454,9 @@ struct InsightDetailSheet: View {
                         }
                     }
 
-                    // Delete page button for nonsense content
-                    if insight.insightType == .nonsenseContent, let onDeleteNote {
+                    // Delete page button for nonsense cleanup insights
+                    if insight.insightType == .cleanup && insight.sourceSectionId == "nonsense",
+                       let onDeleteNote {
                         Button(role: .destructive) {
                             onDeleteNote()
                             dismiss()
@@ -471,7 +553,7 @@ struct CreateEchoFromInsightSheet: View {
         var initIntervals = [EchoInterval(value: 1, unit: .days)]
 
         // Pre-fill from AI suggestion config stored in relatedNoteId
-        if insight.insightType == .suggestedEcho,
+        if insight.insightType == .reminder && insight.sourceSectionId == "suggested_echo",
            let json = insight.relatedNoteId,
            let data = json.data(using: .utf8) {
             do {
@@ -624,19 +706,15 @@ struct CreateEchoFromInsightSheet: View {
     private static func parseISO8601(_ string: String) -> Date? {
         let formatter = ISO8601DateFormatter()
 
-        // With fractional seconds
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let date = formatter.date(from: string) { return date }
 
-        // Standard
         formatter.formatOptions = [.withInternetDateTime]
         if let date = formatter.date(from: string) { return date }
 
-        // Date-only (e.g. "2026-02-26")
         formatter.formatOptions = [.withFullDate]
         if let date = formatter.date(from: string) { return date }
 
-        // Fallback for loose formats the AI might return
         let fallback = DateFormatter()
         fallback.locale = Locale(identifier: "en_US_POSIX")
         fallback.timeZone = TimeZone.current

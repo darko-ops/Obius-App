@@ -5,7 +5,7 @@ import Combine
 final class DatabaseManager {
     private let migrator: DatabaseMigrator
 
-    static let schemaVersion = 30
+    static let schemaVersion = 31
 
     /// The App Group container path for the shared database
     static var appGroupDatabaseURL: URL? {
@@ -723,6 +723,54 @@ final class DatabaseManager {
 
             try db.execute(sql: """
                 UPDATE syncMetadata SET schemaVersion = 30
+            """)
+        }
+
+        // v31: Consolidate insight types into 6 project-scoped categories
+        migrator.registerMigration("v31_insight_type_consolidation") { db in
+            // Map tracked insights to new types
+            try db.execute(sql: """
+                UPDATE insights SET insightType = 'cleanup', sourceSectionId = 'stale'
+                  WHERE insightType = 'staleContent' AND status = 'tracked'
+            """)
+            try db.execute(sql: """
+                UPDATE insights SET insightType = 'cleanup', sourceSectionId = 'dormant_loop'
+                  WHERE insightType = 'dormantLoop' AND status = 'tracked'
+            """)
+            try db.execute(sql: """
+                UPDATE insights SET insightType = 'cleanup', sourceSectionId = 'lonely_loop'
+                  WHERE insightType = 'lonelyHandle' AND status = 'tracked'
+            """)
+            try db.execute(sql: """
+                UPDATE insights SET insightType = 'cleanup', sourceSectionId = 'nonsense'
+                  WHERE insightType = 'nonsenseContent' AND status = 'tracked'
+            """)
+            try db.execute(sql: """
+                UPDATE insights SET insightType = 'reminder', sourceSectionId = 'task'
+                  WHERE insightType = 'suggestedTask' AND status = 'tracked'
+            """)
+            try db.execute(sql: """
+                UPDATE insights SET insightType = 'reminder', sourceSectionId = 'question'
+                  WHERE insightType = 'openQuestion' AND status = 'tracked'
+            """)
+            try db.execute(sql: """
+                UPDATE insights SET insightType = 'reminder', sourceSectionId = 'suggested_echo'
+                  WHERE insightType = 'suggestedEcho' AND status = 'tracked'
+            """)
+
+            // Purge all non-tracked insights (re-detected by new scan)
+            try db.execute(sql: """
+                DELETE FROM insights WHERE status != 'tracked'
+            """)
+
+            // Purge tracked insights with killed types (no new-type mapping)
+            try db.execute(sql: """
+                DELETE FROM insights WHERE insightType NOT IN
+                  ('cleanup','reminder','safety','drift','weeklyReport','progress','upcomingEcho')
+            """)
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 31
             """)
         }
 

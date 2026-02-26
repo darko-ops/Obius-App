@@ -4,80 +4,49 @@ import SwiftUI
 
 // MARK: - InsightType
 
-enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable {
-    case suggestedTask   // Content that reads like an action item
-    case openQuestion    // Unanswered question detected in content
-    case staleContent    // Note untouched for 14+ days
-    case growingNote     // Note accumulating many sections quickly
-    case lonelyHandle    // Handle only referenced in one place
-    case connection      // (future) Two notes share overlapping themes
-    case nonsenseContent // Page with meaningless/gibberish content
-    case upcomingEcho    // Echo firing within 24 hours
-    case conceptCluster  // 3+ notes share the same hashtag
-    case aiSuggestion    // AI-powered suggestion (echo, intent, connection, handle)
-    case activeLoop      // Handle edited recently + used on 2+ pages
-    case dormantLoop     // Handle not edited in 14+ days
-    case emergingLoop    // Handle used on 3+ pages this week
-    case loopConnection  // Two handles appear on the same page
-    case suggestedEcho   // AI-detected temporal phrase suggesting an Echo
+enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable, Identifiable {
+    var id: String { rawValue }
+    case cleanup        // Stale notes, dormant/lonely loops, nonsense
+    case reminder       // Tasks, open questions, suggested echoes
+    case safety         // API keys, passwords, personal data
+    case drift          // Off-topic notes, orphan tags (Phase 2: AI)
+    case weeklyReport   // Activity digest (Phase 2: AI)
+    case progress       // Project health score (Phase 2: AI)
+    case upcomingEcho   // Dashboard element — fires within 24h
 
     var icon: String {
         switch self {
-        case .suggestedTask:  return "checkmark.circle"
-        case .openQuestion:   return "questionmark.bubble"
-        case .staleContent:   return "clock.arrow.circlepath"
-        case .growingNote:    return "chart.line.uptrend.xyaxis"
-        case .lonelyHandle:   return "link"
-        case .connection:     return "arrow.triangle.branch"
-        case .nonsenseContent: return "trash.circle"
-        case .upcomingEcho:   return "bell.badge"
-        case .conceptCluster: return "number"
-        case .aiSuggestion:   return "sparkles"
-        case .activeLoop:     return "arrow.triangle.2.circlepath"
-        case .dormantLoop:    return "moon.zzz"
-        case .emergingLoop:   return "arrow.up.right"
-        case .loopConnection: return "link.badge.plus"
-        case .suggestedEcho:  return "bell.and.waves.left.and.right"
+        case .cleanup:      return "trash.circle"
+        case .reminder:     return "bell.badge"
+        case .safety:       return "exclamationmark.shield"
+        case .drift:        return "safari"
+        case .weeklyReport: return "chart.bar.doc.horizontal"
+        case .progress:     return "gauge.with.dots.needle.33percent"
+        case .upcomingEcho: return "bell.badge"
         }
     }
 
     var label: String {
         switch self {
-        case .suggestedTask:  return "Task"
-        case .openQuestion:   return "Question"
-        case .staleContent:   return "Stale"
-        case .growingNote:    return "Growing"
-        case .lonelyHandle:   return "Lonely Loop"
-        case .connection:     return "Connection"
-        case .nonsenseContent: return "Cleanup"
-        case .upcomingEcho:   return "Echo"
-        case .conceptCluster: return "Cluster"
-        case .aiSuggestion:   return "AI"
-        case .activeLoop:     return "Loop"
-        case .dormantLoop:    return "Dormant"
-        case .emergingLoop:   return "Emerging"
-        case .loopConnection: return "Connected"
-        case .suggestedEcho:  return "Echo"
+        case .cleanup:      return "Clean Up"
+        case .reminder:     return "Reminders"
+        case .safety:       return "Safety"
+        case .drift:        return "Drift"
+        case .weeklyReport: return "Weekly"
+        case .progress:     return "Progress"
+        case .upcomingEcho: return "Echo"
         }
     }
 
     var tint: InsightTint {
         switch self {
-        case .suggestedTask:  return .green
-        case .openQuestion:   return .yellow
-        case .staleContent:   return .gray
-        case .growingNote:    return .purple
-        case .lonelyHandle:   return .orange
-        case .connection:     return .blue
-        case .nonsenseContent: return .red
-        case .upcomingEcho:   return .orange
-        case .conceptCluster: return .blue
-        case .aiSuggestion:   return .blue
-        case .activeLoop:     return .green
-        case .dormantLoop:    return .gray
-        case .emergingLoop:   return .purple
-        case .loopConnection: return .blue
-        case .suggestedEcho:  return .orange
+        case .cleanup:      return .gray
+        case .reminder:     return .orange
+        case .safety:       return .red
+        case .drift:        return .blue
+        case .weeklyReport: return .purple
+        case .progress:     return .green
+        case .upcomingEcho: return .orange
         }
     }
 }
@@ -163,60 +132,105 @@ extension Insight: FetchableRecord, PersistableRecord {
 
 extension Insight {
     /// Stable key used to prevent duplicate insights across scans.
-    /// Tasks and questions dedup per-note (consolidated), others include sectionId.
+    /// Reminders (task/question) dedup per-note (consolidated), others include sectionId.
     var dedupKey: String {
         switch insightType {
-        case .suggestedTask, .openQuestion, .suggestedEcho:
-            // One insight per note — consolidated
-            return "\(insightType.rawValue)|\(sourceNoteId ?? "")|"
+        case .reminder:
+            // One insight per note per subtype
+            return "\(insightType.rawValue)|\(sourceNoteId ?? "")|\(sourceSectionId ?? "")"
         default:
             return "\(insightType.rawValue)|\(sourceNoteId ?? "")|\(sourceSectionId ?? "")"
         }
     }
 }
 
-// MARK: - Display (AI subtype-aware)
+// MARK: - Display (subtype-aware)
 
 extension Insight {
-    /// Icon that reflects the AI suggestion subtype, or falls back to the insight type icon.
+    /// Icon that reflects the subtype stored in sourceSectionId.
     var displayIcon: String {
-        guard insightType == .aiSuggestion, let subtype = sourceSectionId else {
+        guard let subtype = sourceSectionId else { return insightType.icon }
+
+        switch insightType {
+        case .cleanup:
+            switch subtype {
+            case "stale":        return "clock.arrow.circlepath"
+            case "dormant_loop": return "moon.zzz"
+            case "lonely_loop":  return "link"
+            case "nonsense":     return "trash.circle"
+            default:             return insightType.icon
+            }
+        case .reminder:
+            switch subtype {
+            case "task":           return "checkmark.circle"
+            case "question":       return "questionmark.bubble"
+            case "suggested_echo": return "bell.and.waves.left.and.right"
+            default:               return insightType.icon
+            }
+        case .safety:
+            switch subtype {
+            case "api_key":       return "key"
+            case "password":      return "lock.shield"
+            case "personal_data": return "person.badge.shield.checkmark"
+            default:              return insightType.icon
+            }
+        default:
             return insightType.icon
         }
-        switch subtype {
-        case "echo_suggestion":   return "bell.badge"
-        case "intent_correction": return "arrow.triangle.swap"
-        case "connection":        return "arrow.triangle.branch"
-        case "handle_promotion":  return "link"
-        default:                  return insightType.icon
-        }
     }
 
-    /// Label that reflects the AI suggestion subtype.
+    /// Label that reflects the subtype.
     var displayLabel: String {
-        guard insightType == .aiSuggestion, let subtype = sourceSectionId else {
+        guard let subtype = sourceSectionId else { return insightType.label }
+
+        switch insightType {
+        case .cleanup:
+            switch subtype {
+            case "stale":        return "Stale"
+            case "dormant_loop": return "Dormant"
+            case "lonely_loop":  return "Lonely Loop"
+            case "nonsense":     return "Nonsense"
+            default:             return insightType.label
+            }
+        case .reminder:
+            switch subtype {
+            case "task":           return "Task"
+            case "question":       return "Question"
+            case "suggested_echo": return "Echo"
+            default:               return insightType.label
+            }
+        case .safety:
+            switch subtype {
+            case "api_key":       return "API Key"
+            case "password":      return "Password"
+            case "personal_data": return "Personal Data"
+            default:              return insightType.label
+            }
+        default:
             return insightType.label
         }
-        switch subtype {
-        case "echo_suggestion":   return "Echo"
-        case "intent_correction": return "Intent"
-        case "connection":        return "Link"
-        case "handle_promotion":  return "Loop"
-        default:                  return insightType.label
-        }
     }
 
-    /// Tint that reflects the AI suggestion subtype.
+    /// Tint that reflects the subtype.
     var displayTint: InsightTint {
-        guard insightType == .aiSuggestion, let subtype = sourceSectionId else {
+        guard let subtype = sourceSectionId else { return insightType.tint }
+
+        switch insightType {
+        case .cleanup:
+            switch subtype {
+            case "nonsense": return .red
+            default:         return .gray
+            }
+        case .reminder:
+            switch subtype {
+            case "task":     return .green
+            case "question": return .yellow
+            default:         return .orange
+            }
+        case .safety:
+            return .red
+        default:
             return insightType.tint
-        }
-        switch subtype {
-        case "echo_suggestion":   return .orange
-        case "intent_correction": return .yellow
-        case "connection":        return .blue
-        case "handle_promotion":  return .purple
-        default:                  return insightType.tint
         }
     }
 }

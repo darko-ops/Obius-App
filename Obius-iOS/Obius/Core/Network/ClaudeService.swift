@@ -230,15 +230,6 @@ enum ClaudeService {
         return Array(entities.prefix(3))
     }
 
-    // MARK: - Note Analysis (Insight Engine)
-
-    /// Analyze note summaries and return AI-powered suggestions as a JSON array string.
-    static func analyzeNotes(_ noteSummaries: String) async throws -> String {
-        let request = AIProxyRequest(action: "analyze_notes", noteSummaries: noteSummaries)
-        let response: TextResponse = try await invokeProxy(request)
-        return response.text
-    }
-
     // MARK: - Errors
 
     enum ClaudeError: LocalizedError {

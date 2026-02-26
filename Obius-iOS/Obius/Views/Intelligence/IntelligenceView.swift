@@ -28,11 +28,13 @@ struct IntelligenceView: View {
     @State private var navigateSectionId: String?
     @State private var pendingGoToNoteId: String?
     @State private var pendingGoToSectionId: String?
-    @State private var insightFilter: String = "All"
     @State private var showingLoops = false
     @State private var showWorkspaceSheet = false
     @State private var showingSettings = false
+    @AppStorage("selectedModuleId") private var selectedModuleId: String?
+    @State private var showingModulePicker = false
     @StateObject private var handleManager = HandleManager.shared
+    @State private var activeCategorySheet: InsightType?
 
     private var insightEngine: InsightEngine {
         InsightEngine(
@@ -42,6 +44,47 @@ struct IntelligenceView: View {
             insightRepository: insightRepository,
             database: appState.database
         )
+    }
+
+    private var selectedModuleName: String {
+        appState.moduleRepository.modules.first { $0.id == selectedModuleId }?.name ?? "Artifacts"
+    }
+
+    /// Note IDs in the selected module. nil = show all (no filter).
+    private var moduleNoteIds: Set<String>? {
+        guard let moduleId = selectedModuleId else { return nil }
+        return Set(appState.noteRepository.notes.filter { $0.moduleId == moduleId }.map(\.id))
+    }
+
+    /// Filter any insight array to the selected module.
+    /// Insights with nil sourceNoteId pass through (shown in all modules).
+    private func insightsInModule(_ insights: [Insight]) -> [Insight] {
+        guard let noteIds = moduleNoteIds else { return insights }
+        return insights.filter { insight in
+            guard let sourceNoteId = insight.sourceNoteId else { return true }
+            return noteIds.contains(sourceNoteId)
+        }
+    }
+
+    // MARK: - Category Grouping
+
+    /// Display order for categories on the main view.
+    private static let categoryOrder: [InsightType] = [.safety, .reminder, .cleanup]
+
+    /// Groups surfaced (non-echo) insights by type.
+    private var categoryGroups: [(type: InsightType, insights: [Insight])] {
+        let nonEcho = insightsInModule(insightRepository.surfacedInsights)
+            .filter { $0.insightType != .upcomingEcho }
+
+        var grouped: [InsightType: [Insight]] = [:]
+        for insight in nonEcho {
+            grouped[insight.insightType, default: []].append(insight)
+        }
+
+        return Self.categoryOrder.compactMap { type in
+            guard let insights = grouped[type], !insights.isEmpty else { return nil }
+            return (type: type, insights: insights)
+        }
     }
 
     var body: some View {
@@ -62,8 +105,19 @@ struct IntelligenceView: View {
                 }
             }
             ToolbarItem(placement: .principal) {
-                Image("ObiusLogo")
-                    .renderingMode(.original)
+                Button {
+                    showingModulePicker = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(selectedModuleName)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                    }
+                }
+                .buttonStyle(.plain)
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -84,10 +138,11 @@ struct IntelligenceView: View {
             CreateInsightSheet { title, body in
                 Task {
                     try? await insightRepository.createInsight(
-                        type: .suggestedTask,
+                        type: .reminder,
                         title: title,
                         body: body,
-                        status: .tracked
+                        status: .tracked,
+                        sourceSectionId: "task"
                     )
                     haptic(.success)
                 }
@@ -102,17 +157,47 @@ struct IntelligenceView: View {
         .sheet(isPresented: $showingLoops) {
             LoopsSheetView(handles: handleManager.handles)
         }
+        .sheet(isPresented: $showingModulePicker) {
+            ModulePickerSheet(
+                moduleRepository: appState.moduleRepository,
+                selectedModuleId: $selectedModuleId
+            )
+        }
         .sheet(isPresented: $showWorkspaceSheet) {
             WorkspaceSheet(handles: handleManager.handles)
                 .environmentObject(appState)
         }
-        .task {
-            await runScan()
+        .sheet(item: $activeCategorySheet) { type in
+            let insights = categoryGroups.first(where: { $0.type == type })?.insights ?? []
+            CategoryDetailSheet(
+                insightType: type,
+                insights: insights,
+                onTrack: { insight in
+                    Task {
+                        try? await insightRepository.trackInsight(insight.id)
+                        haptic(.success)
+                    }
+                },
+                onDismiss: { insight in
+                    Task {
+                        try? await insightRepository.dismissInsight(insight.id)
+                    }
+                    haptic(.light)
+                },
+                onSelectInsight: { insight in
+                    activeCategorySheet = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        selectedInsight = insight
+                    }
+                }
+            )
         }
-        .onChange(of: insightRepository.surfacedInsights) {
-            if insightFilter != "All" && filteredInsights.isEmpty {
-                withAnimation { insightFilter = "All" }
+        .task {
+            if selectedModuleId == nil,
+               let local = appState.moduleRepository.getLocalModule() {
+                selectedModuleId = local.id
             }
+            await runScan()
         }
         .navigationDestination(item: $navigateToNote) { note in
             NoteEditorView(noteId: note.id, targetSectionId: navigateSectionId)
@@ -131,12 +216,13 @@ struct IntelligenceView: View {
                         upcomingEchoesSection
                     }
 
-                    if !nonEchoSurfacedInsights.isEmpty {
-                        insightsSection
+                    if !categoryGroups.isEmpty {
+                        categoriesSection
                     }
 
-                    if insightRepository.surfacedInsights.isEmpty
-                        && insightRepository.trackedInsights.isEmpty
+                    if upcomingEchoInsights.isEmpty
+                        && categoryGroups.isEmpty
+                        && insightsInModule(insightRepository.trackedInsights).isEmpty
                         && !isScanning {
                         emptyState
                     }
@@ -152,29 +238,7 @@ struct IntelligenceView: View {
     // MARK: - Upcoming Echoes
 
     private var upcomingEchoInsights: [Insight] {
-        insightRepository.surfacedInsights.filter { $0.insightType == .upcomingEcho }
-    }
-
-    private var nonEchoSurfacedInsights: [Insight] {
-        insightRepository.surfacedInsights.filter { $0.insightType != .upcomingEcho }
-    }
-
-    private var availableFilters: [(label: String, color: Color)] {
-        var seen = Set<String>()
-        var filters: [(label: String, color: Color)] = []
-        for insight in nonEchoSurfacedInsights {
-            let label = insight.displayLabel
-            if seen.insert(label).inserted {
-                filters.append((label: label, color: insight.displayTint.color))
-            }
-        }
-        filters.sort { $0.label < $1.label }
-        return filters
-    }
-
-    private var filteredInsights: [Insight] {
-        if insightFilter == "All" { return nonEchoSurfacedInsights }
-        return nonEchoSurfacedInsights.filter { $0.displayLabel == insightFilter }
+        insightsInModule(insightRepository.surfacedInsights).filter { $0.insightType == .upcomingEcho }
     }
 
     private var upcomingEchoesSection: some View {
@@ -201,99 +265,22 @@ struct IntelligenceView: View {
         }
     }
 
-    // MARK: - New Insights
+    // MARK: - Category Cards
 
-    private var insightsSection: some View {
+    private var categoriesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("New Insights")
+            Text("INSIGHTS")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
-                .textCase(.uppercase)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    // "All" filter
-                    let allSelected = insightFilter == "All"
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            insightFilter = "All"
-                        }
-                    } label: {
-                        HStack(spacing: 5) {
-                            Circle()
-                                .fill(allSelected ? Color.primary : .clear)
-                                .overlay(
-                                    Circle()
-                                        .strokeBorder(Color.primary, lineWidth: 1.5)
-                                )
-                                .frame(width: 10, height: 10)
-                            Text("All")
-                                .font(.caption.weight(allSelected ? .semibold : .regular))
-                                .foregroundStyle(allSelected ? .primary : .secondary)
-                        }
-                    }
-                    .buttonStyle(.plain)
-
-                    // Dynamic filters from actual insight types
-                    ForEach(availableFilters, id: \.label) { filter in
-                        let isSelected = insightFilter == filter.label
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                insightFilter = filter.label
-                            }
-                        } label: {
-                            HStack(spacing: 5) {
-                                Circle()
-                                    .fill(isSelected ? filter.color : .clear)
-                                    .overlay(
-                                        Circle()
-                                            .strokeBorder(filter.color, lineWidth: 1.5)
-                                    )
-                                    .frame(width: 10, height: 10)
-                                Text(filter.label)
-                                    .font(.caption.weight(isSelected ? .semibold : .regular))
-                                    .foregroundStyle(isSelected ? filter.color : .secondary)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-
-            ForEach(filteredInsights) { insight in
-                InsightCardView(
-                    insight: insight,
-                    onTrack: {
-                        Task {
-                            try? await insightRepository.trackInsight(insight.id)
-                            haptic(.success)
-                        }
-                    },
-                    onDismiss: {
-                        withAnimation(.easeOut(duration: 0.25)) {
-                            _ = Task {
-                                try? await insightRepository.dismissInsight(insight.id)
-                            }
-                        }
-                        haptic(.light)
-                    },
+            ForEach(categoryGroups, id: \.type) { group in
+                CategoryCardView(
+                    insightType: group.type,
+                    insights: group.insights,
                     onTap: {
-                        selectedInsight = insight
-                    },
-                    onDeleteNote: insight.insightType == .nonsenseContent ? {
-                        Task {
-                            if let noteId = insight.sourceNoteId {
-                                try? await appState.noteRepository.deleteNote(noteId)
-                                try? await insightRepository.dismissInsight(insight.id)
-                                haptic(.success)
-                            }
-                        }
-                    } : nil
+                        activeCategorySheet = group.type
+                    }
                 )
-                .transition(.asymmetric(
-                    insertion: .opacity,
-                    removal: .move(edge: .trailing).combined(with: .opacity)
-                ))
             }
         }
     }
@@ -308,7 +295,7 @@ struct IntelligenceView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(insightRepository.trackedInsights) { insight in
+                    ForEach(insightsInModule(insightRepository.trackedInsights)) { insight in
                         TrackedInsightChip(
                             insight: insight,
                             onTap: {
@@ -421,7 +408,7 @@ struct IntelligenceView: View {
                     haptic(.light)
                 }
             },
-            onDeleteNote: insight.insightType == .nonsenseContent ? {
+            onDeleteNote: (insight.insightType == .cleanup && insight.sourceSectionId == "nonsense") ? {
                 Task {
                     if let noteId = insight.sourceNoteId {
                         try? await appState.noteRepository.deleteNote(noteId)
@@ -438,61 +425,25 @@ struct IntelligenceView: View {
         )
     }
 
-    private func navigateToInsightSource(_ insight: Insight) {
-        if let noteId = insight.sourceNoteId,
-           let note = appState.noteRepository.notes.first(where: { $0.id == noteId }) {
-            navigateSectionId = insight.sourceSectionId
-            navigateToNote = note
-        } else {
-            selectedInsight = insight
-        }
-    }
-
     private func resolveReferences(for insight: Insight) -> [InsightReference] {
         var refs: [InsightReference] = []
 
-        // Concept clusters store the tag in sourceSectionId — resolve all notes sharing that tag
-        if insight.insightType == .conceptCluster, let tag = insight.sourceSectionId {
-            let tagLower = tag.lowercased()
-            for note in appState.noteRepository.notes where !note.isDeleted {
-                if note.tags.contains(where: { $0.lowercased() == tagLower }) {
-                    refs.append(InsightReference(noteId: note.id, title: note.displayTitle, sectionId: nil))
-                }
-            }
-            return refs
-        }
-
         if let noteId = insight.sourceNoteId,
            let note = appState.noteRepository.notes.first(where: { $0.id == noteId }) {
-            // For AI insights, sourceSectionId is the subtype string — not a real section.
-            // For loop insights, sourceSectionId stores handle IDs — also not a real section.
-            let nonSectionTypes: Set<InsightType> = [.aiSuggestion, .activeLoop, .dormantLoop, .emergingLoop, .loopConnection, .lonelyHandle, .conceptCluster, .suggestedEcho]
-            let sectionId = nonSectionTypes.contains(insight.insightType) ? nil : insight.sourceSectionId
+            // For new consolidated types, sourceSectionId stores the subtype string — not a real section.
+            // Only pass sourceSectionId as a real section for reminder subtypes that kept it from old code.
+            let sectionId: String? = nil  // subtypes are never real section IDs
             refs.append(InsightReference(noteId: noteId, title: note.displayTitle, sectionId: sectionId))
         }
+
         // relatedNoteId may contain comma-separated IDs for multi-reference insights
-        // (but not for suggestedEcho, where it stores JSON config)
-        if insight.insightType != .suggestedEcho, let relatedField = insight.relatedNoteId {
+        // (but not for suggested_echo, where it stores JSON config)
+        let isSuggestedEcho = insight.insightType == .reminder && insight.sourceSectionId == "suggested_echo"
+        if !isSuggestedEcho, let relatedField = insight.relatedNoteId {
             let relatedIds = relatedField.split(separator: ",").map(String.init)
             for relatedId in relatedIds {
                 if let note = appState.noteRepository.notes.first(where: { $0.id == relatedId }) {
                     refs.append(InsightReference(noteId: relatedId, title: note.displayTitle, sectionId: nil))
-                }
-            }
-        }
-
-        // For AI suggestions, scan title/body for note titles that weren't captured
-        // in sourceNoteId or relatedNoteId (handles older insights and multi-reference gaps)
-        if insight.insightType == .aiSuggestion {
-            let searchText = insight.title + " " + insight.body
-            let existingIds = Set(refs.map(\.noteId))
-            for note in appState.noteRepository.notes where !note.isDeleted {
-                guard !existingIds.contains(note.id) else { continue }
-                let noteTitle = note.displayTitle
-                guard noteTitle.count >= 4 else { continue }
-                guard noteTitle.lowercased() != "untitled" else { continue }
-                if searchText.localizedCaseInsensitiveContains(noteTitle) {
-                    refs.append(InsightReference(noteId: note.id, title: noteTitle, sectionId: nil))
                 }
             }
         }
