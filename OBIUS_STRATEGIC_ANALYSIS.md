@@ -61,7 +61,7 @@ Supabase-backed sync with offline-first architecture. Necessary, not differentia
 
 ---
 
-## 3. INSIGHTS: CLEANUP FEATURE OR REAL VALUE?
+## 3. INSIGHTS: THE REAL PROBLEM AND THE REAL SOLUTION
 
 ### Current State — You're Right, It's Mostly Cleanup
 
@@ -78,71 +78,238 @@ The InsightEngine runs 4 detector categories:
 
 **This is the core problem: Insights reward disorganized users and have nothing for organized ones.**
 
-### What's Planned But Not Built (Phase 2)
+### Why More Insight Categories Won't Fix This
 
-| Type | Description | AI-Powered? |
-|------|------------|-------------|
-| Drift | Off-topic notes, orphan tags | Yes |
-| WeeklyReport | Activity digest | Yes |
-| Progress | Project health scoring | Yes |
+The Phase 2 stubs (drift, weeklyReport, progress) and any additional static insight types (connection detection, contradiction detection, evolution tracking) all share the same fundamental limitation: **they observe and report. They don't do anything.**
 
-These are defined in the enum but have zero implementation.
+Adding more insight categories would make the Intelligence tab a busier bulletin board. But a bulletin board — no matter how smart — is still passive. The user reads it, maybe tracks an item, and goes back to work. The insight system becomes a second inbox to manage.
 
-### Recommendations: Beyond-Upkeep Insights That Add Value Without Noise
+**The honest truth: the problem isn't the insight types. The problem is the architecture.**
 
-The key principle: **insights should make you smarter about your own thinking, not just cleaner.**
+### The Real Solution: Context-Aware Agents
 
-**HIGH VALUE — Build These:**
+Instead of more insight cards, the Intelligence page should host **autonomous agents** that operate on page and loop context and work independently. This is the difference between:
 
-1. **Connection Insights** — "These 3 pages reference similar concepts but aren't linked via Loops."
-   - Why: This is the IDE analogy — an IDE finds unused imports AND suggests better architectures. Currently Obius only does the former.
-   - Signal: Two or more pages share 3+ common keywords/entities but have zero shared Loops.
-   - Noise filter: Only surface when confidence is high (keyword overlap > 60%). Max 2 per scan.
+- **Current model (bulletin board):** "Here are 5 things I noticed." User must act on each one manually.
+- **Agent model (autonomous workers):** "I'm analyzing your Q3 Strategy page for gaps and will have recommendations ready." The agent does the work, presents results when done.
 
-2. **Evolution Insights** — "Your thinking on @project_alpha has shifted — here's how."
-   - Why: Users capture ideas over weeks/months. They can't see their own drift. This makes the app a *thinking partner*.
-   - Signal: Track Loop content changes over time. When a Loop's content has been edited 5+ times, summarize the trajectory.
-   - Noise filter: Only surface for Loops with substantial edit history. One per week max.
-
-3. **Contradiction Detection** — "Node in Page A says X, but node in Page B says the opposite."
-   - Why: This is genuine intelligence — finding inconsistencies humans miss.
-   - Signal: AI compares claims across pages with similar tags/loops.
-   - Noise filter: Requires high-confidence semantic contradiction, not just different wording. Very conservative threshold.
-
-4. **Question Resolution Tracker** — "You asked 'Should we use Firebase or Supabase?' 3 weeks ago. Still unanswered."
-   - Why: Elevates the existing question detection from "you have questions" to "these questions are blocking progress."
-   - Signal: Questions (intent=question) that are 7+ days old with no corresponding task or evidence nodes created after.
-   - Noise filter: Only flag questions that appear genuinely unresolved. Max 3 per scan.
-
-5. **Density/Depth Insights** — "Page 'Q3 Strategy' has 12 ideas but zero evidence nodes. Consider adding supporting data."
-   - Why: This coaches better thinking without being prescriptive. It's like a writing advisor.
-   - Signal: Pages with high idea:evidence ratio or all-task pages with no questions.
-   - Noise filter: Only for pages with 5+ nodes. Framed as suggestion, not criticism.
-
-**AVOID — These Sound Smart But Would Be Noise:**
-
-- Daily activity summaries (nobody cares about "you created 3 notes today")
-- Generic "tip of the day" style insights
-- Sentiment analysis ("your notes seem negative lately")
-- Social comparison metrics
-- Completion percentage scores on arbitrary criteria
-
-### The Noise Prevention Framework
-
-Every insight must pass this test before surfacing:
-
-```
-1. Is this ACTIONABLE? (User can do something concrete about it)
-2. Is this SPECIFIC? (References exact pages/loops/nodes, not vague)
-3. Is this NON-OBVIOUS? (User couldn't easily see this themselves)
-4. Is this TIMELY? (Relevant now, not a permanent truth)
-
-Must pass 3 of 4. If it passes all 4, it's a high-priority insight.
-```
+This is what makes Obius the "Cursor for Ideas." Cursor doesn't just show you lint warnings — it has agents that can refactor your code, write tests, and fix bugs across files. The agent works, you review.
 
 ---
 
-## 4. AI WORKSPACE (FAB): SHOULD IT EDIT PAGES?
+## 4. AGENT ARCHITECTURE: WHAT THIS ACTUALLY LOOKS LIKE
+
+### What Exists Today (No Agent Infrastructure)
+
+The current system has zero autonomous capability:
+
+```
+InsightEngine.scan()          → Synchronous, runs all detectors in one pass
+                              → Produces static Insight cards (title + body + status)
+                              → User can: track, dismiss, navigate to source
+                              → No background execution
+                              → No multi-step reasoning
+                              → No ability to modify content
+
+WorkspaceSheet (AI FAB)       → User-initiated only
+                              → Conversational (chat-style)
+                              → Can suggest SuggestedActions (schedule_echo, update_loop_content, etc.)
+                              → Actions require explicit accept/dismiss per card
+                              → Only operates on Loops, not pages/nodes
+                              → No persistence — close the sheet, conversation is gone
+
+ClaudeService                 → Stateless request/response
+                              → 5 actions: send_with_tools, generate_title, generate_tags,
+                                extract_temporal_echoes, extract_entities
+                              → No conversation memory
+                              → No background invocation
+```
+
+**There is no agent lifecycle, no background task execution, no agent-to-user communication beyond static insight cards, no agent state persistence, and no scoped context control.**
+
+### What Agents Would Be
+
+An Obius Agent is an AI task that:
+1. **Receives scoped context** — a specific page, loop, module, or cross-page scope
+2. **Runs independently** — in the background, without blocking the UI
+3. **Can take multi-step actions** — read content, reason about it, propose changes
+4. **Reports back with actionable results** — not just "I noticed X" but "I did Y, review it"
+5. **Respects user control** — all modifications require approval via action cards
+
+### Agent Types That Would Provide Real Value
+
+**1. Page Analyst Agent**
+- **Trigger:** User taps "Analyze" on any page, or agent runs automatically on pages with 5+ nodes
+- **Context:** Full page content — body, all nodes (content + intent), all embedded loops
+- **What it does:**
+  - Identifies gaps in reasoning (ideas without evidence, questions without exploration)
+  - Detects contradictions within the page
+  - Suggests structural improvements ("these 3 nodes are about pricing — group them")
+  - Proposes new nodes to strengthen weak areas ("add an evidence node here")
+- **Output:** A set of action cards the user can accept/dismiss, plus a brief written analysis
+- **Why this isn't an insight:** An insight says "this page has gaps." An agent says "here are 3 specific nodes I'd add, and here's how I'd restructure section 4."
+
+**2. Loop Evolution Agent**
+- **Trigger:** Runs when a Loop has been edited 3+ times, or user requests it
+- **Context:** Full edit history of a Loop + all pages where it appears
+- **What it does:**
+  - Summarizes how the Loop's content has evolved over time
+  - Identifies if the Loop has drifted from its original purpose
+  - Suggests splitting a Loop that has grown to cover too many topics
+  - Checks if pages referencing this Loop are still consistent with its current content
+- **Output:** Evolution summary + optional split/restructure action cards
+- **Why this isn't an insight:** An insight says "this loop changed a lot." An agent says "here's the trajectory, and page X is now out of sync — here's the updated content I'd suggest."
+
+**3. Cross-Page Connection Agent**
+- **Trigger:** Runs on module-level scan, or user requests "find connections"
+- **Context:** All pages in a module — titles, bodies, node content, tags, shared loops
+- **What it does:**
+  - Identifies pages discussing similar topics that aren't linked via Loops
+  - Proposes new Loops to create from recurring concepts
+  - Suggests which existing Loop should be embedded where
+  - Detects contradictions across pages
+- **Output:** Connection map + "create loop" / "embed loop" action cards
+- **Why this isn't an insight:** An insight says "these pages are related." An agent says "here's the @pricing_strategy loop I'd create from content in pages A, B, and C, and here's where I'd embed it."
+
+**4. Research Agent**
+- **Trigger:** User-initiated from any page or node
+- **Context:** Specific page/node content + user's question
+- **What it does:**
+  - Takes a question or topic from the user's notes
+  - Reasons about it in the context of the user's broader knowledge base
+  - Produces a structured response as new nodes (with proper intent types)
+  - Can propose adding evidence nodes, task nodes, or question nodes
+- **Output:** New nodes ready to be inserted into the page
+- **Why this isn't the current AI chat:** The chat is ephemeral and loop-scoped. The Research Agent reads the full page, understands the intent structure, and produces nodes that fit the page's existing architecture.
+
+**5. Project Health Agent**
+- **Trigger:** Weekly, or on-demand per module
+- **Context:** All pages, loops, echoes, and activity within a module
+- **What it does:**
+  - Assesses which ideas are actively being developed vs. stagnating
+  - Identifies the most active loops (where thinking is happening)
+  - Flags unresolved questions that are blocking progress
+  - Produces a brief "state of the project" summary
+- **Output:** A structured report card on the Intelligence page — not a wall of individual insights, but a single coherent briefing
+- **Why this isn't insights:** Instead of 12 separate insight cards about various cleanup issues, you get one agent that says "here's the state of your project, here are the 3 things that need attention, and here's what I'd do about each one."
+
+### What Stays as Insights (Not Agents)
+
+Some things are genuinely better as simple, fast, local detections:
+
+- **Safety alerts** (API keys, passwords, SSNs) — These are regex-based, instant, and critical. No agent needed.
+- **Upcoming Echoes** — Pure data query, no reasoning needed.
+- **User-created tracked items** — Manual pins the user creates themselves.
+
+These stay as the lightweight insight system. Everything else graduates to agents.
+
+### The Agent Lifecycle
+
+```
+┌─────────────┐     ┌──────────────┐     ┌─────────────────┐     ┌──────────────┐
+│   TRIGGER    │────▶│   RUNNING    │────▶│    COMPLETE      │────▶│   REVIEWED   │
+│              │     │              │     │                  │     │              │
+│ User taps    │     │ Agent has    │     │ Results ready:   │     │ User accepts │
+│ "Analyze" or │     │ scoped       │     │ - Analysis text  │     │ or dismisses │
+│ auto-trigger │     │ context,     │     │ - Action cards   │     │ each action  │
+│ on scan      │     │ working in   │     │ - Proposed edits │     │ card         │
+│              │     │ background   │     │                  │     │              │
+└─────────────┘     └──────────────┘     └─────────────────┘     └──────────────┘
+                          │                                             │
+                          ▼                                             ▼
+                    Shows spinner/                               Actions execute
+                    "Agent working"                              or get dismissed
+                    indicator on                                 Agent result
+                    Intelligence tab                             archived
+```
+
+### Implementation: What Needs to Be Built
+
+**1. Agent Model (new)**
+```
+struct Agent: Identifiable {
+    var id: String
+    var agentType: AgentType          // .pageAnalyst, .loopEvolution, .connection, .research, .projectHealth
+    var status: AgentStatus           // .queued, .running, .complete, .failed
+    var scopeType: AgentScope         // .page(noteId), .loop(handleId), .module(moduleId), .cross(noteIds)
+    var contextSnapshot: String       // Serialized context sent to AI
+    var result: AgentResult?          // Analysis text + action cards
+    var createdAt / completedAt
+}
+```
+
+**2. Agent Runner (new)**
+- Background task manager that executes agents via the AI proxy
+- Sends scoped context (not the entire knowledge base — just what the agent needs)
+- Parses structured responses into action cards
+- Persists results to local DB so they survive app restart
+
+**3. AI Proxy: New `run_agent` Endpoint**
+- Accepts agent type + context payload
+- Uses a richer system prompt per agent type (much more detailed than current `send_with_tools`)
+- Returns structured JSON: `{ analysis: string, actions: [ToolUse] }`
+- Can make multiple tool calls in a single response (batch actions)
+- Uses extended thinking / chain-of-thought for complex analysis
+
+**4. Intelligence Tab Redesign**
+The Intelligence tab becomes the **agent dashboard:**
+
+```
+┌─────────────────────────────────────┐
+│  Intelligence              @ Loops  │
+│─────────────────────────────────────│
+│                                     │
+│  ACTIVE AGENTS                      │
+│  ┌─────────────────────────────┐    │
+│  │ ⚡ Analyzing "Q3 Strategy"  │    │
+│  │   Page Analyst • Running... │    │
+│  └─────────────────────────────┘    │
+│                                     │
+│  RESULTS                            │
+│  ┌─────────────────────────────┐    │
+│  │ ✓ "Product Roadmap" Review  │    │
+│  │   3 suggestions • 2h ago    │    │
+│  └─────────────────────────────┘    │
+│  ┌─────────────────────────────┐    │
+│  │ ✓ Module Connections Found  │    │
+│  │   2 new loops proposed • 1d │    │
+│  └─────────────────────────────┘    │
+│                                     │
+│  TRACKING                           │
+│  [chip] [chip] [chip] [+]          │
+│                                     │
+│  ALERTS                             │
+│  ┌─────────────────────────────┐    │
+│  │ ⚠ API key in "Server Notes" │    │
+│  └─────────────────────────────┘    │
+│                                     │
+│  UPCOMING ECHOES                    │
+│  [echo card] [echo card]           │
+│                                     │
+└─────────────────────────────────────┘
+                              [✨ FAB]
+```
+
+**5. In-Editor Agent Access**
+From within `NoteEditorView`, user can:
+- Tap a contextual button to launch a Page Analyst agent on the current page
+- Tap a node to launch a Research Agent scoped to that node's content
+- Results appear as a notification/badge — tap to review action cards
+
+### The Key Constraint: Only Value, Never Noise
+
+Agents must follow these rules:
+
+1. **Never auto-execute.** Every modification requires an action card with accept/dismiss.
+2. **Show work.** The agent's analysis text explains WHY it's suggesting what it's suggesting. No black-box recommendations.
+3. **Scoped context only.** A Page Analyst sees one page. A Connection Agent sees one module. Never send everything — it produces vague, generic output.
+4. **Results expire.** Agent results older than 7 days auto-archive. The Intelligence tab should never become a backlog.
+5. **User controls frequency.** Auto-triggered agents (like Project Health) run at most weekly. User-triggered agents run on demand. No spam.
+6. **Quality over quantity.** An agent that returns "everything looks good, no suggestions" is a valid and valuable result. Don't force output.
+
+---
+
+## 5. AI FAB: SHOULD IT EDIT PAGES?
 
 ### Current Capabilities
 
@@ -163,47 +330,38 @@ The AI can also suggest structured actions:
 
 **What it CAN'T do:** Edit page body text, edit node content directly, create new pages, create new nodes, reorder nodes, merge pages, split pages, move nodes between pages.
 
-### Should It Edit Pages? — YES, But Surgically
+### The FAB Should Become the Agent Launcher
 
-**The honest problem:** The AI workspace only operating on Loops means most content in Obius is invisible to the AI's editing capabilities. A user's pages are full of body text, interstitial content between nodes, and node content — none of which the AI can touch.
+With the agent architecture, the FAB's role changes. Instead of being a chat interface that only touches Loops, it becomes the **agent dispatch point:**
 
-**Recommendation: Add page-level AI actions, but scope them tightly.**
+- **From Intelligence tab:** FAB opens a picker — "What would you like me to analyze?" → Select scope (page, loop, module) → Agent launches
+- **From within the editor:** Contextual button launches a Page Analyst or Research Agent pre-scoped to the current page
+- **The Workspace chat remains** for quick, conversational Loop work (summarize, refine, compare). But the heavy lifting moves to agents.
 
-**Add these tools to the AI proxy:**
+### Page Editing: Yes, Via Agents
 
-1. **`update_note_body`** — Rewrite/refine a page's body text
-   - Use case: "Clean up this rough draft" / "Make this more concise"
-   - Shows diff-style confirmation card before applying
+The AI should absolutely edit pages — but through the agent action card system, not through the conversational workspace. Here's why:
 
-2. **`update_section_content`** — Rewrite/refine a specific node's content
-   - Use case: "Expand this idea" / "Turn this into bullet points"
-   - Shows the current vs. proposed content
+The Workspace chat is ephemeral. You close the sheet, the conversation disappears. That's fine for quick Loop refinements. But page edits (restructuring nodes, adding evidence, rewriting sections) are **consequential changes** that need:
+- Full page context (not just a Loop snippet)
+- Multi-step reasoning (analyze structure → identify gaps → propose changes)
+- Persistent results (user should be able to review later, not just in the moment)
 
-3. **`create_section`** — Add a new node to a page
-   - Use case: "Add an evidence node with sources for this claim"
-   - Requires noteId, content, contentType, intent
+All of these are what agents provide.
 
-4. **`restructure_page`** — Reorder/reorganize nodes within a page (batch operation)
-   - Use case: "Organize this page by priority" / "Group related ideas"
-   - Shows proposed new order as a confirmation card
-   - **This is the most "IDE-like" action — refactoring the structure of thought.**
+**New AI tools to add (used by agents, not the chat):**
 
-**DO NOT add:**
-- Auto-creating pages (too high-risk, users want control over page creation)
-- Deleting nodes/pages via AI (destructive, should be manual)
-- Cross-page moves (too complex, too many edge cases)
+1. **`update_section_content`** — Rewrite/refine a specific node's content
+2. **`update_note_body`** — Rewrite/refine a page's body text
+3. **`create_section`** — Add a new node to a page (with content, intent, position)
+4. **`reorder_sections`** — Restructure node order within a page
+5. **`create_handle_from_content`** — Extract recurring content into a new Loop
 
-### Where Should This AI Live?
-
-Currently the FAB is only on the Intelligence tab. **This is wrong.**
-
-The AI should be accessible from within the editor itself. When you're editing a page full of nodes, the most natural time to want AI help is *right there*. Having to leave the editor, go to Intelligence, open the workspace, select loops — that's too much friction.
-
-**Recommendation:** Add a contextual AI button inside `NoteEditorView` that opens a workspace sheet pre-loaded with the current page's context (body, nodes, loops). This is the real "IDE" move — the intelligence lives where you work, not in a separate tab.
+Each produces an action card. User accepts or dismisses. No auto-execution.
 
 ---
 
-## 5. PROFILE PAGE: SHARE TO FOLLOWERS OR STAY FOCUSED?
+## 6. PROFILE PAGE: SHARE TO FOLLOWERS OR STAY FOCUSED?
 
 ### Current State
 
@@ -256,14 +414,14 @@ Instead of going social, make the Library the **personal knowledge dashboard:**
 
 ---
 
-## 6. THE "CURSOR FOR IDEAS" QUESTION
+## 7. THE "CURSOR FOR IDEAS" QUESTION
 
 ### What Would Make Obius Actually Be an IDE for Ideas?
 
 Cursor (the code editor) is successful because it provides:
 1. **A workspace where you do the actual work** (editor)
 2. **Intelligence that understands context** (AI that reads your whole codebase)
-3. **Actions that modify your work with your approval** (AI edits with diff preview)
+3. **Agents that do work autonomously, report back for approval**
 4. **Refactoring tools** (rename, extract, restructure)
 5. **Navigation** (go-to-definition, find-references)
 
@@ -273,75 +431,72 @@ Mapping this to Obius:
 |---------------|-----------------|---------------|-----|
 | Code editor | Page + Node editor | **Built** | — |
 | Codebase-aware AI | Workspace AI with note context | **Partial** | AI only sees loops, not full pages |
+| Background agents | — | **Missing** | No agent lifecycle at all |
 | AI edits with diff preview | Action cards (accept/dismiss) | **Built for loops** | Missing for pages/nodes |
 | Refactoring | Promote-to-loop, set-intent | **Basic** | No restructure, no merge, no split |
 | Go-to-definition | Tap @loop to see it | **Built** | — |
 | Find references | — | **Missing** | "Where is @this_loop used?" |
 | Unused variable detection | Lonely loop insight | **Built** | — |
 | Error detection | Safety insights | **Built** | — |
-| Code review | — | **Missing** | "Review this page for gaps" |
+| Code review | — | **Missing** | Agents would cover this |
 
-### The Critical Gaps to Close
-
-**Gap 1: AI must see the full picture, not just Loops.**
-Currently `send_with_tools` only receives `noteContext` which is loop-focused. The AI needs to see page content, node content, intent types, and inter-page relationships to be truly useful.
-
-**Gap 2: AI must be able to edit where users work.**
-The workspace is isolated from the editor. The AI should be invocable from within any page, pre-loaded with that page's full context.
-
-**Gap 3: "Find references" for Loops.**
-When viewing a Loop, show every page and node where it appears. This is the "IDE" navigation that connects the knowledge graph.
-
-**Gap 4: Structural refactoring.**
-"Extract these 3 nodes into a new page." "Split this page at this node." "Merge these two pages." These are the refactoring operations that make a notes app into an IDE for thought.
-
-**Gap 5: Review / Analysis mode.**
-"Analyze this page for completeness" — Does it have ideas backed by evidence? Are questions answered? Are tasks concrete? This is the insight that goes beyond cleanup into genuine thinking assistance.
+**The biggest gap isn't more tools or more insights. It's that Obius has no autonomous workers.** Everything today is either (a) a static detector that fires on scan and produces a card, or (b) a user-initiated chat that dies when you close the sheet. Agents fill the entire middle ground: work that happens on your behalf, in context, with results you review when ready.
 
 ---
 
-## 7. PRIORITIZED ROADMAP RECOMMENDATION
+## 8. PRIORITIZED ROADMAP RECOMMENDATION
 
-### Phase 1: Make the Core Brilliant (Now)
-1. Add `update_section_content` and `update_note_body` to AI tools
-2. Add contextual AI button inside the note editor
-3. Implement "Find references" for Loops (where is this loop used?)
-4. Add Connection Insights ("these pages should be linked")
+### Phase 1: Agent Foundation (Now)
+1. Build the Agent model, runner, and persistence layer (local DB table)
+2. Add new AI tools: `update_section_content`, `update_note_body`, `create_section`, `reorder_sections`
+3. Build the `run_agent` endpoint on the AI proxy with per-agent-type system prompts
+4. Implement **Page Analyst Agent** as the first agent type
+5. Add contextual "Analyze" button inside `NoteEditorView`
 
-### Phase 2: IDE-Level Intelligence (Next)
-5. Implement Question Resolution Tracker insight
-6. Implement Density/Depth insights
-7. Add `create_section` and `restructure_page` AI tools
-8. Build Evolution Insights (how has your thinking on X changed?)
+### Phase 2: Agent Ecosystem (Next)
+6. Implement **Cross-Page Connection Agent** (module-scoped)
+7. Implement **Loop Evolution Agent**
+8. Implement **Research Agent** (user-initiated from any node)
+9. Redesign Intelligence tab as agent dashboard (active agents, results, alerts)
+10. Implement "Find references" for Loops
 
-### Phase 3: Power User Features (Later)
-9. Structural refactoring (split page, merge pages, extract to new page)
-10. Contradiction Detection insights
-11. Personal activity timeline on Library page
-12. Smart filters / saved searches
+### Phase 3: Autonomous Intelligence (Later)
+11. Implement **Project Health Agent** (weekly auto-trigger)
+12. Add `create_handle_from_content` tool (agent can propose new Loops)
+13. Structural refactoring tools (split page, merge pages, extract to new page)
+14. Personal activity timeline on Library page
+15. Smart filters / saved searches
+
+### Keep As-Is (No Agent Needed)
+- Safety detector (regex, fast, local — stays as insight)
+- Upcoming echoes (data query — stays as insight)
+- User-created tracked items (manual pins — stays as insight)
 
 ### NOT on the Roadmap
 - Followers / social feed
 - Public profiles
 - Broadcasting / feed-based sharing
 - Gamification (streaks, badges, points)
+- More static insight categories (the agent architecture supersedes this)
 
 ---
 
-## 8. BOTTOM LINE
+## 9. BOTTOM LINE
 
 **What gives Obius true value:** Loops (portal-synced content), intent-based semantic nodes, and time-aware knowledge (Echoes). This trinity is genuinely innovative and no competitor combines all three.
 
 **Is this truly innovative?** The Loops concept is. The intent system is. The combination is. But the surrounding intelligence features haven't caught up to the core data model's potential.
 
-**The gap between "good note app" and "IDE for ideas"** is: (1) AI that can see and edit everything, not just Loops; (2) insights that make you smarter, not just cleaner; (3) structural refactoring tools; and (4) keeping the AI where you work, not in a separate tab.
+**The gap between "good note app" and "IDE for ideas"** is not more insight categories, more tools, or social features. It's **autonomous agents.** The entire current system is either passive observation (insights) or user-initiated chat (workspace). Neither does work on the user's behalf. Agents are the missing layer — they take scoped context, reason about it independently, and come back with real work product the user reviews.
+
+**On insights being cleanup:** You're right, and more insight types won't fix it. The insight architecture is fundamentally a bulletin board. Replace it with agents that do the work, not just report on problems. Keep safety alerts and echoes as lightweight insights. Everything else becomes agent territory.
+
+**On AI editing pages:** Yes — through agents, not through the ephemeral chat workspace. Page edits are consequential and need multi-step reasoning, full context, and persistent results. Agents provide all three.
 
 **On social features:** Don't. Sharing links is enough. Protect the thinking space.
 
-**On insights being cleanup:** You're right. Fix it by adding Connection, Evolution, Contradiction, Question Resolution, and Depth insights. Filter ruthlessly for signal over noise using the 4-question test (actionable, specific, non-obvious, timely).
-
-**On AI editing pages:** Yes, add it. But scope it to content modification with confirmation cards, never deletion. And bring the AI into the editor, not just the Intelligence tab.
+**The single most important architectural decision ahead:** Build the agent lifecycle (model, runner, persistence, UI). Once that infrastructure exists, every future capability (page analysis, connection detection, evolution tracking, project health) becomes an agent type you plug in — not a new detector hardcoded into InsightEngine.
 
 ---
 
-*This analysis is based on a full codebase review of the Obius iOS app, Supabase backend, and AI proxy edge functions.*
+*This analysis is based on a full codebase review of the Obius iOS app, Supabase backend, AI proxy edge functions, InsightEngine, ClaudeService, and WorkspaceSheet.*
