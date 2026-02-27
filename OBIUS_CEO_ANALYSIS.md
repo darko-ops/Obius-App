@@ -8,7 +8,7 @@
 
 ## EXECUTIVE SUMMARY
 
-Obius is not "just another notes app." It is an iOS-native, local-first thinking operating system built on five defensible pillars: Handle Loops, Section-Level Intents, Git-Inspired Commits, Context-Aware Echoes, and a Local-First AI InsightEngine. This report assesses true value, innovation, structural decisions, SWOT positioning, and VC readiness.
+Obius is not "just another notes app." It is an iOS-native, local-first thinking operating system built on six defensible pillars: Handle Loops, Section-Level Intents, Git-Inspired Commits, Context-Aware Echoes, a Local-First AI InsightEngine, and an AI-Powered Workspace with agentic tool use. This report assesses true value, innovation, structural decisions, SWOT positioning, and VC readiness.
 
 ---
 
@@ -34,7 +34,20 @@ The `.obx` archive format with SHA-256 content-addressable storage is technicall
 
 Echoes aren't generic reminders. They're attached to Handles, which means reminders carry full context. An Echo for `@client_jones` doesn't just say "follow up" — it pulls in every section linked to that Handle. Recurring intervals, multi-cadence support, in-app banner with context cards. This is closer to a CRM's follow-up system than a notes app's reminder feature.
 
-**Pillar 5: Local-First with Optional Cloud**
+**Pillar 5: AI Workspace with Agentic Tool Use (The Sparkle FAB)**
+
+The floating action button (sparkle icon) on the Intelligence tab opens a full AI Workspace — and this is far more than a chatbot. It's a dual-mode agentic interface:
+
+- **Focus selection:** User picks a Page or Loop to focus on. The Workspace renders the full page content (body, sections with intent rails, interstitial text, Handle references) or the Loop's live-editable content.
+- **Edit Mode:** User describes changes in natural language. Claude responds with structured **tool-use actions** — not just text. Actions include `schedule_echo`, `set_note_intent`, `promote_to_handle`, `update_loop_content`, and `update_page_body`. Each action renders as an **ActionCard** with Accept/Dismiss buttons. The user reviews the proposed change before it executes. This is human-in-the-loop agentic AI — the AI proposes, the user approves.
+- **Chat Mode:** Pure conversational analysis. Claude sees the full project context (up to 25 pages with section content, all Loops, interstitial text) and discusses the user's content without making changes.
+- **Rich context injection:** The Workspace builds a comprehensive context payload for Claude including all project pages, their sections, Loop content, and interstitial text — giving the AI true project-level awareness, not just the focused item.
+- **Live Loop editing:** In Loop focus mode, the Workspace provides a live TextEditor for the Loop content. Edits are tracked and auto-saved. If the AI proposes a Loop content update via tool use and the user accepts, the editor refreshes instantly.
+- **Action resolution tracking:** The conversation maintains state about which actions were accepted, dismissed, or failed, feeding this back into subsequent AI turns for context continuity.
+
+**Why this matters for VCs:** This is not a "chat with your notes" feature — every competitor has that. This is an **agentic workspace** where AI can take structured actions on the user's data with explicit approval. The tool-use architecture (5 tools with typed parameters, server-side execution via Supabase Edge Functions) is production-grade. This positions Obius as an AI-native productivity OS, not a notes app with a chatbot bolted on.
+
+**Pillar 6: Local-First with Optional Cloud**
 
 Local-first SQLite (GRDB) with optional Supabase cloud sync. Users own their data. The app works fully offline. Cloud sync adds AI features and sharing. This is the architecture Linear, Figma, and other best-in-class tools have validated.
 
@@ -54,8 +67,9 @@ Local-first SQLite (GRDB) with optional Supabase cloud sync. Users own their dat
 | Git-style commits (.obx) | **Nobody** in consumer notes | Unique — version control for thought |
 | Echoes tied to Handles | **Nobody** | Context-aware reminders through Loops |
 | InsightEngine (local AI) | Partially Mem.ai | Safety scanning (API keys, SSNs) unique in notes |
+| AI Workspace with tool use | **Nobody at this depth** | Agentic AI with Accept/Dismiss action cards — not just chat |
 
-**The innovation is the system design.** Handles connect to Echoes. Intents feed Insights. Commits create immutable history. Sections are the atomic unit everything builds on.
+**The innovation is the system design.** Handles connect to Echoes. Intents feed Insights. Commits create immutable history. The AI Workspace uses tool-use to propose structured actions on user data. Sections are the atomic unit everything builds on.
 
 ---
 
@@ -94,6 +108,8 @@ Removing the tab entirely would bury Loops and Commits — two of the most defen
 - Git-inspired commits — unprecedented in consumer notes space
 - AI integration via Supabase Edge Functions — API keys server-side, clean proxy architecture
 - InsightEngine — local-first intelligence (safety scanning, stale detection, task surfacing)
+- AI Workspace with agentic tool use — 5 structured tools, human-in-the-loop approval via ActionCards
+- Dual-mode AI (Edit + Chat) with full project context injection — AI sees up to 25 pages with sections
 - Section-as-atom design — every feature builds on sections, creating architectural coherence
 - Intent classification — semantic structure that feeds intelligence
 - Supabase backend — scalable, cost-effective, real-time capable
@@ -118,7 +134,7 @@ Removing the tab entirely would bury Loops and Commits — two of the most defen
 - API/integration layer — Handles as API surface for external tools (Zapier, Shortcuts)
 - Semantic graph visualization — visual map of Handle connections across notes
 - Enterprise privacy mode — schema already has `privacy_mode`, expandable to SOC 2
-- AI agent actions — tool-use architecture ready for deeper AI autonomy
+- AI agent expansion — tool-use architecture already in production, ready for additional tools (create note, merge loops, auto-tag, etc.)
 - Export as knowledge graph — Handles + sections exportable to graph databases
 
 ### THREATS
@@ -231,11 +247,12 @@ Obius has a genuinely innovative core in Handle Loops. The git-inspired commit s
 
 ### CEO Action Items (Priority Order):
 1. **Keep all three tabs, restructure Tab 2 into focused Vault**
-2. **Build 60-second onboarding that forces first Handle creation**
-3. **Implement freemium monetization immediately**
+2. **Build 60-second onboarding that forces first Handle creation AND first Workspace interaction**
+3. **Implement freemium monetization immediately** — gate AI Workspace behind Pro tier
 4. **Begin web version development** (top VC concern)
-5. **Instrument everything for retention analytics**
-6. **Positioning:** "Obius is a thinking operating system, not a notes app." The Handle graph, commit history, and Echo system are the pitch — not "AI notes."
+5. **Instrument everything for retention analytics** — especially Workspace session frequency and action acceptance rate
+6. **Expand tool-use surface** — add `create_note`, `merge_loops`, `auto_commit`, `suggest_echoes` tools to the Workspace
+7. **Positioning:** "Obius is a thinking operating system with an AI co-pilot, not a notes app." The AI Workspace's agentic tool-use, Handle graph, commit history, and Echo system are the pitch — not "AI notes."
 
 ### Fundraising Readiness: 6/10
 
