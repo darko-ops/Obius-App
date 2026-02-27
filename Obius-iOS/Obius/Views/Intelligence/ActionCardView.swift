@@ -5,31 +5,77 @@ struct ActionCardView: View {
     let onAccept: () -> Void
     let onDismiss: () -> Void
 
+    @State private var isExpanded: Bool = false
+
+    private var isResolved: Bool {
+        action.status != .pending
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Type badge
-            HStack(spacing: 4) {
-                Image(systemName: action.icon)
-                    .font(.caption2)
-                Text(action.toolName.replacingOccurrences(of: "_", with: " ").capitalized)
-                    .font(.caption2.weight(.medium))
+            // Type badge + expand toggle for resolved cards
+            HStack {
+                HStack(spacing: 4) {
+                    Image(systemName: action.icon)
+                        .font(.caption2)
+                    Text(action.toolName.replacingOccurrences(of: "_", with: " ").capitalized)
+                        .font(.caption2.weight(.medium))
+                }
+                .foregroundStyle(action.tintColor)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(action.tintColor.opacity(0.15))
+                .clipShape(Capsule())
+
+                Spacer()
+
+                if isResolved && action.fullContent != nil {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isExpanded.toggle()
+                        }
+                    } label: {
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            .foregroundStyle(action.tintColor)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(action.tintColor.opacity(0.15))
-            .clipShape(Capsule())
 
             // Title
             Text(action.title)
                 .font(.subheadline.weight(.medium))
                 .lineLimit(2)
 
-            // Description
-            Text(action.description)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(3)
+            // Content area
+            if let full = action.fullContent {
+                if !isResolved {
+                    // Pending: show full content so user can review before accepting
+                    Text(full)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(Color.gray.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                } else if isExpanded {
+                    // Resolved + expanded: show full content
+                    Text(full)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(Color.gray.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+            } else {
+                // Non-content actions: show description
+                Text(action.description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(isResolved ? 2 : nil)
+            }
 
             // Action row
             statusRow

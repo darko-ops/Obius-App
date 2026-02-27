@@ -123,7 +123,8 @@ struct MainTabView: View {
                         .environmentObject(appState.insightRepository)
                 }
                 .tabItem {
-                    Image(systemName: "house.fill")
+                    Image("ObiusLogo")
+                        .renderingMode(.original)
                 }
                 .tag(1)
 

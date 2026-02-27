@@ -597,13 +597,17 @@ final class InsightEngine {
 
     private func detectUpcomingEchoes(sectionsByNote: [String: [Section]]) -> [Insight] {
         let now = Date()
+        let oneHourAgo = now.addingTimeInterval(-60 * 60)
         let twentyFourHoursFromNow = now.addingTimeInterval(24 * 60 * 60)
         var insights: [Insight] = []
 
         for echo in EchoManager.shared.activeEchoes {
-            guard let fireDate = echo.nextFireDateAsDate,
-                  fireDate > now,
-                  fireDate <= twentyFourHoursFromNow else { continue }
+            guard let fireDate = echo.nextFireDateAsDate else { continue }
+
+            // Include echoes firing now (up to 1h overdue) or upcoming within 24h
+            let isFiring = fireDate <= now && fireDate > oneHourAgo
+            let isUpcoming = fireDate > now && fireDate <= twentyFourHoursFromNow
+            guard isFiring || isUpcoming else { continue }
 
             let handleName = HandleManager.shared.getHandle(id: echo.handleId)?.displayName ?? "Unknown"
 
@@ -619,19 +623,25 @@ final class InsightEngine {
             }
 
             // Build relative time description
-            let interval = fireDate.timeIntervalSince(now)
-            let hours = Int(interval / 3600)
-            let minutes = Int((interval.truncatingRemainder(dividingBy: 3600)) / 60)
             let timeDesc: String
-            if hours > 0 {
-                timeDesc = "Fires in \(hours)h \(minutes)m"
+            if isFiring {
+                timeDesc = "Firing now"
             } else {
-                timeDesc = "Fires in \(minutes)m"
+                let interval = fireDate.timeIntervalSince(now)
+                let hours = Int(interval / 3600)
+                let minutes = Int((interval.truncatingRemainder(dividingBy: 3600)) / 60)
+                if hours > 0 {
+                    timeDesc = "Fires in \(hours)h \(minutes)m"
+                } else {
+                    timeDesc = "Fires in \(minutes)m"
+                }
             }
 
             insights.append(Insight(
                 insightType: .upcomingEcho,
-                title: "Echo: @\(handleName) fires soon",
+                title: isFiring
+                    ? "Echo: @\(handleName)"
+                    : "Echo: @\(handleName) fires soon",
                 body: timeDesc,
                 sourceNoteId: noteId,
                 sourceSectionId: sectionId

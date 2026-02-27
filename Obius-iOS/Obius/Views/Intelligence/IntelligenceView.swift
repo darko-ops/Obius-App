@@ -1,23 +1,5 @@
 import SwiftUI
 
-enum WorkspaceAction: String, CaseIterable, Identifiable {
-    case summarize = "Summarize"
-    case refine = "Refine"
-    case compare = "Compare"
-    case freeform = "Free-form"
-
-    var id: Self { self }
-
-    var icon: String {
-        switch self {
-        case .summarize: return "doc.text"
-        case .refine: return "pencil.and.outline"
-        case .compare: return "arrow.left.arrow.right"
-        case .freeform: return "text.bubble"
-        }
-    }
-}
-
 struct IntelligenceView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var insightRepository: InsightRepository
@@ -243,7 +225,7 @@ struct IntelligenceView: View {
 
     private var upcomingEchoesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("UPCOMING ECHOES")
+            Text("ECHOES")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
@@ -588,11 +570,25 @@ struct WorkspaceSheet: View {
 
     let handles: [Handle]
 
+    enum FocusMode: String, CaseIterable {
+        case pages = "Pages"
+        case loops = "Loops"
+    }
+
+    enum InteractionMode: String, CaseIterable {
+        case edit = "Edit"
+        case chat = "Chat"
+    }
+
     @State private var selectedHandleIds: Set<String> = []
-    @State private var selectedAction: WorkspaceAction = .summarize
+    @State private var focusMode: FocusMode = .pages
+    @State private var selectedPageId: String?
+    @State private var cachedPageSections: [Section] = []
     @State private var editableContent = ""
     @State private var editingHandleId: String?
     @State private var contentHasUnsavedChanges = false
+    @State private var interactionMode: InteractionMode?
+    @State private var searchText = ""
     @State private var messages: [ChatMessage] = []
     @State private var inputText = ""
     @State private var isLoading = false
@@ -607,17 +603,42 @@ struct WorkspaceSheet: View {
         return handles.first { $0.id == firstId }
     }
 
-    private var isCompareDisabled: Bool {
-        selectedHandleIds.count < 2
+    @AppStorage("selectedModuleId") private var selectedModuleId: String?
+
+    private var pages: [Note] {
+        appState.noteRepository.notes.filter { !$0.isDeleted && $0.moduleId == selectedModuleId }
+    }
+
+    private var pageHandles: [Handle] {
+        let handleIds = Set(cachedPageSections.compactMap(\.handleId))
+        return handles.filter { handleIds.contains($0.id) }
+    }
+
+    private var filteredPages: [Note] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return pages }
+        return pages.filter {
+            $0.displayTitle.lowercased().contains(query) ||
+            $0.body.lowercased().contains(query)
+        }
+    }
+
+    private var filteredHandles: [Handle] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return handles }
+        return handles.filter {
+            $0.displayName.lowercased().contains(query) ||
+            $0.content.lowercased().contains(query)
+        }
+    }
+
+    private var hasSelection: Bool {
+        selectedPageId != nil || !selectedHandleIds.isEmpty
     }
 
     private var canSend: Bool {
-        guard !selectedHandleIds.isEmpty else { return false }
         guard !isLoading else { return false }
-        if selectedAction == .freeform {
-            return !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-        return true
+        return !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -625,36 +646,61 @@ struct WorkspaceSheet: View {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        // Loop content editor
-                        if let handle = primaryHandle {
+                        // Search bar (hidden when something is selected)
+                        if !hasSelection {
+                            searchBar
+                        }
+
+                        // Focus mode selector
+                        focusSelector
+
+                        // Pages list or Loop list based on mode
+                        if focusMode == .pages {
+                            pagesList
+                        } else {
+                            loopSelector
+                        }
+
+                        // Full page content when a page is selected
+                        if let pageId = selectedPageId,
+                           let page = pages.first(where: { $0.id == pageId }) {
+                            pageFullContent(for: page)
+                        }
+
+                        // Loop content editor (only in loops mode)
+                        if focusMode == .loops, let handle = primaryHandle {
                             loopContentEditor(for: handle)
                         }
 
-                        // Loop chip selector
-                        loopSelector
+                        // Mode picker after selection
+                        if hasSelection && interactionMode == nil {
+                            modePicker
+                        }
 
-                        // Action picker
-                        actionPicker
-
-                        // Chat messages
-                        if !messages.isEmpty {
+                        // Chat messages (only after mode chosen)
+                        if interactionMode != nil && !messages.isEmpty {
                             chatSection
                         }
 
-                        if isLoading {
+                        if interactionMode != nil && isLoading {
                             loadingIndicator
                         }
                     }
                     .padding()
                 }
 
-                // Input bar pinned at bottom
-                inputBar
+                // Input bar pinned at bottom (only after mode chosen)
+                if interactionMode != nil {
+                    inputBar
+                }
             }
+            .background(Color.black)
             .navigationTitle("Workspace")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
+            .toolbarBackground(Color.black, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
@@ -695,8 +741,10 @@ struct WorkspaceSheet: View {
                 .scrollContentBackground(.hidden)
                 .padding(8)
                 .frame(minHeight: 100, maxHeight: 200)
-                .background(Color.gray.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                )
                 .onChange(of: editableContent) {
                     if editingHandleId == handle.id {
                         contentHasUnsavedChanges = true
@@ -705,65 +753,193 @@ struct WorkspaceSheet: View {
         }
     }
 
+    // MARK: - Full Page Content
+
+    @ViewBuilder
+    private func pageFullContent(for note: Note) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Page title
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(note.intent.color)
+                    .frame(width: 4, height: 18)
+                Text(note.displayTitle)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Spacer()
+            }
+            .padding(.bottom, 8)
+
+            // Page body + sections + interstitials
+            VStack(alignment: .leading, spacing: 0) {
+                let body = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !body.isEmpty {
+                    Text(body)
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 6)
+                }
+
+                let sections = cachedPageSections.filter { $0.deletedAt == nil }
+                ForEach(sections) { section in
+                    sectionRow(for: section)
+
+                    // Interstitial text after this section
+                    let interstitial = note.textAfterSection(section.id)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !interstitial.isEmpty {
+                        Text(interstitial)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 4)
+                    }
+                }
+
+                // End interstitial
+                let endText = note.endText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !endText.isEmpty {
+                    Text(endText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 4)
+                }
+            }
+            .padding(10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func sectionRow(for section: Section) -> some View {
+        let content = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let handleName = section.handleId
+            .flatMap { HandleManager.shared.getHandle(id: $0) }
+            .map { "@\($0.displayName)" }
+
+        HStack(alignment: .top, spacing: 6) {
+            // Section type indicator
+            RoundedRectangle(cornerRadius: 1)
+                .fill(section.intent.color.opacity(0.5))
+                .frame(width: 2, height: section.sectionType == .line ? 14 : 20)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 2) {
+                if let handleName {
+                    Text(handleName)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(section.intent.color)
+                }
+
+                if section.contentType == .checklist {
+                    Image(systemName: content.isEmpty ? "square" : "checkmark.square")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                if !content.isEmpty {
+                    Text(content)
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
     // MARK: - Loop Selector
 
     private var loopSelector: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("LOOPS")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
             if handles.isEmpty {
                 Text("No loops available")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 8)
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(handles) { handle in
-                            let isSelected = selectedHandleIds.contains(handle.id)
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.15)) {
-                                    toggleHandle(handle)
-                                }
-                            } label: {
-                                Text("@\(handle.displayName)")
-                                    .font(.subheadline.weight(.medium))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .foregroundStyle(isSelected ? .white : handle.intent.color)
-                                    .background(isSelected ? handle.intent.color : .clear)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 16)
-                                            .strokeBorder(handle.intent.color, lineWidth: 1.5)
-                                    )
-                                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                            }
-                            .buttonStyle(.plain)
-                        }
+            } else if let selectedHandle = selectedHandleIds.sorted().first.flatMap({ id in handles.first { $0.id == id } }) {
+                loopRow(for: selectedHandle)
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        selectedHandleIds.removeAll()
+                        editableContent = ""
+                        editingHandleId = nil
+                        contentHasUnsavedChanges = false
+                        interactionMode = nil
+                        messages.removeAll()
                     }
+                } label: {
+                    Label("Change loop", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            } else {
+                ForEach(filteredHandles) { handle in
+                    loopRow(for: handle)
                 }
             }
         }
     }
 
-    private func toggleHandle(_ handle: Handle) {
+    @ViewBuilder
+    private func loopRow(for handle: Handle) -> some View {
         let isSelected = selectedHandleIds.contains(handle.id)
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                toggleHandle(handle)
+            }
+        } label: {
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(handle.intent.color)
+                    .frame(width: 4, height: 32)
 
-        if isSelected {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("@\(handle.displayName)")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    let preview = handle.content.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60)
+                    if !preview.isEmpty {
+                        Text(preview)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer()
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            .padding(.vertical, 6)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func toggleHandle(_ handle: Handle) {
+        if selectedHandleIds.contains(handle.id) {
             selectedHandleIds.remove(handle.id)
         } else {
-            // Save pending edits before switching
             savePendingEdits()
             selectedHandleIds.insert(handle.id)
         }
 
-        if selectedAction == .compare && selectedHandleIds.count < 2 {
-            selectedAction = .summarize
-        }
+        // Reset mode when selection changes
+        interactionMode = nil
+        messages.removeAll()
+        searchText = ""
 
-        // Load the new primary handle's content
         if let primary = primaryHandle {
             editableContent = primary.content
             editingHandleId = primary.id
@@ -775,48 +951,244 @@ struct WorkspaceSheet: View {
         }
     }
 
-    // MARK: - Action Picker
+    // MARK: - Search Bar
 
-    private var actionPicker: some View {
+    private var searchBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            TextField("Search pages and loops...", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.subheadline)
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    // MARK: - Focus Selector
+
+    private var focusSelector: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("ACTION")
+            Text("FOCUS")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(Array(WorkspaceAction.allCases), id: \.rawValue) { (action: WorkspaceAction) in
-                        actionPill(for: action)
+            HStack(spacing: 8) {
+                ForEach(FocusMode.allCases, id: \.self) { mode in
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            focusMode = mode
+                            selectedHandleIds.removeAll()
+                            selectedPageId = nil
+                            cachedPageSections = []
+                            editableContent = ""
+                            editingHandleId = nil
+                            contentHasUnsavedChanges = false
+                            interactionMode = nil
+                            messages.removeAll()
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: mode == .pages ? "doc.text" : "link")
+                                .font(.caption)
+                            Text(mode.rawValue)
+                                .font(.subheadline.weight(.medium))
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .foregroundColor(focusMode == mode ? .white : .secondary)
+                        .background(focusMode == mode ? Color.accentColor : .clear)
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(focusMode == mode ? Color.clear : Color.gray.opacity(0.3), lineWidth: 1)
+                        )
+                        .clipShape(Capsule())
                     }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    // MARK: - Pages List
+
+    private var pagesList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let selectedPage = pages.first(where: { $0.id == selectedPageId }) {
+                pageRow(for: selectedPage)
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        selectedPageId = nil
+                        cachedPageSections = []
+                        selectedHandleIds.removeAll()
+                        editableContent = ""
+                        editingHandleId = nil
+                        contentHasUnsavedChanges = false
+                        interactionMode = nil
+                        messages.removeAll()
+                    }
+                } label: {
+                    Label("Change page", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            } else {
+                ForEach(filteredPages) { note in
+                    pageRow(for: note)
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func actionPill(for action: WorkspaceAction) -> some View {
-        let isSelected = selectedAction == action
-        let isDisabled = action == .compare && isCompareDisabled
-
+    private func pageRow(for note: Note) -> some View {
+        let isSelected = selectedPageId == note.id
         Button {
             withAnimation(.easeInOut(duration: 0.15)) {
-                selectedAction = action
+                if isSelected {
+                    selectedPageId = nil
+                    cachedPageSections = []
+                    selectedHandleIds.removeAll()
+                    editableContent = ""
+                    editingHandleId = nil
+                    contentHasUnsavedChanges = false
+                    interactionMode = nil
+                    messages.removeAll()
+                } else {
+                    selectedPageId = note.id
+                    selectedHandleIds.removeAll()
+                    editableContent = ""
+                    editingHandleId = nil
+                    contentHasUnsavedChanges = false
+                    interactionMode = nil
+                    messages.removeAll()
+                    searchText = ""
+                    loadSectionsForPage(note.id)
+                }
             }
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: action.icon)
-                    .font(.caption)
-                Text(action.rawValue)
-                    .font(.subheadline.weight(.medium))
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(note.intent.color)
+                    .frame(width: 4, height: 32)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(note.displayTitle)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    let preview = note.body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60)
+                    if !preview.isEmpty {
+                        Text(preview)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer()
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.accentColor)
+                }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .foregroundColor(isDisabled ? Color.gray : isSelected ? Color.white : Color.primary)
-            .background(isSelected && !isDisabled ? Color.accentColor : Color.gray.opacity(0.15))
-            .clipShape(Capsule())
+            .padding(.vertical, 6)
         }
         .buttonStyle(.plain)
-        .disabled(isDisabled)
+    }
+
+    private var loopsInPageSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("LOOPS IN PAGE")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.top, 4)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(pageHandles) { handle in
+                        let isSelected = selectedHandleIds.contains(handle.id)
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                toggleHandle(handle)
+                            }
+                        } label: {
+                            Text("@\(handle.displayName)")
+                                .font(.subheadline.weight(.medium))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .foregroundStyle(isSelected ? .white : handle.intent.color)
+                                .background(isSelected ? handle.intent.color : .clear)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .strokeBorder(handle.intent.color, lineWidth: 1.5)
+                                )
+                                .clipShape(RoundedRectangle(cornerRadius: 16))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Mode Picker
+
+    private var modePicker: some View {
+        HStack(spacing: 12) {
+            modeButton(.edit, icon: "pencil.line", description: "Apply changes")
+            modeButton(.chat, icon: "bubble.left.and.text.bubble.right", description: "Discuss content")
+        }
+        .padding(.top, 4)
+    }
+
+    private func modeButton(_ mode: InteractionMode, icon: String, description: String) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                interactionMode = mode
+                messages.removeAll()
+            }
+        } label: {
+            VStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.title3)
+                Text(mode.rawValue)
+                    .font(.subheadline.weight(.semibold))
+                Text(description)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func loadSectionsForPage(_ noteId: String) {
+        Task {
+            if let sections = try? await appState.sectionRepository.getSections(noteId: noteId) {
+                await MainActor.run {
+                    cachedPageSections = sections
+                }
+            }
+        }
     }
 
     // MARK: - Chat Section
@@ -856,15 +1228,17 @@ struct WorkspaceSheet: View {
     private var inputBar: some View {
         HStack(spacing: 10) {
             TextField(
-                selectedAction == .freeform ? "Ask about your loops..." : "Additional instructions...",
+                interactionMode == .edit ? "Describe your changes..." : "Ask about this content...",
                 text: $inputText,
                 axis: .vertical
             )
             .textFieldStyle(.plain)
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(Color.gray.opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+            )
             .focused($isInputFocused)
             .lineLimit(1...4)
 
@@ -883,7 +1257,7 @@ struct WorkspaceSheet: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
-        .background(Color(UIColor.systemBackground))
+        .background(Color.black)
     }
 
     // MARK: - Send Message
@@ -892,78 +1266,74 @@ struct WorkspaceSheet: View {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend else { return }
 
-        // Save any pending content edits so AI sees latest
         savePendingEdits()
 
-        // Build loop content — use editableContent for the primary handle since
-        // the handles array is a snapshot and won't reflect edits.
-        // Include handle IDs so the AI can reference them in tool calls.
+        // Build loop content if loops are selected
         let currentHandles = selectedHandles
-        let loopContent = currentHandles.map { handle in
-            let content: String
-            if handle.id == editingHandleId {
-                content = editableContent
-            } else {
-                content = handle.content
-            }
-            let cleaned = content.trimmingCharacters(in: .whitespacesAndNewlines)
-            return "Loop: @\(handle.displayName) (id: \(handle.id))\nContent:\n\(cleaned.isEmpty ? "(empty)" : cleaned)"
-        }.joined(separator: "\n\n---\n\n")
-
-        // Build user-facing message
-        let userText: String
-        let handleNames = currentHandles.map { "@\($0.displayName)" }.joined(separator: ", ")
-        switch selectedAction {
-        case .summarize:
-            userText = text.isEmpty ? "Summarize: \(handleNames)" : "Summarize: \(handleNames)\n\n\(text)"
-        case .refine:
-            userText = text.isEmpty ? "Refine: \(handleNames)" : "Refine: \(handleNames)\n\n\(text)"
-        case .compare:
-            userText = text.isEmpty ? "Compare: \(handleNames)" : "Compare: \(handleNames)\n\n\(text)"
-        case .freeform:
-            userText = text
+        let loopContent: String
+        if currentHandles.isEmpty {
+            loopContent = ""
+        } else {
+            loopContent = currentHandles.map { handle in
+                let content = handle.id == editingHandleId ? editableContent : handle.content
+                let cleaned = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                return "Loop: @\(handle.displayName) (id: \(handle.id))\nContent:\n\(cleaned.isEmpty ? "(empty)" : cleaned)"
+            }.joined(separator: "\n\n---\n\n")
         }
 
-        messages.append(ChatMessage(role: .user, content: userText))
+        // Build page context if a page is selected
+        let pageContext: String
+        if let pageId = selectedPageId,
+           let page = pages.first(where: { $0.id == pageId }) {
+            let body = page.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            pageContext = "Focused page: \"\(page.displayTitle)\"\nBody: \(body.isEmpty ? "(empty)" : String(body.prefix(500)))"
+        } else {
+            pageContext = ""
+        }
+
+        messages.append(ChatMessage(role: .user, content: text))
         inputText = ""
         isLoading = true
 
-        // Build prompt for Claude
-        let prompt: String
-        switch selectedAction {
-        case .summarize:
-            let extra = text.isEmpty ? "" : "\n\nAdditional instructions: \(text)"
-            prompt = "Summarize the following loops:\n\n\(loopContent)\(extra)"
-        case .refine:
-            let extra = text.isEmpty ? "" : "\n\nAdditional instructions: \(text)"
-            prompt = "Refine and improve the content of these loops:\n\n\(loopContent)\(extra)"
-        case .compare:
-            let extra = text.isEmpty ? "" : "\n\nAdditional instructions: \(text)"
-            prompt = "Compare these loops — highlight similarities, differences, and connections:\n\n\(loopContent)\(extra)"
-        case .freeform:
-            prompt = text
-        }
+        let currentMode = interactionMode ?? .edit
 
         Task {
             do {
                 let apiMessages = buildAPIMessages()
-                // Always include loop content so the AI can see it
-                let richContext = await buildRichContext(for: selectedAction == .freeform ? text : prompt)
-                let context = "Loop content:\n\n\(loopContent)\n\n\(richContext)"
+                let richContext = await buildRichContext(for: text)
 
-                let response = try await ClaudeService.sendWithTools(
-                    messages: apiMessages,
-                    noteContext: context
-                )
+                var contextParts: [String] = []
+                contextParts.append(richContext)
+                if !pageContext.isEmpty { contextParts.append(pageContext) }
+                if !loopContent.isEmpty { contextParts.append("Selected loop content:\n\n\(loopContent)") }
+                let context = contextParts.joined(separator: "\n\n")
 
-                let content = response.text.isEmpty && !response.actions.isEmpty
-                    ? "Here's what I suggest:"
-                    : response.text
-                messages.append(ChatMessage(
-                    role: .assistant,
-                    content: content,
-                    actions: response.actions
-                ))
+                switch currentMode {
+                case .edit:
+                    let response = try await ClaudeService.sendWithTools(
+                        messages: apiMessages,
+                        noteContext: context
+                    )
+
+                    let content = response.text.isEmpty && !response.actions.isEmpty
+                        ? "Here's what I suggest:"
+                        : response.text
+                    messages.append(ChatMessage(
+                        role: .assistant,
+                        content: content,
+                        actions: response.actions
+                    ))
+
+                case .chat:
+                    let responseText = try await ClaudeService.sendChat(
+                        messages: apiMessages,
+                        noteContext: context
+                    )
+                    messages.append(ChatMessage(
+                        role: .assistant,
+                        content: responseText
+                    ))
+                }
             } catch {
                 let errorDesc = "\(error)"
                 let errorMessage: String
@@ -1009,59 +1379,66 @@ struct WorkspaceSheet: View {
     private func buildRichContext(for query: String) async -> String {
         var parts: [String] = []
 
-        let notes = appState.noteRepository.notes
-        var matchedSections: [Section] = []
-        if let results = try? await appState.sectionRepository.searchSections(query: query) {
-            matchedSections = Array(results.prefix(8))
-        }
+        let notes = appState.noteRepository.notes.filter { !$0.isDeleted }
 
-        if !matchedSections.isEmpty {
-            var snippets: [String] = []
-            for section in matchedSections {
-                let noteTitle = notes.first(where: { $0.id == section.noteId })?.displayTitle ?? "Untitled"
-                let cleaned = Self.cleanContentForAI(section.content)
-                guard !cleaned.isEmpty else { continue }
-                snippets.append("  \"\(noteTitle)\": \(cleaned)")
-            }
-            if !snippets.isEmpty {
-                parts.append("Related notes:\n\(snippets.joined(separator: "\n"))")
-            }
-        } else {
-            let keywords = query.lowercased()
-                .split(separator: " ")
-                .filter { $0.count > 2 }
-                .map(String.init)
+        // Full project content — include note bodies and section content
+        // so the AI can see the entire project, not just loops.
+        var noteDetails: [String] = []
+        for note in notes.prefix(25) {
+            let title = note.displayTitle
+            let intent = note.intent.rawValue
+            let body = Self.cleanContentForAI(note.body)
 
-            if !keywords.isEmpty {
-                var snippets: [String] = []
-                for note in notes.prefix(20) {
-                    let body = note.body.lowercased()
-                    if keywords.contains(where: { body.contains($0) }) {
-                        let title = note.displayTitle
-                        let cleaned = Self.cleanContentForAI(note.body)
-                        guard !cleaned.isEmpty else { continue }
-                        snippets.append("  \"\(title)\": \(cleaned)")
-                    }
-                    if snippets.count >= 8 { break }
+            var noteEntry = "Page: \"\(title)\" (intent: \(intent))"
+            if !body.isEmpty {
+                noteEntry += "\n  Body: \(body)"
+            }
+
+            // Include section content
+            if let sections = try? await appState.sectionRepository.getSections(noteId: note.id) {
+                let textSections = sections
+                    .filter { $0.contentType == .text || $0.contentType == .checklist || $0.contentType == .quote }
+                    .prefix(8)
+                var sectionPreviews: [String] = []
+                for section in textSections {
+                    let cleaned = Self.cleanContentForAI(section.content)
+                    guard !cleaned.isEmpty else { continue }
+                    let handleTag = section.handleId
+                        .flatMap { HandleManager.shared.getHandle(id: $0) }
+                        .map { "@\($0.displayName): " } ?? ""
+                    sectionPreviews.append("    \(handleTag)\(cleaned)")
                 }
-                if !snippets.isEmpty {
-                    parts.append("Related notes:\n\(snippets.joined(separator: "\n"))")
+                if !sectionPreviews.isEmpty {
+                    noteEntry += "\n  Sections:\n\(sectionPreviews.joined(separator: "\n"))"
                 }
             }
+
+            // Include interstitial content
+            let interstitials = note.interstitialContent.values
+                .map { Self.cleanContentForAI($0) }
+                .filter { !$0.isEmpty }
+                .prefix(3)
+            if !interstitials.isEmpty {
+                noteEntry += "\n  Between sections: \(interstitials.joined(separator: " | "))"
+            }
+
+            noteDetails.append(noteEntry)
         }
 
-        // Workspace overview — human-readable, no raw IDs
-        let noteNames = notes.prefix(15).map { "  - \($0.displayTitle) (\($0.intent.rawValue))" }
-        parts.append("Your notes (\(notes.count) total):\n\(noteNames.joined(separator: "\n"))")
+        if !noteDetails.isEmpty {
+            let header = "Project pages (\(notes.count) total):"
+            parts.append("\(header)\n\n\(noteDetails.joined(separator: "\n\n"))")
+        }
 
+        // All loops with their content
         let allHandles = HandleManager.shared.handles
         if !allHandles.isEmpty {
-            let loopNames = allHandles.prefix(20).map { handle in
+            let loopDetails = allHandles.prefix(20).map { handle in
                 let preview = Self.cleanContentForAI(handle.content)
-                let suffix = preview.isEmpty ? "" : " — \(String(preview.prefix(60)))"
-                return "  - @\(handle.displayName) (\(handle.intent.rawValue))\(suffix)"
+                let suffix = preview.isEmpty ? " (empty)" : "\n  Content: \(preview)"
+                return "  @\(handle.displayName) (\(handle.intent.rawValue))\(suffix)"
             }
-            parts.append("Your loops (\(allHandles.count) total):\n\(loopNames.joined(separator: "\n"))")
+            parts.append("Project loops (\(allHandles.count) total):\n\(loopDetails.joined(separator: "\n"))")
         }
 
         return parts.joined(separator: "\n\n")

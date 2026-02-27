@@ -23,6 +23,7 @@ struct SuggestedAction: Identifiable {
         case setNoteIntent(SetNoteIntentParams)
         case promoteToHandle(PromoteToHandleParams)
         case updateLoopContent(UpdateLoopContentParams)
+        case updatePageBody(UpdatePageBodyParams)
     }
 
     struct ScheduleEchoParams {
@@ -52,6 +53,12 @@ struct SuggestedAction: Identifiable {
         let newContent: String
     }
 
+    struct UpdatePageBodyParams {
+        let noteId: String
+        let noteTitle: String
+        let newBody: String
+    }
+
     // MARK: - Display Properties
 
     var icon: String {
@@ -60,6 +67,7 @@ struct SuggestedAction: Identifiable {
         case .setNoteIntent:     return "tag"
         case .promoteToHandle:   return "arrow.up.right.circle"
         case .updateLoopContent: return "pencil.and.outline"
+        case .updatePageBody:    return "doc.text"
         }
     }
 
@@ -74,6 +82,9 @@ struct SuggestedAction: Identifiable {
             return "Promote to @\(p.handleName)"
         case .updateLoopContent(let p):
             return "Update @\(p.handleName)"
+        case .updatePageBody(let p):
+            let display = p.noteTitle.isEmpty ? "Untitled" : p.noteTitle
+            return "Update \(display)"
         }
     }
 
@@ -91,6 +102,18 @@ struct SuggestedAction: Identifiable {
         case .updateLoopContent(let p):
             let preview = p.newContent.prefix(80)
             return String(preview)
+        case .updatePageBody(let p):
+            let preview = p.newBody.prefix(80)
+            return String(preview)
+        }
+    }
+
+    /// Full proposed content for content-update actions, nil for others.
+    var fullContent: String? {
+        switch actionType {
+        case .updateLoopContent(let p): return p.newContent
+        case .updatePageBody(let p):    return p.newBody
+        default:                        return nil
         }
     }
 
@@ -100,6 +123,7 @@ struct SuggestedAction: Identifiable {
         case .setNoteIntent:     return "set_note_intent"
         case .promoteToHandle:   return "promote_to_handle"
         case .updateLoopContent: return "update_loop_content"
+        case .updatePageBody:    return "update_page_body"
         }
     }
 
@@ -109,6 +133,7 @@ struct SuggestedAction: Identifiable {
         case .setNoteIntent:     return .blue
         case .promoteToHandle:   return .purple
         case .updateLoopContent: return .green
+        case .updatePageBody:    return .cyan
         }
     }
 
@@ -178,6 +203,18 @@ struct SuggestedAction: Identifiable {
                 newContent: newContent
             ))
 
+        case "update_page_body":
+            guard let noteId = input["note_id"] as? String,
+                  let noteTitle = input["note_title"] as? String,
+                  let newBody = input["new_body"] as? String else {
+                return nil
+            }
+            actionType = .updatePageBody(UpdatePageBodyParams(
+                noteId: noteId,
+                noteTitle: noteTitle,
+                newBody: newBody
+            ))
+
         default:
             return nil
         }
@@ -229,6 +266,9 @@ struct SuggestedAction: Identifiable {
 
         case .updateLoopContent(let p):
             try await HandleManager.shared.updateContent(handleId: p.handleId, content: p.newContent)
+
+        case .updatePageBody(let p):
+            try await appState.noteRepository.updateNoteBody(p.noteId, body: p.newBody)
         }
     }
 

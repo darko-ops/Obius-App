@@ -107,6 +107,22 @@ enum ClaudeService {
         return ToolResponse(text: combinedText, actions: actions)
     }
 
+    // MARK: - Send Chat (no tools)
+
+    /// Send a conversation without tools — returns a plain text response.
+    static func sendChat(
+        messages: [Message],
+        noteContext: String
+    ) async throws -> String {
+        let request = AIProxyRequest(
+            action: "send_chat",
+            messages: messages,
+            noteContext: noteContext
+        )
+        let response: TextResponse = try await invokeProxy(request)
+        return response.text
+    }
+
     // MARK: - Title Generation
 
     /// Generate a short AI title (2-5 words) from note content.

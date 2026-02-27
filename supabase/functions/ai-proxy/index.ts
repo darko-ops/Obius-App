@@ -84,6 +84,20 @@ const TOOL_DEFINITIONS = [
       required: ['handle_id', 'handle_name', 'new_content'],
     },
   },
+  {
+    name: 'update_page_body',
+    description:
+      'Suggest updated body text for a page. Use this when the user asks you to refine, rewrite, expand, or edit a page\'s content. The user will see the proposed changes and can accept or dismiss.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        note_id: { type: 'string', description: 'The UUID of the page to update' },
+        note_title: { type: 'string', description: 'The title of the page (for the confirmation card)' },
+        new_body: { type: 'string', description: 'The full updated body text for the page' },
+      },
+      required: ['note_id', 'note_title', 'new_body'],
+    },
+  },
 ];
 
 // ---------- System prompts per action ----------
@@ -98,9 +112,14 @@ as a card with Accept/Dismiss buttons — the action only executes if \
 accepted. Suggest actions when clearly relevant. You may combine text \
 with tool calls.
 
-When the user asks you to summarize, refine, rewrite, or improve a loop's content, \
-use the update_loop_content tool to propose the new content. The user's workspace \
-shows the loop content above and your suggestion as an action card they can accept.
+When the user asks you to edit, refine, rewrite, or improve a page's body, \
+use the update_page_body tool to propose the new content.
+
+When the user asks you to edit, refine, rewrite, or improve a loop's content, \
+use the update_loop_content tool to propose the new content.
+
+The user's workspace shows the focused content above and your suggestion as an \
+action card they can accept. Use the correct tool for the focused item (page vs loop).
 
 Available intents: idea (blue), question (yellow), task (green), evidence (purple).
 Loop names: 2-50 chars, letters/numbers/underscores only.
@@ -145,6 +164,16 @@ Max 3 suggestions. Return [] if nothing qualifies. \
 Return ONLY the JSON array, no other text.`;
 }
 
+function systemPromptForChat(noteContext: string): string {
+  return `You are the intelligence assistant inside Obius, a note-taking app. \
+The user wants to discuss and analyze their content conversationally. \
+Answer questions, give opinions, summarize, compare, and help them think. \
+Do NOT suggest edits, changes, or tool-based actions — just have a helpful conversation.
+
+Current workspace context:
+${noteContext}`;
+}
+
 const EXTRACT_ENTITIES_SYSTEM = `Analyze the following note sections and identify recurring entities (people, places, projects, \
 topics, lists) that the user references repeatedly or that would benefit from being a synced \
 Loop (a content block that stays consistent across pages).
@@ -183,6 +212,28 @@ async function handleSendWithTools(body: ActionRequest, userId: string, supabase
   logUsage({ supabase, userId, action: 'chat', inputTokens: raw.usage.input_tokens, outputTokens: raw.usage.output_tokens, model: raw.model }).catch(() => {});
 
   return jsonResponse({ content: raw.content });
+}
+
+async function handleSendChat(body: ActionRequest, userId: string, supabase: SupabaseClient) {
+  const messages = body.messages as { role: string; content: string }[];
+  const noteContext = (body.noteContext as string) || '';
+
+  if (!messages || !Array.isArray(messages)) {
+    return errorResponse('INVALID_REQUEST', 'messages array is required');
+  }
+
+  const response = await sendMessage(
+    messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+    {
+      maxTokens: 1024,
+      system: systemPromptForChat(noteContext),
+      model: AI_MODEL,
+    }
+  );
+
+  logUsage({ supabase, userId, action: 'chat_convo', inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, model: response.model }).catch(() => {});
+
+  return jsonResponse({ text: response.content });
 }
 
 async function handleGenerateTitle(body: ActionRequest, userId: string, supabase: SupabaseClient) {
@@ -276,6 +327,8 @@ serve(async (req: Request) => {
     switch (action) {
       case 'send_with_tools':
         return await handleSendWithTools(body, userId, supabase);
+      case 'send_chat':
+        return await handleSendChat(body, userId, supabase);
       case 'generate_title':
         return await handleGenerateTitle(body, userId, supabase);
       case 'generate_tags':

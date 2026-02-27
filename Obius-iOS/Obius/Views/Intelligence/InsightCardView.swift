@@ -225,12 +225,16 @@ struct TrackedInsightChip: View {
     }
 }
 
-// MARK: - Upcoming Echo Card (Compact, horizontal scroll)
+// MARK: - Echo Card (Compact, horizontal scroll)
 
 struct UpcomingEchoCard: View {
     let insight: Insight
     let onTap: () -> Void
     let onLongPress: () -> Void
+
+    private var isFiring: Bool {
+        insight.body == "Firing now"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -238,7 +242,7 @@ struct UpcomingEchoCard: View {
             HStack(spacing: 4) {
                 Image(systemName: "bell.badge")
                     .font(.system(size: 9))
-                Text("Echo")
+                Text(isFiring ? "Firing" : "Echo")
                     .font(.system(size: 10, weight: .medium))
             }
             .foregroundStyle(.orange)
@@ -251,7 +255,7 @@ struct UpcomingEchoCard: View {
             // Body preview
             Text(insight.body.isEmpty ? " " : insight.body)
                 .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isFiring ? .orange : .secondary)
                 .lineLimit(3)
                 .truncationMode(.tail)
         }
@@ -263,9 +267,27 @@ struct UpcomingEchoCard: View {
                 .stroke(Color.orange.opacity(0.25), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            if isFiring {
+                FiringEchoOutline()
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture { onTap() }
         .onLongPressGesture { onLongPress() }
+    }
+}
+
+/// Separate view so SwiftUI destroys animation state when removed.
+private struct FiringEchoOutline: View {
+    @State private var isAnimating = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 10)
+            .stroke(Color.orange, lineWidth: 2)
+            .opacity(isAnimating ? 1 : 0.2)
+            .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: isAnimating)
+            .onAppear { isAnimating = true }
     }
 }
 
