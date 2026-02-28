@@ -320,18 +320,77 @@ Currently defined in the data model but **never fed to any AI system:**
 | Temporal Echo extraction | ClaudeService.extractTemporalEchoes() | **Defined but never called** |
 | Semantic search + embeddings | SyncEngine.semanticSearch() | **Infrastructure built, no UI wired** |
 
+#### 7.7 AI Workspace Data Architecture — Persistence & Provenance
+
+**Current state: The entire AI Workspace is amnesiac.** Chat messages are stored in a SwiftUI `@State` array (`IntelligenceView.swift:592`). Close the sheet — gone. Switch from Loop focus to Page focus — gone. Toggle Edit/Chat mode — gone. There is no `conversations` table in GRDB. No `chat_messages` table in Supabase. The AI cannot remember what it discussed with the user about `@client_jones` yesterday.
+
+Worse: **accepted AI actions bypass the commit system entirely.** When the AI proposes `update_loop_content` and the user accepts, `SuggestedAction.execute()` calls `HandleManager.shared.updateContent()` directly — a raw database write with no Commit created, no version snapshot, no rollback capability, and no record that the AI authored the change. The `.obx` vault, Obius's most defensible infrastructure, is completely disconnected from the AI Workspace.
+
+**This is the single highest-leverage architectural fix in the product.**
+
+##### What to Persist and Where
+
+| Data | Storage | Format | Lifecycle |
+|---|---|---|---|
+| **Conversations** | New `conversations` table (GRDB) | JSON messages, keyed to focus target | Rolling window — last 3-5 per Handle/Page |
+| **Accepted content changes** (`update_loop_content`, `update_page_body`) | ColdStore vault | **.obx commit with AI provenance metadata** | Permanent — part of the commit chain |
+| **Accepted non-content actions** (`schedule_echo`, `set_note_intent`, `promote_to_handle`) | New `ai_action_log` table (GRDB) | Structured row with action type, params, status | Keep indefinitely (lightweight) |
+| **Dismissed/failed suggestions** | `ai_action_log` or discard | Optional log row | Ephemeral or logged |
+
+##### Conversations: Attach to Focus Target, Not a Tab
+
+Chat history should not live in Tab 1 (Intelligence) or Tab 2 (Vault). It should be **anchored to the Handle or Page it's about.** When the user opens the Workspace focused on `@client_jones`, a collapsed "Previous conversations" section at the top shows past sessions. This is consistent with Obius's data model — everything attaches to something (sections to notes, echoes to Handles, commits to notes). Orphaned chat logs in a global list break the pattern.
+
+Rolling 3-5 conversations per focus target keeps storage bounded. Older conversations summarize into a single context paragraph fed to subsequent AI turns: *"Previous discussions about @client_jones covered Q2 timeline concerns and contract renewal status."*
+
+##### Accepted Content Changes: Route Through the Commit System
+
+When `update_loop_content` or `update_page_body` is accepted, the execution path should create an `.obx` Commit before writing the change. The `CommitContent` structure should carry provenance metadata:
+
+```
+commit.json → provenance: {
+    "source": "ai_workspace",
+    "conversationId": "uuid",
+    "actionId": "tool_use_abc123",
+    "promptSummary": "User asked to simplify the project timeline"
+}
+```
+
+**This unlocks four capabilities simultaneously:**
+
+1. **Rollback** — Users can revert AI-authored changes through the existing commit chain. No separate "undo AI" feature needed.
+2. **Audit trail** — "Why did this Loop change?" → "AI suggested it during a conversation about deadline pressure." Provenance is on the commit, not in a chat log that rolled off.
+3. **Trust building** — Users can see exactly what the AI changed and when. This is critical for adoption — users who fear AI edits need visible safety nets.
+4. **AI self-reference** — Future Workspace sessions can read the commit chain and see prior AI-authored changes: *"I updated this Loop 2 weeks ago to simplify the timeline. Want me to review whether those changes held up?"*
+
+##### Why Not .obx for Everything
+
+The `.obx` format is a SHA-256-verified, content-addressed zip archive. That level of ceremony is correct for immutable content snapshots — it guarantees integrity and enables hash-chain verification. It is **wrong** for chat transcripts and action logs because:
+
+- Chat transcripts expire (rolling window) — `.obx` is designed for permanence
+- Action logs need fast queries ("show all accepted actions for @client_jones") — `.obx` requires archive extraction to read
+- Mixing ephemeral and permanent data in the same storage layer makes the vault less meaningful
+
+The principle: **.obx is for content truth. GRDB tables are for operational memory.** The AI's decisions that mutate content become permanent record via commits. Everything else stays in lightweight, queryable tables.
+
+##### Strategic Significance
+
+This fix transforms the AI from a **stateless tool** into a **persistent collaborator.** Every other "AI notes" product has stateless AI — each conversation starts fresh. Obius, with conversations anchored to Handles and AI-authored commits in the vault, creates an AI that accumulates context over time. That context is trapped in Obius's proprietary data structures (Handle graph + commit chain), deepening the switching-cost moat.
+
 ### Implementation Priority Matrix
 
 | Priority | Feature | Effort | Differentiation | Dependency |
 |---|---|---|---|---|
-| 1 | Intent-weighted context in Workspace | Low | Medium | Edit `buildRichContext()` |
-| 2 | Handle drift detection in InsightEngine | Medium | **High** | New detector in InsightEngine |
-| 3 | Commit diff intelligence + AI commit messages | Medium | **High** | Wire ColdStore into Workspace context |
-| 4 | Weekly intelligence brief | Medium | **High** | New InsightEngine Phase 2 detector |
-| 5 | Wire up temporal echo extraction | Low | Medium | Already defined, just needs UI |
-| 6 | Wire up semantic search | Low | Medium | Infrastructure exists, needs UI |
-| 7 | Handle clustering + predictive linking | High | **Very High** | Graph analysis + embedding comparison |
-| 8 | Echo behavioral learning | High | **Very High** | Needs new event tracking layer |
+| **0** | **Route AI content actions through commit system** | **Medium** | **Critical** | Wire `SuggestedAction.execute()` → ColdStore |
+| 1 | Conversation persistence per focus target | Medium | **High** | New `conversations` + `ai_action_log` GRDB tables |
+| 2 | Intent-weighted context in Workspace | Low | Medium | Edit `buildRichContext()` |
+| 3 | Handle drift detection in InsightEngine | Medium | **High** | New detector in InsightEngine |
+| 4 | Commit diff intelligence + AI commit messages | Medium | **High** | Wire ColdStore into Workspace context |
+| 5 | Weekly intelligence brief | Medium | **High** | New InsightEngine Phase 2 detector |
+| 6 | Wire up temporal echo extraction | Low | Medium | Already defined, just needs UI |
+| 7 | Wire up semantic search | Low | Medium | Infrastructure exists, needs UI |
+| 8 | Handle clustering + predictive linking | High | **Very High** | Graph analysis + embedding comparison |
+| 9 | Echo behavioral learning | High | **Very High** | Needs new event tracking layer |
 
 ### The Positioning Shift
 
@@ -350,13 +409,15 @@ Obius has a genuinely innovative core in Handle Loops. The git-inspired commit s
 **The biggest risk is obscurity, not competition.** The features are powerful but could be invisible to new users without proper onboarding. A user who never creates a Handle never discovers the moat.
 
 ### CEO Action Items (Priority Order):
-1. **Keep all three tabs, restructure Tab 2 into focused Vault**
-2. **Build 60-second onboarding that forces first Handle creation AND first Workspace interaction**
-3. **Implement freemium monetization immediately** — gate AI Workspace behind Pro tier
-4. **Begin web version development** (top VC concern)
-5. **Instrument everything for retention analytics** — especially Workspace session frequency and action acceptance rate
-6. **Expand tool-use surface** — add `create_note`, `merge_loops`, `auto_commit`, `suggest_echoes` tools to the Workspace
-7. **Positioning:** "Obius is a thinking operating system with an AI co-pilot, not a notes app." The AI Workspace's agentic tool-use, Handle graph, commit history, and Echo system are the pitch — not "AI notes."
+1. **Fix the AI provenance gap** — Route `update_loop_content` and `update_page_body` through the commit system with provenance metadata. AI-authored changes must be versioned, auditable, and reversible. This is a safety and trust issue, not just a feature.
+2. **Persist Workspace conversations per focus target** — Add `conversations` and `ai_action_log` GRDB tables. Rolling 3-5 conversations per Handle/Page. Feed prior context into subsequent AI sessions.
+3. **Keep all three tabs, restructure Tab 2 into focused Vault**
+4. **Build 60-second onboarding that forces first Handle creation AND first Workspace interaction**
+5. **Implement freemium monetization immediately** — gate AI Workspace behind Pro tier
+6. **Begin web version development** (top VC concern)
+7. **Instrument everything for retention analytics** — especially Workspace session frequency and action acceptance rate
+8. **Expand tool-use surface** — add `create_note`, `merge_loops`, `auto_commit`, `suggest_echoes` tools to the Workspace
+9. **Positioning:** "Obius is a thinking operating system with an AI co-pilot, not a notes app." The AI Workspace's agentic tool-use, Handle graph, commit history, and Echo system are the pitch — not "AI notes."
 
 ### Fundraising Readiness: 6/10
 
