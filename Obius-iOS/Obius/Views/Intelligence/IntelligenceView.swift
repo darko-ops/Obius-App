@@ -260,11 +260,19 @@ struct IntelligenceView: View {
             Button {
                 showingManageEchoes = true
             } label: {
-                Text("Manage Echoes")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
+                HStack {
+                    Text("Manage Echoes")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(echoManager.activeEchoes.count)")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                    .background(Color(red: 0.06, green: 0.06, blue: 0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
             }
             .buttonStyle(.plain)
         }
@@ -315,52 +323,59 @@ struct IntelligenceView: View {
                 .padding(.bottom, 8)
 
             ForEach(allSurfacedInsights) { insight in
-                HStack(spacing: 12) {
-                    Image(systemName: insight.displayIcon)
-                        .font(.subheadline)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        HStack(spacing: 4) {
+                            Image(systemName: insight.displayIcon)
+                                .font(.caption2)
+                            Text(insight.displayLabel)
+                                .font(.caption2.weight(.medium))
+                        }
                         .foregroundStyle(insight.displayTint.color)
-                        .frame(width: 24)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(insight.displayTint.color.opacity(0.15))
+                        .clipShape(Capsule())
 
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(insight.title)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.primary)
-                            .lineLimit(2)
+                        Spacer()
 
-                        if !insight.body.isEmpty {
-                            Text(insight.body)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
+                        HStack(spacing: 16) {
+                            Button {
+                                Task {
+                                    try? await insightRepository.trackInsight(insight.id)
+                                    haptic(.success)
+                                }
+                            } label: {
+                                Image(systemName: "star")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+
+                            Button {
+                                Task {
+                                    try? await insightRepository.dismissInsight(insight.id)
+                                }
+                                haptic(.light)
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
 
-                    Spacer(minLength: 8)
+                    Text(insight.title)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
 
-                    HStack(spacing: 16) {
-                        Button {
-                            Task {
-                                try? await insightRepository.trackInsight(insight.id)
-                                haptic(.success)
-                            }
-                        } label: {
-                            Image(systemName: "star")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-
-                        Button {
-                            Task {
-                                try? await insightRepository.dismissInsight(insight.id)
-                            }
-                            haptic(.light)
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.subheadline)
-                                .foregroundStyle(.tertiary)
-                        }
-                        .buttonStyle(.plain)
+                    if !insight.body.isEmpty {
+                        Text(insight.body)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
                     }
                 }
                 .padding(.vertical, 10)
@@ -380,7 +395,7 @@ struct IntelligenceView: View {
     // MARK: - Tracked
 
     private var trackedSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("TRACKING")
                     .font(.caption.weight(.semibold))
@@ -396,24 +411,23 @@ struct IntelligenceView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .padding(.bottom, 8)
 
-            ForEach(insightsInModule(insightRepository.trackedInsights)) { insight in
-                TrackedInsightChip(
-                    insight: insight,
-                    onTap: {
-                        selectedInsight = insight
-                    },
-                    onUntrack: {
-                        Task {
-                            try? await insightRepository.untrackInsight(insight.id)
-                            haptic(.light)
-                        }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(insightsInModule(insightRepository.trackedInsights)) { insight in
+                        TrackedInsightChip(
+                            insight: insight,
+                            onTap: {
+                                selectedInsight = insight
+                            },
+                            onUntrack: {
+                                Task {
+                                    try? await insightRepository.untrackInsight(insight.id)
+                                    haptic(.light)
+                                }
+                            }
+                        )
                     }
-                )
-
-                if insight.id != insightsInModule(insightRepository.trackedInsights).last?.id {
-                    Divider()
                 }
             }
         }

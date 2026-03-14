@@ -183,33 +183,36 @@ struct EchoRowView: View {
     @StateObject private var echoManager = EchoManager.shared
 
     var body: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 12) {
-                Image(systemName: "dot.radiowaves.left.and.right")
-                    .font(.subheadline)
-                    .foregroundStyle(.yellow)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("@\(echoManager.getHandleName(for: echo))")
-                        .font(.subheadline.weight(.medium))
-
-                    Text(echo.cadenceDescription)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                HStack(spacing: 3) {
+                    Image(systemName: "dot.radiowaves.left.and.right")
+                        .font(.system(size: 8))
+                    Text("Echo")
+                        .font(.system(size: 9, weight: .medium))
                 }
+                .foregroundStyle(.yellow)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 3)
+                .background(Color.yellow.opacity(0.15))
+                .clipShape(Capsule())
 
                 Spacer()
 
-                if !echo.isRecurring && echo.fireDateAsDate <= Date() {
-                    Text("Complete")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.green)
-                } else if let nextDate = echo.computedNextFireDate {
+                if let nextDate = echo.computedNextFireDate, !echo.isAlerted {
                     Text(nextDate, style: .relative)
-                        .font(.caption)
+                        .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                 }
             }
+
+            Text("@\(echoManager.getHandleName(for: echo))")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.primary)
+
+            Text(echo.cadenceDescription)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
 
             if echo.isAlerted {
                 Button {
@@ -218,25 +221,25 @@ struct EchoRowView: View {
                         HapticFeedback.notification(.success)
                     }
                 } label: {
-                    Label("Complete", systemImage: "checkmark.circle")
-                        .font(.caption.weight(.medium))
+                    Text("Done")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.green)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                        .background(Color.green.opacity(0.12))
+                        .padding(.vertical, 5)
+                        .background(Color.green.opacity(0.1))
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)
+                .padding(.top, 2)
             }
         }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 12)
-        .background(Color.yellow.opacity(0.08))
+        .padding(10)
+        .background(Color(red: 0.06, green: 0.06, blue: 0.06))
         .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay {
-            if echo.isAlerted {
-                EchoAlertGlow()
-            }
-        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(echo.isAlerted ? Color.yellow.opacity(0.3) : Color.clear, lineWidth: 1)
+        )
     }
 }
 
@@ -457,37 +460,202 @@ struct ManageEchoesSheet: View {
     let onSelect: (Echo) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @State private var showingCreateEcho = false
+    @StateObject private var handleManager = HandleManager.shared
 
     var body: some View {
         NavigationStack {
-            List {
-                ForEach(echoManager.activeEchoes) { echo in
-                    EchoRowView(echo: echo)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            onSelect(echo)
-                        }
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(echoManager.activeEchoes) { echo in
+                        EchoRowView(echo: echo)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                onSelect(echo)
+                            }
+                    }
                 }
+                .padding()
             }
-            .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
+            .background(Color.black)
             .navigationTitle("Echoes")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .topBarLeading) {
                     Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingCreateEcho = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .overlay {
                 if echoManager.activeEchoes.isEmpty {
-                    ContentUnavailableView {
-                        Label("No Echoes", systemImage: "dot.radiowaves.left.and.right")
-                    } description: {
-                        Text("Active echoes will appear here")
+                    VStack(spacing: 12) {
+                        Image(systemName: "dot.radiowaves.left.and.right")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.secondary)
+
+                        Text("No Echoes")
+                            .font(.subheadline.weight(.medium))
+
+                        Text("Create an echo to get reminders")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Button {
+                            showingCreateEcho = true
+                        } label: {
+                            Text("New Echo")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.primary)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(Color(red: 0.06, green: 0.06, blue: 0.06))
+                                .clipShape(Capsule())
+                        }
                     }
                 }
             }
         }
+        .sheet(isPresented: $showingCreateEcho) {
+            CreateEchoSheet()
+        }
         .presentationDetents([.large])
+    }
+}
+
+// MARK: - Create Echo Sheet
+
+struct CreateEchoSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var handleManager = HandleManager.shared
+
+    @State private var useExistingHandle = true
+    @State private var selectedHandleId: String?
+    @State private var newHandleName = ""
+    @State private var startDate = Date().addingTimeInterval(3600)
+    @State private var isRecurring = false
+    @State private var intervals = [EchoInterval(value: 1, unit: .days)]
+    @State private var isCreating = false
+
+    private var handles: [Handle] { handleManager.handles }
+
+    private var trimmedName: String {
+        newHandleName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canCreate: Bool {
+        if useExistingHandle {
+            return selectedHandleId != nil
+        } else {
+            return trimmedName.count >= 2
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                SwiftUI.Section("Loop") {
+                    if !handles.isEmpty {
+                        Picker("", selection: $useExistingHandle) {
+                            Text("Existing").tag(true)
+                            Text("New").tag(false)
+                        }
+                        .pickerStyle(.segmented)
+                        .listRowSeparator(.hidden)
+                    }
+
+                    if useExistingHandle && !handles.isEmpty {
+                        Picker("Loop", selection: $selectedHandleId) {
+                            Text("Select a loop...").tag(nil as String?)
+                            ForEach(handles) { handle in
+                                Text("@\(handle.displayName)").tag(handle.id as String?)
+                            }
+                        }
+                    } else {
+                        TextField("Loop name", text: $newHandleName)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                    }
+                }
+
+                SwiftUI.Section("Schedule") {
+                    DatePicker(
+                        "Fire Date",
+                        selection: $startDate,
+                        in: Date()...,
+                        displayedComponents: [.date, .hourAndMinute]
+                    )
+
+                    Toggle("Recurring", isOn: $isRecurring)
+
+                    if isRecurring {
+                        ForEach($intervals) { $interval in
+                            HStack {
+                                Text("Every")
+                                    .font(.subheadline)
+                                Stepper(value: $interval.value, in: 1...999) {
+                                    Text("\(interval.value)")
+                                        .font(.title3.monospacedDigit().weight(.semibold))
+                                        .frame(minWidth: 32)
+                                }
+                                Picker("Unit", selection: $interval.unit) {
+                                    ForEach(EchoIntervalUnit.allCases, id: \.self) { unit in
+                                        Text(interval.value == 1 ? unit.singularName : unit.displayName)
+                                            .tag(unit)
+                                    }
+                                }
+                                .labelsHidden()
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("New Echo")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create") { createEcho() }
+                        .fontWeight(.semibold)
+                        .disabled(!canCreate || isCreating)
+                }
+            }
+        }
+        .presentationDetents([.large])
+        .onAppear {
+            if handles.isEmpty { useExistingHandle = false }
+        }
+    }
+
+    private func createEcho() {
+        isCreating = true
+        Task {
+            do {
+                let handleId: String
+                if useExistingHandle, let existing = selectedHandleId {
+                    handleId = existing
+                } else {
+                    let handle = try await HandleManager.shared.createHandle(name: trimmedName)
+                    handleId = handle.id
+                }
+                _ = try await EchoManager.shared.createEcho(
+                    handleId: handleId,
+                    isRecurring: isRecurring,
+                    intervals: isRecurring ? intervals : [],
+                    fireDate: startDate
+                )
+                dismiss()
+            } catch {
+                isCreating = false
+            }
+        }
     }
 }

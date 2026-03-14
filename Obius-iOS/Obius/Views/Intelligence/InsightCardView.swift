@@ -154,45 +154,55 @@ struct TrackedInsightChip: View {
     let onUntrack: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(insight.title)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-
-                if !insight.body.isEmpty {
-                    Text(insight.body)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 3) {
+                Image(systemName: insight.displayIcon)
+                    .font(.system(size: 8))
+                Text(insight.displayLabel)
+                    .font(.system(size: 9, weight: .medium))
             }
+            .foregroundStyle(insight.displayTint.color)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 3)
+            .background(insight.displayTint.color.opacity(0.15))
+            .clipShape(Capsule())
 
-            Spacer(minLength: 8)
+            Text(insight.title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
 
-            HStack(spacing: 16) {
-                Button {
-                    onUntrack()
-                } label: {
-                    Image(systemName: "star.fill")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    onUntrack()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.subheadline)
-                        .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
+            if !insight.body.isEmpty {
+                Text(insight.body)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
         }
-        .padding(.vertical, 10)
-        .contentShape(Rectangle())
+        .padding(8)
+        .frame(width: 150, height: 110, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(red: 0.06, green: 0.06, blue: 0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(insight.displayTint.color.opacity(0.3), lineWidth: 1)
+        )
+        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12))
+        .contextMenu {
+            Button {
+                onUntrack()
+            } label: {
+                Label("Untrack", systemImage: "star.slash")
+            }
+
+            Button(role: .destructive) {
+                onUntrack()
+            } label: {
+                Label("Dismiss", systemImage: "xmark")
+            }
+        }
         .onTapGesture { onTap() }
     }
 }
