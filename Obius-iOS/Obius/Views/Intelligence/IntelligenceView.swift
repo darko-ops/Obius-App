@@ -16,7 +16,10 @@ struct IntelligenceView: View {
     @AppStorage("selectedModuleId") private var selectedModuleId: String?
     @State private var showingModulePicker = false
     @StateObject private var handleManager = HandleManager.shared
+    @StateObject private var echoManager = EchoManager.shared
     @State private var activeCategorySheet: InsightType?
+    @State private var selectedEcho: Echo?
+    @State private var showingManageEchoes = false
 
     private var insightEngine: InsightEngine {
         InsightEngine(
@@ -149,6 +152,17 @@ struct IntelligenceView: View {
             WorkspaceSheet(handles: handleManager.handles)
                 .environmentObject(appState)
         }
+        .sheet(item: $selectedEcho) { echo in
+            EchoDetailSheet(echo: echo)
+        }
+        .sheet(isPresented: $showingManageEchoes) {
+            ManageEchoesSheet(echoManager: echoManager, onSelect: { echo in
+                showingManageEchoes = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    selectedEcho = echo
+                }
+            })
+        }
         .sheet(item: $activeCategorySheet) { type in
             let insights = categoryGroups.first(where: { $0.type == type })?.insights ?? []
             CategoryDetailSheet(
@@ -194,17 +208,20 @@ struct IntelligenceView: View {
                 LazyVStack(spacing: 16) {
                     trackedSection
 
+                    activeEchoesSection
+
                     if !upcomingEchoInsights.isEmpty {
                         upcomingEchoesSection
                     }
 
-                    if !categoryGroups.isEmpty {
+                    if !allSurfacedInsights.isEmpty {
                         categoriesSection
                     }
 
                     if upcomingEchoInsights.isEmpty
-                        && categoryGroups.isEmpty
+                        && allSurfacedInsights.isEmpty
                         && insightsInModule(insightRepository.trackedInsights).isEmpty
+                        && firingEchoes.isEmpty
                         && !isScanning {
                         emptyState
                     }
@@ -214,6 +231,42 @@ struct IntelligenceView: View {
             .overlay(alignment: .bottomTrailing) {
                 workspaceFAB
             }
+        }
+    }
+
+    // MARK: - Active Echoes
+
+    private var firingEchoes: [Echo] {
+        echoManager.activeEchoes.filter { $0.isAlerted }
+    }
+
+    private var activeEchoesSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("ECHOES")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.bottom, 8)
+
+            ForEach(firingEchoes) { echo in
+                EchoRowView(echo: echo)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        selectedEcho = echo
+                    }
+
+                Divider()
+            }
+
+            Button {
+                showingManageEchoes = true
+            } label: {
+                Text("Manage Echoes")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -249,20 +302,77 @@ struct IntelligenceView: View {
 
     // MARK: - Category Cards
 
+    private var allSurfacedInsights: [Insight] {
+        insightsInModule(insightRepository.surfacedInsights)
+            .filter { $0.insightType != .upcomingEcho }
+    }
+
     private var categoriesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             Text("INSIGHTS")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
+                .padding(.bottom, 8)
 
-            ForEach(categoryGroups, id: \.type) { group in
-                CategoryCardView(
-                    insightType: group.type,
-                    insights: group.insights,
-                    onTap: {
-                        activeCategorySheet = group.type
+            ForEach(allSurfacedInsights) { insight in
+                HStack(spacing: 12) {
+                    Image(systemName: insight.displayIcon)
+                        .font(.subheadline)
+                        .foregroundStyle(insight.displayTint.color)
+                        .frame(width: 24)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(insight.title)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
+
+                        if !insight.body.isEmpty {
+                            Text(insight.body)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
                     }
-                )
+
+                    Spacer(minLength: 8)
+
+                    HStack(spacing: 16) {
+                        Button {
+                            Task {
+                                try? await insightRepository.trackInsight(insight.id)
+                                haptic(.success)
+                            }
+                        } label: {
+                            Image(systemName: "star")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            Task {
+                                try? await insightRepository.dismissInsight(insight.id)
+                            }
+                            haptic(.light)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.subheadline)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    selectedInsight = insight
+                }
+
+                if insight.id != allSurfacedInsights.last?.id {
+                    Divider()
+                        .padding(.leading, 36)
+                }
             }
         }
     }
@@ -270,43 +380,40 @@ struct IntelligenceView: View {
     // MARK: - Tracked
 
     private var trackedSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("TRACKING")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("TRACKING")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(insightsInModule(insightRepository.trackedInsights)) { insight in
-                        TrackedInsightChip(
-                            insight: insight,
-                            onTap: {
-                                selectedInsight = insight
-                            },
-                            onUntrack: {
-                                Task {
-                                    try? await insightRepository.untrackInsight(insight.id)
-                                    haptic(.light)
-                                }
-                            }
-                        )
-                    }
+                Spacer()
 
-                    // + button at the end of the row
-                    Button {
-                        showCreateSheet = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 44, height: 44)
-                            .background(Color(UIColor.secondarySystemGroupedBackground))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(Color.gray.opacity(0.25), lineWidth: 1)
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                Button {
+                    showCreateSheet = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.bottom, 8)
+
+            ForEach(insightsInModule(insightRepository.trackedInsights)) { insight in
+                TrackedInsightChip(
+                    insight: insight,
+                    onTap: {
+                        selectedInsight = insight
+                    },
+                    onUntrack: {
+                        Task {
+                            try? await insightRepository.untrackInsight(insight.id)
+                            haptic(.light)
+                        }
                     }
+                )
+
+                if insight.id != insightsInModule(insightRepository.trackedInsights).last?.id {
+                    Divider()
                 }
             }
         }
@@ -343,13 +450,20 @@ struct IntelligenceView: View {
         Button {
             showWorkspaceSheet = true
         } label: {
-            Image(systemName: "sparkles")
-                .font(.title2.weight(.semibold))
+            Image("MobiusStrip")
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 85, height: 85)
                 .foregroundStyle(.white)
                 .frame(width: 56, height: 56)
-                .background(Color.accentColor)
+                .background(Color(red: 0.08, green: 0.08, blue: 0.08))
                 .clipShape(Circle())
-                .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
+                .overlay(
+                    Circle()
+                        .stroke(Color.white, lineWidth: 1)
+                )
+                .shadow(color: .white.opacity(0.2), radius: 10)
         }
         .padding(.trailing, 20)
         .padding(.bottom, 20)

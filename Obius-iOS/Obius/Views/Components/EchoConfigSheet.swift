@@ -449,3 +449,45 @@ struct EchoDetailSheet: View {
         }
     }
 }
+
+// MARK: - Manage Echoes Sheet
+
+struct ManageEchoesSheet: View {
+    @ObservedObject var echoManager: EchoManager
+    let onSelect: (Echo) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(echoManager.activeEchoes) { echo in
+                    EchoRowView(echo: echo)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            onSelect(echo)
+                        }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .navigationTitle("Echoes")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .overlay {
+                if echoManager.activeEchoes.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Echoes", systemImage: "dot.radiowaves.left.and.right")
+                    } description: {
+                        Text("Active echoes will appear here")
+                    }
+                }
+            }
+        }
+        .presentationDetents([.large])
+    }
+}

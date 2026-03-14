@@ -7,46 +7,23 @@ struct CategoryCardView: View {
     let insights: [Insight]
     let onTap: () -> Void
 
-    private var subtypeCounts: [(label: String, count: Int)] {
+    private var summaryLine: String {
         var counts: [String: Int] = [:]
         for insight in insights {
-            let label = insight.displayLabel
-            counts[label, default: 0] += 1
+            counts[insight.displayLabel, default: 0] += 1
         }
-        return counts.sorted { $0.key < $1.key }.map { (label: $0.key, count: $0.value) }
-    }
-
-    private var summaryLine: String {
-        subtypeCounts.map { "\($0.count) \($0.label.lowercased())" }.joined(separator: " · ")
+        return counts.sorted { $0.key < $1.key }
+            .map { "\($0.value) \($0.key.lowercased())" }
+            .joined(separator: " · ")
     }
 
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 12) {
-                // Category icon
-                Image(systemName: insightType.icon)
-                    .font(.title3)
-                    .foregroundStyle(insightType.tint.color)
-                    .frame(width: 36, height: 36)
-                    .background(insightType.tint.color.opacity(0.12))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack {
-                        Text(insightType.label)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-
-                        Spacer()
-
-                        Text("\(insights.count) \(insights.count == 1 ? "item" : "items")")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(insightType.tint.color)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 2)
-                            .background(insightType.tint.color.opacity(0.12))
-                            .clipShape(Capsule())
-                    }
+                    Text(insightType.label)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.primary)
 
                     if !summaryLine.isEmpty {
                         Text(summaryLine)
@@ -56,14 +33,17 @@ struct CategoryCardView: View {
                     }
                 }
 
-                Image(systemName: "chevron.right")
+                Spacer()
+
+                Text("\(insights.count)")
                     .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 14)
-            .background(Color(UIColor.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .padding(.vertical, 10)
         }
         .buttonStyle(.plain)
     }
@@ -78,57 +58,41 @@ struct InsightRowView: View {
     let onTap: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                // Subtype badge
-                HStack(spacing: 4) {
-                    Image(systemName: insight.displayIcon)
-                        .font(.caption2)
-                    Text(insight.displayLabel)
-                        .font(.caption2.weight(.medium))
-                }
-                .foregroundStyle(insight.displayTint.color)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(insight.displayTint.color.opacity(0.15))
-                .clipShape(Capsule())
-
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(insight.title)
                     .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
                     .lineLimit(2)
 
                 if !insight.body.isEmpty {
                     Text(insight.body)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(3)
+                        .lineLimit(2)
                 }
             }
 
             Spacer(minLength: 8)
 
-            VStack(spacing: 6) {
+            HStack(spacing: 16) {
                 Button {
                     onTrack()
                 } label: {
                     Image(systemName: "star")
-                        .font(.caption)
-                        .foregroundStyle(insight.displayTint.color)
-                        .frame(width: 32, height: 32)
-                        .background(insight.displayTint.color.opacity(0.12))
-                        .clipShape(Circle())
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
+                .buttonStyle(.plain)
 
                 Button {
                     onDismiss()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 32, height: 32)
-                        .background(Color.gray.opacity(0.1))
-                        .clipShape(Circle())
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
                 }
+                .buttonStyle(.plain)
             }
         }
         .padding(.vertical, 10)
@@ -190,36 +154,44 @@ struct TrackedInsightChip: View {
     let onUntrack: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            // Type badge
-            HStack(spacing: 4) {
-                Image(systemName: insight.displayIcon)
-                    .font(.system(size: 9))
-                Text(insight.displayLabel)
-                    .font(.system(size: 10, weight: .medium))
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(insight.title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+
+                if !insight.body.isEmpty {
+                    Text(insight.body)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
-            .foregroundStyle(insight.displayTint.color)
 
-            // Title
-            Text(insight.title)
-                .font(.caption.weight(.medium))
-                .lineLimit(2)
+            Spacer(minLength: 8)
 
-            // Body preview
-            Text(insight.body.isEmpty ? " " : insight.body)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineLimit(3)
-                .truncationMode(.tail)
+            HStack(spacing: 16) {
+                Button {
+                    onUntrack()
+                } label: {
+                    Image(systemName: "star.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    onUntrack()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .frame(width: 130, height: 100, alignment: .topLeading)
-        .padding(10)
-        .background(Color(UIColor.secondarySystemBackground))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(insight.displayTint.color.opacity(0.25), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .padding(.vertical, 10)
         .contentShape(Rectangle())
         .onTapGesture { onTap() }
     }
