@@ -56,6 +56,7 @@
 		B8A1D0010000000000000048 /* IntelligenceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000048 /* IntelligenceView.swift */; };
 		B8A1D0010000000000000049 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000049 /* LibraryView.swift */; };
 		B8A1D0010000000000000050 /* NoteRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000050 /* NoteRowView.swift */; };
+		B8A1D0010000000000000104 /* BlockDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000104 /* BlockDetailView.swift */; };
 		B8A1D0010000000000000051 /* NotesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000051 /* NotesListView.swift */; };
 		B8A1D0010000000000000052 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000052 /* SearchView.swift */; };
 		B8A1D0010000000000000053 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000053 /* SettingsView.swift */; };
@@ -173,6 +174,7 @@
 		B8A1F0010000000000000048 /* IntelligenceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntelligenceView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000049 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000050 /* NoteRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteRowView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000104 /* BlockDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockDetailView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000051 /* NotesListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesListView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000052 /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000053 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -522,6 +524,7 @@
 		B8A1G0010000000000000021 /* Notes */ = {
 			isa = PBXGroup;
 			children = (
+				B8A1F0010000000000000104 /* BlockDetailView.swift */,
 				B8A1F0080000000000000003 /* ModulePickerSheet.swift */,
 				B8A1F0010000000000000050 /* NoteRowView.swift */,
 				B8A1F0010000000000000051 /* NotesListView.swift */,
@@ -722,6 +725,7 @@
 				B8A1D0010000000000000049 /* LibraryView.swift in Sources */,
 				B8A1D0010000000000000050 /* NoteRowView.swift in Sources */,
 				B8A1D0010000000000000051 /* NotesListView.swift in Sources */,
+				B8A1D0010000000000000104 /* BlockDetailView.swift in Sources */,
 				B8A1D0010000000000000052 /* SearchView.swift in Sources */,
 				B8A1D0010000000000000053 /* SettingsView.swift in Sources */,
 				B8A1D0010000000000000056 /* Echo.swift in Sources */,

@@ -46,7 +46,18 @@ private struct NotesListContent: View {
     @State private var showingDeleteConfirmation = false
     @State private var showingGroupDialog = false
     @State private var newGroupName = ""
-    @State private var collapsedGroups: Set<String> = []
+    @State private var selectedBlockName: String?
+    @AppStorage("trackedBlockNames") private var trackedBlockNamesData: String = "[]"
+
+    private var trackedBlockNames: [String] {
+        (try? JSONDecoder().decode([String].self, from: Data(trackedBlockNamesData.utf8))) ?? []
+    }
+
+    private func setTrackedBlockNames(_ names: [String]) {
+        if let data = try? JSONEncoder().encode(names), let str = String(data: data, encoding: .utf8) {
+            trackedBlockNamesData = str
+        }
+    }
 
     private var selectedModule: Module? {
         moduleRepository.modules.first { $0.id == selectedModuleId }
@@ -92,187 +103,34 @@ private struct NotesListContent: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Custom rounded search bar
             RoundedSearchBar(text: $searchQuery, placeholder: "Search")
                 .padding(.horizontal)
                 .padding(.vertical, 8)
                 .background(Color(.systemBackground))
 
-            List {
-                // Grouped notes (pinned groups) - collapsible
-                ForEach(groupNames, id: \.self) { groupName in
-                SwiftUI.Section {
-                    if !collapsedGroups.contains(groupName) {
-                        ForEach(groupedNotes[groupName] ?? []) { note in
-                            noteRow(note)
-                        }
-                    }
-                } header: {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            if collapsedGroups.contains(groupName) {
-                                collapsedGroups.remove(groupName)
-                            } else {
-                                collapsedGroups.insert(groupName)
-                            }
-                        }
-                    } label: {
-                        HStack {
-                            Text(groupName)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.primary)
-
-                            Text("\(groupedNotes[groupName]?.count ?? 0)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-
-                            Spacer()
-
-                            Image(systemName: collapsedGroups.contains(groupName) ? "chevron.right" : "chevron.down")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            // Ungrouped pinned notes
-            if !pinnedNotes.isEmpty {
-                SwiftUI.Section {
-                    ForEach(pinnedNotes) { note in
-                        noteRow(note)
-                    }
-                } header: {
-                    Text("Pinned")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            // Ungrouped unpinned notes
-            SwiftUI.Section {
-                ForEach(unpinnedNotes) { note in
-                    noteRow(note)
-                }
-            } header: {
-                Text(pinnedNotes.isEmpty && groupNames.isEmpty ? "Recently" : "Other Notes")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            }
-            #if os(iOS)
-            .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
-            #endif
+            notesList
         }
         .background(Color(.systemBackground))
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(Color(.systemBackground), for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                if let module = selectedModule {
-                    StorageTypeBadge(storageType: module.storageType)
-                }
-            }
-
-            ToolbarItem(placement: .principal) {
-                Button {
-                    showingModulePicker = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Text(selectedModuleName)
-                            .font(.headline)
-                            .foregroundStyle(.primary)
-                    }
-                }
-                .buttonStyle(.plain)
-            }
-
-            ToolbarItemGroup(placement: .primaryAction) {
-                // More options menu
-                Menu {
-                    Button {
-                        withAnimation {
-                            isSelectionMode.toggle()
-                            if !isSelectionMode {
-                                selectedNoteIds.removeAll()
-                            }
-                        }
-                    } label: {
-                        Label(isSelectionMode ? "Cancel Selection" : "Select Pages", systemImage: isSelectionMode ? "xmark" : "checkmark.circle")
-                    }
-
-                    if isSelectionMode && !selectedNoteIds.isEmpty {
-                        Button {
-                            showingGroupDialog = true
-                        } label: {
-                            Label("Group (\(selectedNoteIds.count))", systemImage: "folder.badge.plus")
-                        }
-
-                        Button(role: .destructive) {
-                            showingDeleteConfirmation = true
-                        } label: {
-                            Label("Delete Selected (\(selectedNoteIds.count))", systemImage: "trash")
-                        }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .foregroundStyle(.gray)
-                }
-
-                // Add note button (hidden in selection mode)
-                if !isSelectionMode {
-                    Button {
-                        Task {
-                            do {
-                                let note = try await noteRepository.createNote(moduleId: selectedModuleId)
-                                // Log for sync
-                                syncLogger.logNoteCreate(note)
-                                selectedNote = note
-                            } catch {
-                                print("Failed to create note: \(error)")
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "plus")
-                            .foregroundStyle(.gray)
-                    }
-                }
-            }
-
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button {
-                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                } label: {
-                    Image(systemName: "keyboard.chevron.compact.down")
-                }
-            }
-        }
+        .toolbar { toolbarContent }
         .confirmationDialog(
             "Delete \(selectedNoteIds.count) pages?",
             isPresented: $showingDeleteConfirmation,
             titleVisibility: .visible
         ) {
             Button("Delete", role: .destructive) {
-                Task {
-                    await deleteSelectedNotes()
-                }
+                Task { await deleteSelectedNotes() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This action cannot be undone.")
         }
-        .alert("Name this group", isPresented: $showingGroupDialog) {
-            TextField("Group name", text: $newGroupName)
-            Button("Create Group") {
+        .alert("Name this block", isPresented: $showingGroupDialog) {
+            TextField("Block name", text: $newGroupName)
+            Button("Create Block") {
                 Task {
                     await groupSelectedNotes(groupName: newGroupName)
                     newGroupName = ""
@@ -280,11 +138,9 @@ private struct NotesListContent: View {
                     selectedNoteIds.removeAll()
                 }
             }
-            Button("Cancel", role: .cancel) {
-                newGroupName = ""
-            }
+            Button("Cancel", role: .cancel) { newGroupName = "" }
         } message: {
-            Text("Enter a name for the group")
+            Text("Enter a name for the block")
         }
         .alert("Unable to Share", isPresented: Binding(
             get: { shareError != nil },
@@ -297,28 +153,26 @@ private struct NotesListContent: View {
         .navigationDestination(item: $selectedNote) { note in
             NoteEditorView(noteId: note.id)
         }
-        .syncRefreshable()
-        .overlay {
-            if notes.isEmpty && searchQuery.isEmpty {
-                ContentUnavailableView {
-                    Label("No Notes", systemImage: "note.text")
-                } description: {
-                    Text("Tap + to create your first note")
-                } actions: {
-                    Button("Create Note") {
-                        Task {
-                            if let note = try? await noteRepository.createNote(moduleId: selectedModuleId) {
-                                syncLogger.logNoteCreate(note)
-                                selectedNote = note
-                            }
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-            } else if !searchQuery.isEmpty && filteredNotes.isEmpty {
-                ContentUnavailableView.search(text: searchQuery)
+        .navigationDestination(isPresented: Binding(
+            get: { selectedBlockName != nil },
+            set: { if !$0 { selectedBlockName = nil } }
+        )) {
+            if let blockName = selectedBlockName {
+                BlockDetailView(
+                    blockName: blockName,
+                    notes: groupedNotes[blockName] ?? [],
+                    sectionPreviews: sectionPreviews,
+                    autoTitles: autoTitles,
+                    noteRepository: noteRepository,
+                    sectionRepository: sectionRepository,
+                    syncLogger: syncLogger,
+                    commitModule: commitModule,
+                    moduleRepository: moduleRepository
+                )
             }
         }
+        .syncRefreshable()
+        .overlay { emptyStateOverlay }
         .overlay(alignment: .bottom) {
             if showingCommitConfirmation, let name = lastCommitName {
                 HStack(spacing: 8) {
@@ -412,6 +266,240 @@ private struct NotesListContent: View {
             if let id = selectedModuleId,
                !moduleRepository.modules.contains(where: { $0.id == id }) {
                 selectedModuleId = moduleRepository.getLocalModule()?.id
+            }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            if let module = selectedModule {
+                StorageTypeBadge(storageType: module.storageType)
+            }
+        }
+
+        ToolbarItem(placement: .principal) {
+            Button {
+                showingModulePicker = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(selectedModuleName)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+
+        ToolbarItemGroup(placement: .primaryAction) {
+            Menu {
+                Button {
+                    withAnimation {
+                        isSelectionMode.toggle()
+                        if !isSelectionMode { selectedNoteIds.removeAll() }
+                    }
+                } label: {
+                    Label(isSelectionMode ? "Cancel Selection" : "Select Pages", systemImage: isSelectionMode ? "xmark" : "checkmark.circle")
+                }
+
+                if isSelectionMode && !selectedNoteIds.isEmpty {
+                    Button { showingGroupDialog = true } label: {
+                        Label("Block (\(selectedNoteIds.count))", systemImage: "cube.transparent")
+                    }
+                    Button(role: .destructive) { showingDeleteConfirmation = true } label: {
+                        Label("Delete Selected (\(selectedNoteIds.count))", systemImage: "trash")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle").foregroundStyle(.gray)
+            }
+
+            if !isSelectionMode {
+                Button {
+                    Task {
+                        do {
+                            let note = try await noteRepository.createNote(moduleId: selectedModuleId)
+                            syncLogger.logNoteCreate(note)
+                            selectedNote = note
+                        } catch {
+                            print("Failed to create note: \(error)")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "plus").foregroundStyle(.gray)
+                }
+            }
+        }
+
+        ToolbarItemGroup(placement: .keyboard) {
+            Spacer()
+            Button {
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            } label: {
+                Image(systemName: "keyboard.chevron.compact.down")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var emptyStateOverlay: some View {
+        if notes.isEmpty && searchQuery.isEmpty {
+            ContentUnavailableView {
+                Label("No Notes", systemImage: "note.text")
+            } description: {
+                Text("Tap + to create your first note")
+            } actions: {
+                Button("Create Note") {
+                    Task {
+                        if let note = try? await noteRepository.createNote(moduleId: selectedModuleId) {
+                            syncLogger.logNoteCreate(note)
+                            selectedNote = note
+                        }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        } else if !searchQuery.isEmpty && filteredNotes.isEmpty {
+            ContentUnavailableView.search(text: searchQuery)
+        }
+    }
+
+    private var activeTrackedBlocks: [String] {
+        trackedBlockNames.filter { groupNames.contains($0) }
+    }
+
+    private var notesList: some View {
+        List {
+            if !pinnedNotes.isEmpty || !activeTrackedBlocks.isEmpty {
+                SwiftUI.Section {
+                    trackingRow
+                } header: {
+                    Text("Tracking")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            SwiftUI.Section {
+                ForEach(unpinnedNotes) { note in
+                    noteRow(note)
+                }
+            } header: {
+                Text("Recents")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            blocksSection
+        }
+        #if os(iOS)
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        #endif
+    }
+
+    private var trackingRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(activeTrackedBlocks, id: \.self) { blockName in
+                    Button {
+                        selectedBlockName = blockName
+                    } label: {
+                        VStack(spacing: 4) {
+                            Image(systemName: "cube.transparent")
+                                .font(.system(size: 24))
+                                .foregroundStyle(Color.white.opacity(0.85))
+
+                            Text(blockName)
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                        }
+                        .frame(width: 64, height: 80)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                ForEach(pinnedNotes) { note in
+                    Button {
+                        selectedNote = note
+                    } label: {
+                        trackedPageCard(note: note)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+    }
+
+    private func trackedPageCard(note: Note) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(autoTitles[note.id] ?? note.displayTitle)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            if let preview = pagePreviewText(for: note) {
+                Text(preview)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+        }
+        .padding(10)
+        .frame(width: 140, height: 80, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.systemGray6))
+        )
+    }
+
+    private func pagePreviewText(for note: Note) -> String? {
+        let body = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !body.isEmpty { return body }
+        if let content = sectionPreviews[note.id], !content.isEmpty { return content }
+        return nil
+    }
+
+    @ViewBuilder
+    private var blocksSection: some View {
+        if !groupNames.isEmpty {
+            SwiftUI.Section {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 16) {
+                    ForEach(groupNames, id: \.self) { groupName in
+                        BlockCellView(
+                            groupName: groupName,
+                            count: groupedNotes[groupName]?.count ?? 0,
+                            isTracked: trackedBlockNames.contains(groupName),
+                            onTap: { selectedBlockName = groupName },
+                            onTrack: {
+                                var names = trackedBlockNames
+                                names.append(groupName)
+                                setTrackedBlockNames(names)
+                            },
+                            onUntrack: {
+                                var names = trackedBlockNames
+                                names.removeAll { $0 == groupName }
+                                setTrackedBlockNames(names)
+                            }
+                        )
+                    }
+                }
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            } header: {
+                Text("Blocks")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -781,6 +869,47 @@ struct RoundedSearchBar: View {
             Capsule()
                 .fill(Color.gray.opacity(0.12))
         )
+    }
+}
+
+// MARK: - Block Cell (separate struct for independent context menus)
+
+private struct BlockCellView: View {
+    let groupName: String
+    let count: Int
+    let isTracked: Bool
+    let onTap: () -> Void
+    let onTrack: () -> Void
+    let onUntrack: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(spacing: 6) {
+                Image(systemName: "cube.transparent")
+                    .font(.system(size: 32))
+                    .foregroundStyle(Color.white.opacity(0.85))
+
+                Text(groupName)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            if isTracked {
+                Button(action: onUntrack) {
+                    Label("Untrack", systemImage: "eye.slash")
+                }
+            } else {
+                Button(action: onTrack) {
+                    Label("Track", systemImage: "eye")
+                }
+            }
+        }
     }
 }
 
