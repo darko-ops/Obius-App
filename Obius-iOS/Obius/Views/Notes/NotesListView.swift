@@ -377,9 +377,10 @@ private struct NotesListContent: View {
                 SwiftUI.Section {
                     trackingRow
                 } header: {
-                    Text("Tracking")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    Text("TRACKING")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(Color(.secondaryLabel))
+                        .textCase(nil)
                 }
             }
 
@@ -388,9 +389,10 @@ private struct NotesListContent: View {
                     noteRow(note)
                 }
             } header: {
-                Text("Recents")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Text("RECENTS")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(Color(.secondaryLabel))
+                    .textCase(nil)
             }
 
             blocksSection
@@ -497,9 +499,10 @@ private struct NotesListContent: View {
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
             } header: {
-                Text("Blocks")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Text("BLOCKS")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(Color(.secondaryLabel))
+                    .textCase(nil)
             }
         }
     }

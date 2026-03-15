@@ -107,6 +107,37 @@ struct MainTabView: View {
     @State private var showBanner = false
     @State private var bannerContexts: [PortalContext] = []
 
+    private static func tintedLogo(color: UIColor) -> UIImage {
+        guard let original = UIImage(named: "ObiusLogo")?.withRenderingMode(.alwaysTemplate),
+              let cgImage = original.cgImage else { return UIImage() }
+        let iconSize: CGFloat = 25
+        let canvasSize = CGSize(width: iconSize, height: iconSize)
+        let renderer = UIGraphicsImageRenderer(size: canvasSize)
+        let image = renderer.image { ctx in
+            let context = ctx.cgContext
+            let rect = CGRect(origin: .zero, size: canvasSize)
+            context.translateBy(x: 0, y: canvasSize.height)
+            context.scaleBy(x: 1, y: -1)
+            context.clip(to: rect, mask: cgImage)
+            context.setFillColor(color.cgColor)
+            context.fill(rect)
+        }.withRenderingMode(.alwaysOriginal)
+        // Align with SF Symbol baseline
+        return image.withBaselineOffset(fromBottom: 6)
+    }
+
+    private static let resizedGreyLogo = tintedLogo(color: .systemGray)
+    private static let resizedTwoToneLogo = tintedLogo(color: .white)
+
+    init() {
+        let appearance = UITabBarAppearance()
+        appearance.configureWithDefaultBackground()
+        appearance.stackedLayoutAppearance.normal.iconColor = UIColor.systemGray
+        appearance.stackedLayoutAppearance.selected.iconColor = UIColor.white
+        UITabBar.appearance().standardAppearance = appearance
+        UITabBar.appearance().scrollEdgeAppearance = appearance
+    }
+
     var body: some View {
         ZStack(alignment: .top) {
             TabView(selection: $selectedTab) {
@@ -123,8 +154,7 @@ struct MainTabView: View {
                         .environmentObject(appState.insightRepository)
                 }
                 .tabItem {
-                    Image("ObiusLogo")
-                        .renderingMode(.original)
+                    Image(uiImage: selectedTab == 1 ? Self.resizedTwoToneLogo : Self.resizedGreyLogo)
                 }
                 .tag(1)
 
@@ -136,6 +166,7 @@ struct MainTabView: View {
                 }
                 .tag(2)
             }
+            .tint(.white)
 
             // In-app echo alert banner with context
             if showBanner, let echo = bannerEcho {
@@ -204,6 +235,7 @@ struct MainTabView: View {
             }
         }
     }
+
 }
 
 #Preview {

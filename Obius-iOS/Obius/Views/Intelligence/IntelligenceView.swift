@@ -408,8 +408,9 @@ struct IntelligenceView: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color(.lightGray))
                 }
+                .buttonStyle(.plain)
             }
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -697,6 +698,7 @@ struct WorkspaceSheet: View {
     @EnvironmentObject var appState: AppState
 
     let handles: [Handle]
+    var preselectedPageId: String? = nil
 
     enum FocusMode: String, CaseIterable {
         case pages = "Pages"
@@ -839,6 +841,13 @@ struct WorkspaceSheet: View {
             }
         }
         .presentationDetents([.large])
+        .onAppear {
+            if let preselectedPageId, selectedPageId == nil {
+                selectedPageId = preselectedPageId
+                focusMode = .pages
+                loadSectionsForPage(preselectedPageId)
+            }
+        }
     }
 
     // MARK: - Loop Content Editor

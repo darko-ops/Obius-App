@@ -88,6 +88,7 @@ private struct NoteEditorContent: View {
     @State private var emptyPlaceholder: String = PlaceholderProvider.next()
     @State private var titleVisible = true
     @State private var showingHistory = false
+    @State private var showWorkspaceSheet = false
 
     let noteId: String
     let targetSectionId: String?
@@ -305,6 +306,13 @@ private struct NoteEditorContent: View {
                 )
             }
             #endif
+            .overlay(alignment: .bottomTrailing) {
+                pageFAB
+            }
+            .sheet(isPresented: $showWorkspaceSheet) {
+                WorkspaceSheet(handles: handleManager.handles, preselectedPageId: noteId)
+                    .environmentObject(appState)
+            }
             .onChange(of: showingImagePicker) { _, isShowing in
                 if !isShowing {
                     imagePickerTargetSectionId = nil
@@ -316,6 +324,31 @@ private struct NoteEditorContent: View {
                     handleSheetSectionId = nil
                 }
             }
+    }
+
+    // MARK: - FAB
+
+    private var pageFAB: some View {
+        Button {
+            showWorkspaceSheet = true
+        } label: {
+            Image("MobiusStrip")
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 85, height: 85)
+                .foregroundStyle(.white)
+                .frame(width: 56, height: 56)
+                .background(Color(red: 0.08, green: 0.08, blue: 0.08))
+                .clipShape(Circle())
+                .overlay(
+                    Circle()
+                        .stroke(Color.white, lineWidth: 1)
+                )
+                .shadow(color: .white.opacity(0.2), radius: 10)
+        }
+        .padding(.trailing, 20)
+        .padding(.bottom, 20)
     }
 
     // MARK: - Main Content
