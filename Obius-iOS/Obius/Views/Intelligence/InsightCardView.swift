@@ -7,46 +7,23 @@ struct CategoryCardView: View {
     let insights: [Insight]
     let onTap: () -> Void
 
-    private var subtypeCounts: [(label: String, count: Int)] {
+    private var summaryLine: String {
         var counts: [String: Int] = [:]
         for insight in insights {
-            let label = insight.displayLabel
-            counts[label, default: 0] += 1
+            counts[insight.displayLabel, default: 0] += 1
         }
-        return counts.sorted { $0.key < $1.key }.map { (label: $0.key, count: $0.value) }
-    }
-
-    private var summaryLine: String {
-        subtypeCounts.map { "\($0.count) \($0.label.lowercased())" }.joined(separator: " · ")
+        return counts.sorted { $0.key < $1.key }
+            .map { "\($0.value) \($0.key.lowercased())" }
+            .joined(separator: " · ")
     }
 
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 12) {
-                // Category icon
-                Image(systemName: insightType.icon)
-                    .font(.title3)
-                    .foregroundStyle(insightType.tint.color)
-                    .frame(width: 36, height: 36)
-                    .background(insightType.tint.color.opacity(0.12))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack {
-                        Text(insightType.label)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-
-                        Spacer()
-
-                        Text("\(insights.count) \(insights.count == 1 ? "item" : "items")")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(insightType.tint.color)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 2)
-                            .background(insightType.tint.color.opacity(0.12))
-                            .clipShape(Capsule())
-                    }
+                    Text(insightType.label)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.primary)
 
                     if !summaryLine.isEmpty {
                         Text(summaryLine)
@@ -56,14 +33,17 @@ struct CategoryCardView: View {
                     }
                 }
 
-                Image(systemName: "chevron.right")
+                Spacer()
+
+                Text("\(insights.count)")
                     .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 14)
-            .background(Color(UIColor.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .padding(.vertical, 10)
         }
         .buttonStyle(.plain)
     }
@@ -78,57 +58,41 @@ struct InsightRowView: View {
     let onTap: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                // Subtype badge
-                HStack(spacing: 4) {
-                    Image(systemName: insight.displayIcon)
-                        .font(.caption2)
-                    Text(insight.displayLabel)
-                        .font(.caption2.weight(.medium))
-                }
-                .foregroundStyle(insight.displayTint.color)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(insight.displayTint.color.opacity(0.15))
-                .clipShape(Capsule())
-
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(insight.title)
                     .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
                     .lineLimit(2)
 
                 if !insight.body.isEmpty {
                     Text(insight.body)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(3)
+                        .lineLimit(2)
                 }
             }
 
             Spacer(minLength: 8)
 
-            VStack(spacing: 6) {
+            HStack(spacing: 16) {
                 Button {
                     onTrack()
                 } label: {
                     Image(systemName: "star")
-                        .font(.caption)
-                        .foregroundStyle(insight.displayTint.color)
-                        .frame(width: 32, height: 32)
-                        .background(insight.displayTint.color.opacity(0.12))
-                        .clipShape(Circle())
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
+                .buttonStyle(.plain)
 
                 Button {
                     onDismiss()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 32, height: 32)
-                        .background(Color.gray.opacity(0.1))
-                        .clipShape(Circle())
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
                 }
+                .buttonStyle(.plain)
             }
         }
         .padding(.vertical, 10)
@@ -190,37 +154,55 @@ struct TrackedInsightChip: View {
     let onUntrack: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            // Type badge
-            HStack(spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 3) {
                 Image(systemName: insight.displayIcon)
-                    .font(.system(size: 9))
+                    .font(.system(size: 8))
                 Text(insight.displayLabel)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 9, weight: .medium))
             }
             .foregroundStyle(insight.displayTint.color)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 3)
+            .background(insight.displayTint.color.opacity(0.15))
+            .clipShape(Capsule())
 
-            // Title
             Text(insight.title)
-                .font(.caption.weight(.medium))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.primary)
                 .lineLimit(2)
 
-            // Body preview
-            Text(insight.body.isEmpty ? " " : insight.body)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineLimit(3)
-                .truncationMode(.tail)
+            if !insight.body.isEmpty {
+                Text(insight.body)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
         }
-        .frame(width: 130, height: 100, alignment: .topLeading)
-        .padding(10)
-        .background(Color(UIColor.secondarySystemBackground))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(insight.displayTint.color.opacity(0.25), lineWidth: 1)
+        .padding(8)
+        .frame(width: 150, height: 110, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(red: 0.06, green: 0.06, blue: 0.06))
         )
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .contentShape(Rectangle())
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(insight.displayTint.color.opacity(0.3), lineWidth: 1)
+        )
+        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12))
+        .contextMenu {
+            Button {
+                onUntrack()
+            } label: {
+                Label("Untrack", systemImage: "star.slash")
+            }
+
+            Button(role: .destructive) {
+                onUntrack()
+            } label: {
+                Label("Dismiss", systemImage: "xmark")
+            }
+        }
         .onTapGesture { onTap() }
     }
 }
@@ -261,7 +243,7 @@ struct UpcomingEchoCard: View {
         }
         .frame(width: 130, height: 50, alignment: .topLeading)
         .padding(5)
-        .background(Color(UIColor.secondarySystemBackground))
+        .background(Color(red: 0.1, green: 0.1, blue: 0.1))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(Color.orange.opacity(0.25), lineWidth: 1)
@@ -308,15 +290,23 @@ struct InsightDetailSheet: View {
     let onDismiss: (() -> Void)?
     let onUntrack: (() -> Void)?
     var onDeleteNote: (() -> Void)? = nil
+    var onCreateBlock: ((String) -> Void)? = nil
     var references: [InsightReference] = []
     var onNavigate: ((InsightReference) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var showCreateEcho = false
     @State private var echoCreated = false
+    @State private var showBlockPicker = false
+    @State private var showNewBlockDialog = false
+    @State private var blockName = ""
 
     private var isEchoSuggestion: Bool {
         insight.insightType == .reminder && insight.sourceSectionId == "suggested_echo"
+    }
+
+    private var isDormantLoop: Bool {
+        insight.insightType == .cleanup && insight.sourceSectionId == "dormant_loop"
     }
 
     var body: some View {
@@ -495,6 +485,24 @@ struct InsightDetailSheet: View {
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                         }
                     }
+
+                    // Move to Block button for dormant loop insights
+                    if isDormantLoop, onCreateBlock != nil {
+                        Button {
+                            showBlockPicker = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "cube.transparent")
+                                Text("Move to Block")
+                            }
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.blue)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.blue.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
                 }
                 .padding()
             }
@@ -517,6 +525,33 @@ struct InsightDetailSheet: View {
                 onTrack?()
                 dismiss()
             }
+        }
+        .sheet(isPresented: $showBlockPicker) {
+            BlockPickerSheet(
+                onSelectBlock: { name in
+                    onCreateBlock?(name)
+                    dismiss()
+                },
+                onCreateNew: {
+                    showBlockPicker = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        showNewBlockDialog = true
+                    }
+                }
+            )
+        }
+        .alert("New Block", isPresented: $showNewBlockDialog) {
+            TextField("Block name", text: $blockName)
+            Button("Create") {
+                let name = blockName.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty else { return }
+                onCreateBlock?(name)
+                blockName = ""
+                dismiss()
+            }
+            Button("Cancel", role: .cancel) { blockName = "" }
+        } message: {
+            Text("Enter a name for the new block")
         }
     }
 
@@ -808,6 +843,69 @@ struct CreateInsightSheet: View {
                     }
                     .fontWeight(.semibold)
                     .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+}
+
+// MARK: - Block Picker Sheet
+
+struct BlockPickerSheet: View {
+    @EnvironmentObject var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("selectedModuleId") private var selectedModuleId: String?
+    let onSelectBlock: (String) -> Void
+    let onCreateNew: () -> Void
+
+    private var existingBlocks: [String] {
+        let moduleNotes = appState.noteRepository.notes.filter { $0.moduleId == selectedModuleId }
+        return Array(Set(moduleNotes.compactMap { $0.groupName })).sorted()
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if !existingBlocks.isEmpty {
+                    SwiftUI.Section {
+                        ForEach(existingBlocks, id: \.self) { blockName in
+                            Button {
+                                onSelectBlock(blockName)
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "cube.transparent")
+                                        .foregroundStyle(Color.white.opacity(0.85))
+                                    Text(blockName)
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                SwiftUI.Section {
+                    Button {
+                        dismiss()
+                        onCreateNew()
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "plus")
+                                .foregroundStyle(.blue)
+                            Text("New Block")
+                                .foregroundStyle(.blue)
+                            Spacer()
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Move to Block")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Cancel") { dismiss() }
                 }
             }
         }

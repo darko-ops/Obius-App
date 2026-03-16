@@ -30,11 +30,6 @@ struct LibraryView: View {
                 // User Profile Section
                 userProfileSection
 
-                // Active Echoes
-                if !echoManager.activeEchoes.isEmpty {
-                    activeEchoesSection
-                }
-
                 Divider()
                     .padding(.horizontal)
 
@@ -111,33 +106,6 @@ struct LibraryView: View {
     }
 
     // MARK: - Active Echoes Section
-
-    private var activeEchoesSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Active Echoes")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                Text("\(echoManager.activeEchoes.count)")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal)
-
-            ForEach(echoManager.activeEchoes) { echo in
-                EchoRowView(echo: echo)
-                    .padding(.horizontal)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        selectedEcho = echo
-                    }
-            }
-        }
-        .padding(.top, 4)
-    }
 
     // MARK: - User Profile Section
 

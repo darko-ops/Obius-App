@@ -18,6 +18,7 @@ struct Note: Codable, Identifiable, Hashable {
     var tags: [String]  // Hashtag labels for the page
     var aiTags: [String]  // AI-generated concept tags
     var moduleId: String?  // Module (folder) this note belongs to
+    var viewCount: Int  // Number of times the note has been opened
 
     // Sync fields
     var localVersion: Int
@@ -42,6 +43,7 @@ struct Note: Codable, Identifiable, Hashable {
         tags: [String] = [],
         aiTags: [String] = [],
         moduleId: String? = nil,
+        viewCount: Int = 0,
         localVersion: Int = 1,
         serverVersion: Int? = nil,
         syncStatus: SyncStatus = .pending,
@@ -63,6 +65,7 @@ struct Note: Codable, Identifiable, Hashable {
         self.tags = tags
         self.aiTags = aiTags
         self.moduleId = moduleId
+        self.viewCount = viewCount
         self.localVersion = localVersion
         self.serverVersion = serverVersion
         self.syncStatus = syncStatus
@@ -199,7 +202,7 @@ extension Note: FetchableRecord, PersistableRecord {
     
     enum Columns: String, ColumnExpression {
         case id, title, aiTitle, body, bodyRichText, interstitialContent, interstitialRichContent, createdAt, updatedAt, deletedAt
-        case isPinned, groupName, intent, tags, aiTags, moduleId, localVersion, serverVersion
+        case isPinned, groupName, intent, tags, aiTags, moduleId, viewCount, localVersion, serverVersion
         case syncStatus, lastSyncedAt
     }
     
