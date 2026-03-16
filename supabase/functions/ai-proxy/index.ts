@@ -111,6 +111,47 @@ const TOOL_DEFINITIONS = [
       required: ['section_id', 'section_preview'],
     },
   },
+  {
+    name: 'create_section',
+    description:
+      'Create a new section (node or line) on the focused page. Use this when the user wants to turn text into a node/bubble, add a new node, or restructure content by creating sections. You can call this tool multiple times in one response to create several sections. The user will see a confirmation card for each.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        note_id: { type: 'string', description: 'The UUID of the page to add the section to' },
+        content: { type: 'string', description: 'The text content for the new section' },
+        section_type: {
+          type: 'string',
+          enum: ['fold', 'line'],
+          description: 'Section type: "fold" for a node/bubble, "line" for inline text',
+        },
+        content_type: {
+          type: 'string',
+          enum: ['text', 'checklist', 'code', 'quote'],
+          description: 'Content type (default: text)',
+        },
+        after_section_id: {
+          type: 'string',
+          description: 'Insert after this section ID. Omit to append at the end.',
+        },
+      },
+      required: ['note_id', 'content', 'section_type'],
+    },
+  },
+  {
+    name: 'update_section_content',
+    description:
+      'Update the content of an existing section (node or line). Use this when the user wants to edit, refine, rewrite, or expand a specific section\'s text. The user will see the proposed change and can accept or dismiss.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        section_id: { type: 'string', description: 'The UUID of the section to update' },
+        section_preview: { type: 'string', description: 'Short preview of current content (for the confirmation card)' },
+        new_content: { type: 'string', description: 'The full updated content for the section' },
+      },
+      required: ['section_id', 'section_preview', 'new_content'],
+    },
+  },
 ];
 
 // ---------- System prompts per action ----------
@@ -123,14 +164,29 @@ Be concise and helpful.
 You can suggest actions using your tools. The user will see each action \
 as a card with Accept/Dismiss buttons — the action only executes if \
 accepted. Suggest actions when clearly relevant. You may combine text \
-with tool calls.
+with tool calls. You can call MULTIPLE tools in a single response — \
+use this to create several sections at once or combine body updates with section creation.
 
-When the user asks you to edit, refine, rewrite, or improve a page's body, \
-use the update_page_body tool to propose the new content.
+## Editing pages
+- To edit a page's body text, use update_page_body.
+- To edit a specific section/node's content, use update_section_content with its section ID.
+- To create new sections (nodes or lines), use create_section. You can call this multiple times \
+  to create several sections in one response.
 
+## Restructuring content (complex edits)
+When the user asks you to restructure content — e.g. "turn these paragraphs into nodes", \
+"break this into sections", "organize this into bullets" — follow this approach:
+1. Use update_page_body to set the page body to only the text that should remain as body text \
+   (or empty string if all content is moving to sections).
+2. Use create_section (one call per section) to create each new node or line with the appropriate content.
+   - Use section_type "fold" for nodes/bubbles and "line" for inline text.
+   - Use after_section_id to control ordering relative to existing sections.
+
+## Editing loops
 When the user asks you to edit, refine, rewrite, or improve a loop's content, \
 use the update_loop_content tool to propose the new content.
 
+## Deleting sections
 When the user asks to delete or remove a node/section, check the sections list in the context. \
 If there is exactly one node (type: node), use the delete_section tool with that section's ID. \
 If there are multiple nodes and the user's request is ambiguous (e.g. "remove the node"), \
@@ -222,7 +278,7 @@ async function handleSendWithTools(body: ActionRequest, userId: string, supabase
     messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
     {
       model: AI_MODEL,
-      maxTokens: 1024,
+      maxTokens: 4096,
       system: systemPromptForSendWithTools(noteContext),
       tools: TOOL_DEFINITIONS,
     }

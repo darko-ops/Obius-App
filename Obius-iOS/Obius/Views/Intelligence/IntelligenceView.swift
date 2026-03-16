@@ -1729,15 +1729,15 @@ struct WorkspaceSheet: View {
             let body = page.body.trimmingCharacters(in: .whitespacesAndNewlines)
             var parts: [String] = []
             parts.append("Focused page (id: \(page.id)): \"\(page.displayTitle)\"")
-            parts.append("Body: \(body.isEmpty ? "(empty — user wants you to generate content here)" : String(body.prefix(500)))")
+            parts.append("Body: \(body.isEmpty ? "(empty — user wants you to generate content here)" : body)")
 
-            // Include section content for the focused page with IDs and types
+            // Include full section content for the focused page with IDs and types
             let activeSections = cachedPageSections.filter { $0.deletedAt == nil }
             let sectionTexts = activeSections
-                .prefix(20)
+                .prefix(30)
                 .compactMap { section -> String? in
-                    let cleaned = Self.cleanContentForAI(section.content)
-                    guard !cleaned.isEmpty else { return nil }
+                    let content = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !content.isEmpty else { return nil }
                     let type = section.sectionType == .fold ? "node" : "line"
                     let handleInfo: String
                     if let hId = section.handleId,
@@ -1746,7 +1746,7 @@ struct WorkspaceSheet: View {
                     } else {
                         handleInfo = ""
                     }
-                    return "  Section (id: \(section.id), type: \(type)\(handleInfo)): \(cleaned)"
+                    return "  Section (id: \(section.id), type: \(type)\(handleInfo)): \(content)"
                 }
             if !sectionTexts.isEmpty {
                 parts.append("Sections:\n\(sectionTexts.joined(separator: "\n"))")
@@ -1968,10 +1968,14 @@ struct WorkspaceSheet: View {
                     contentHasUnsavedChanges = false
                 }
 
-                // If a section was deleted, refresh the cached sections
-                if case .deleteSection = action.actionType,
-                   let pageId = selectedPageId {
-                    loadSectionsForPage(pageId)
+                // Refresh page view after structural changes
+                switch action.actionType {
+                case .deleteSection, .createSection, .updateSectionContent, .updatePageBody:
+                    if let pageId = selectedPageId {
+                        loadSectionsForPage(pageId)
+                    }
+                default:
+                    break
                 }
 
                 messages[messageIndex].actions[actionIndex] = action.withStatus(.accepted)

@@ -25,6 +25,8 @@ struct SuggestedAction: Identifiable {
         case updateLoopContent(UpdateLoopContentParams)
         case updatePageBody(UpdatePageBodyParams)
         case deleteSection(DeleteSectionParams)
+        case createSection(CreateSectionParams)
+        case updateSectionContent(UpdateSectionContentParams)
     }
 
     struct ScheduleEchoParams {
@@ -65,16 +67,32 @@ struct SuggestedAction: Identifiable {
         let sectionPreview: String
     }
 
+    struct CreateSectionParams {
+        let noteId: String
+        let content: String
+        let sectionType: String // "fold" or "line"
+        let contentType: String? // "text", "checklist", "code", "quote"
+        let afterSectionId: String?
+    }
+
+    struct UpdateSectionContentParams {
+        let sectionId: String
+        let sectionPreview: String
+        let newContent: String
+    }
+
     // MARK: - Display Properties
 
     var icon: String {
         switch actionType {
-        case .scheduleEcho:      return "bell.badge"
-        case .setNoteIntent:     return "tag"
-        case .promoteToHandle:   return "arrow.up.right.circle"
-        case .updateLoopContent: return "pencil.and.outline"
-        case .updatePageBody:    return "doc.text"
-        case .deleteSection:     return "trash"
+        case .scheduleEcho:        return "bell.badge"
+        case .setNoteIntent:       return "tag"
+        case .promoteToHandle:     return "arrow.up.right.circle"
+        case .updateLoopContent:   return "pencil.and.outline"
+        case .updatePageBody:      return "doc.text"
+        case .deleteSection:       return "trash"
+        case .createSection:       return "plus.rectangle"
+        case .updateSectionContent: return "pencil.line"
         }
     }
 
@@ -95,6 +113,13 @@ struct SuggestedAction: Identifiable {
         case .deleteSection(let p):
             let preview = p.sectionPreview.prefix(40)
             return "Delete node: \(preview)"
+        case .createSection(let p):
+            let type = p.sectionType == "fold" ? "node" : "line"
+            let preview = p.content.prefix(40)
+            return "Create \(type): \(preview)"
+        case .updateSectionContent(let p):
+            let preview = p.sectionPreview.prefix(40)
+            return "Edit section: \(preview)"
         }
     }
 
@@ -117,37 +142,49 @@ struct SuggestedAction: Identifiable {
             return String(preview)
         case .deleteSection(let p):
             return "Remove: \(p.sectionPreview.prefix(60))"
+        case .createSection(let p):
+            let preview = p.content.prefix(80)
+            return String(preview)
+        case .updateSectionContent(let p):
+            let preview = p.newContent.prefix(80)
+            return String(preview)
         }
     }
 
     /// Full proposed content for content-update actions, nil for others.
     var fullContent: String? {
         switch actionType {
-        case .updateLoopContent(let p): return p.newContent
-        case .updatePageBody(let p):    return p.newBody
-        default:                         return nil
+        case .updateLoopContent(let p):   return p.newContent
+        case .updatePageBody(let p):      return p.newBody
+        case .createSection(let p):       return p.content
+        case .updateSectionContent(let p): return p.newContent
+        default:                           return nil
         }
     }
 
     var toolName: String {
         switch actionType {
-        case .scheduleEcho:      return "schedule_echo"
-        case .setNoteIntent:     return "set_note_intent"
-        case .promoteToHandle:   return "promote_to_handle"
-        case .updateLoopContent: return "update_loop_content"
-        case .updatePageBody:    return "update_page_body"
-        case .deleteSection:     return "delete_section"
+        case .scheduleEcho:        return "schedule_echo"
+        case .setNoteIntent:       return "set_note_intent"
+        case .promoteToHandle:     return "promote_to_handle"
+        case .updateLoopContent:   return "update_loop_content"
+        case .updatePageBody:      return "update_page_body"
+        case .deleteSection:       return "delete_section"
+        case .createSection:       return "create_section"
+        case .updateSectionContent: return "update_section_content"
         }
     }
 
     var tintColor: Color {
         switch actionType {
-        case .scheduleEcho:      return .orange
-        case .setNoteIntent:     return .blue
-        case .promoteToHandle:   return .purple
-        case .updateLoopContent: return .green
-        case .updatePageBody:    return .cyan
-        case .deleteSection:     return .red
+        case .scheduleEcho:        return .orange
+        case .setNoteIntent:       return .blue
+        case .promoteToHandle:     return .purple
+        case .updateLoopContent:   return .green
+        case .updatePageBody:      return .cyan
+        case .deleteSection:       return .red
+        case .createSection:       return .mint
+        case .updateSectionContent: return .teal
         }
     }
 
@@ -239,6 +276,32 @@ struct SuggestedAction: Identifiable {
                 sectionPreview: sectionPreview
             ))
 
+        case "create_section":
+            guard let noteId = input["note_id"] as? String,
+                  let content = input["content"] as? String,
+                  let sectionType = input["section_type"] as? String else {
+                return nil
+            }
+            actionType = .createSection(CreateSectionParams(
+                noteId: noteId,
+                content: content,
+                sectionType: sectionType,
+                contentType: input["content_type"] as? String,
+                afterSectionId: input["after_section_id"] as? String
+            ))
+
+        case "update_section_content":
+            guard let sectionId = input["section_id"] as? String,
+                  let sectionPreview = input["section_preview"] as? String,
+                  let newContent = input["new_content"] as? String else {
+                return nil
+            }
+            actionType = .updateSectionContent(UpdateSectionContentParams(
+                sectionId: sectionId,
+                sectionPreview: sectionPreview,
+                newContent: newContent
+            ))
+
         default:
             return nil
         }
@@ -314,6 +377,26 @@ struct SuggestedAction: Identifiable {
 
         case .deleteSection(let p):
             try await appState.sectionRepository.deleteSection(p.sectionId)
+
+        case .createSection(let p):
+            let sectionType: SectionType = p.sectionType == "line" ? .line : .fold
+            let contentType: ContentType
+            switch p.contentType?.lowercased() {
+            case "checklist": contentType = .checklist
+            case "code":      contentType = .code
+            case "quote":     contentType = .quote
+            default:          contentType = .text
+            }
+            _ = try await appState.sectionRepository.createSection(
+                noteId: p.noteId,
+                content: p.content,
+                contentType: contentType,
+                sectionType: sectionType,
+                afterSectionId: p.afterSectionId
+            )
+
+        case .updateSectionContent(let p):
+            try await appState.sectionRepository.updateContent(p.sectionId, content: p.newContent)
         }
     }
 
