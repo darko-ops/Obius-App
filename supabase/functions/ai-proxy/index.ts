@@ -111,6 +111,21 @@ const TOOL_DEFINITIONS = [
       required: ['section_id', 'section_preview'],
     },
   },
+  {
+    name: 'create_section',
+    description:
+      'Create a new node (section) on the focused page with the given content. Use this when the user asks you to create a node, convert page content into a node, or add a new section to the page. The user will see a confirmation card before it executes.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        note_id: { type: 'string', description: 'The UUID of the page to create the section on' },
+        note_title: { type: 'string', description: 'The title of the page (for the confirmation card)' },
+        content: { type: 'string', description: 'The text content for the new node' },
+        after_section_id: { type: 'string', description: 'Optional UUID of an existing section to insert after. If omitted, the node is appended at the end.' },
+      },
+      required: ['note_id', 'note_title', 'content'],
+    },
+  },
 ];
 
 // ---------- System prompts per action ----------
@@ -136,6 +151,11 @@ If there is exactly one node (type: node), use the delete_section tool with that
 If there are multiple nodes and the user's request is ambiguous (e.g. "remove the node"), \
 ask them which one they mean by listing the nodes with their content previews. \
 If the user specifies enough detail to identify which node, use delete_section directly.
+
+When the user asks you to create a node, convert page content into a node, or add a new \
+section to the page, use the create_section tool with the focused page's note_id and the \
+content for the new node. If converting existing page body content into a node, use the \
+page body text (or a relevant portion) as the content.
 
 The user's workspace shows the focused content above and your suggestion as an \
 action card they can accept. Use the correct tool for the focused item (page vs loop).

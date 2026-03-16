@@ -1968,8 +1968,12 @@ struct WorkspaceSheet: View {
                     contentHasUnsavedChanges = false
                 }
 
-                // If a section was deleted, refresh the cached sections
+                // If a section was deleted or created, refresh the cached sections
                 if case .deleteSection = action.actionType,
+                   let pageId = selectedPageId {
+                    loadSectionsForPage(pageId)
+                }
+                if case .createSection = action.actionType,
                    let pageId = selectedPageId {
                     loadSectionsForPage(pageId)
                 }
