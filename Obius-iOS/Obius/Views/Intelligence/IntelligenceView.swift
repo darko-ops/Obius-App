@@ -750,6 +750,39 @@ struct WorkspaceSheet: View {
 
     // History
     @State private var isHistoryExpanded = false
+    @State private var changeLog: [ChangeEntry] = []
+
+    struct ChangeEntry: Identifiable {
+        let id = UUID()
+        let timestamp = Date()
+        let icon: String
+        let label: String
+        let tint: Color
+
+        static func titleEdit(_ title: String) -> ChangeEntry {
+            ChangeEntry(icon: "character.cursor.ibeam", label: "Title → \(title.prefix(40))", tint: .white)
+        }
+        static func bodyEdit() -> ChangeEntry {
+            ChangeEntry(icon: "doc.text", label: "Body edited", tint: .cyan)
+        }
+        static func sectionEdit(_ preview: String) -> ChangeEntry {
+            ChangeEntry(icon: "pencil.line", label: "Section edited: \(preview.prefix(30))", tint: .green)
+        }
+        static func fromAction(_ action: SuggestedAction) -> ChangeEntry {
+            let statusLabel: String
+            switch action.status {
+            case .accepted: statusLabel = "Applied"
+            case .dismissed: statusLabel = "Dismissed"
+            case .failed(let r): statusLabel = "Failed: \(r)"
+            case .pending: statusLabel = "Pending"
+            }
+            return ChangeEntry(
+                icon: action.icon,
+                label: "\(statusLabel): \(action.title)",
+                tint: action.tintColor
+            )
+        }
+    }
 
     private var selectedHandles: [Handle] {
         handles.filter { selectedHandleIds.contains($0.id) }
@@ -1130,11 +1163,16 @@ struct WorkspaceSheet: View {
         }
     }
 
+    // Track which field was last edited to coalesce rapid keystrokes into one history entry
+    @State private var lastEditedField: String?
+    @State private var editDebounceTask: Task<Void, Never>?
+
     private func savePageTitle(noteId: String) {
         let title = editableTitle
         Task {
             try? await appState.noteRepository.updateNoteTitle(noteId, title: title.isEmpty ? nil : title)
         }
+        logEdit(field: "title") { ChangeEntry.titleEdit(title) }
     }
 
     private func savePageBody(noteId: String) {
@@ -1142,6 +1180,7 @@ struct WorkspaceSheet: View {
         Task {
             try? await appState.noteRepository.updateNoteBody(noteId, body: body)
         }
+        logEdit(field: "body") { ChangeEntry.bodyEdit() }
     }
 
     private func saveSectionContent(sectionId: String) {
@@ -1149,26 +1188,34 @@ struct WorkspaceSheet: View {
         Task {
             try? await appState.sectionRepository.updateContent(sectionId, content: content)
         }
+        logEdit(field: "section_\(sectionId)") { ChangeEntry.sectionEdit(content) }
+    }
+
+    /// Debounced history logging — coalesces rapid keystrokes into a single entry per field.
+    private func logEdit(field: String, entry: @escaping () -> ChangeEntry) {
+        editDebounceTask?.cancel()
+        if lastEditedField != field {
+            // Different field — flush immediately
+            lastEditedField = field
+        }
+        editDebounceTask = Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5s debounce
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                // Replace the last entry if it was the same field, otherwise append
+                if let last = changeLog.last, last.label.hasPrefix(entry().label.prefix(15).description) {
+                    changeLog[changeLog.count - 1] = entry()
+                } else {
+                    changeLog.append(entry())
+                }
+            }
+        }
     }
 
     // MARK: - Change History
 
-    private var resolvedActions: [(action: SuggestedAction, timestamp: Date)] {
-        messages.flatMap { message in
-            message.actions
-                .filter { action in
-                    switch action.status {
-                    case .accepted, .dismissed, .failed: return true
-                    case .pending: return false
-                    }
-                }
-                .map { (action: $0, timestamp: message.timestamp) }
-        }
-    }
-
     private var changeHistory: some View {
-        let actions = resolvedActions
-        return VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     isHistoryExpanded.toggle()
@@ -1179,8 +1226,8 @@ struct WorkspaceSheet: View {
                         .font(.caption)
                     Text("HISTORY")
                         .font(.caption.weight(.semibold))
-                    if !actions.isEmpty {
-                        Text("\(actions.count)")
+                    if !changeLog.isEmpty {
+                        Text("\(changeLog.count)")
                             .font(.caption2.weight(.bold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 6)
@@ -1196,15 +1243,15 @@ struct WorkspaceSheet: View {
             .buttonStyle(.plain)
 
             if isHistoryExpanded {
-                if actions.isEmpty {
+                if changeLog.isEmpty {
                     Text("No changes yet")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                         .padding(.top, 8)
                 } else {
                     VStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(actions.enumerated()), id: \.element.action.id) { index, item in
-                            historyRow(action: item.action, timestamp: item.timestamp, isLast: index == actions.count - 1)
+                        ForEach(Array(changeLog.reversed().enumerated()), id: \.element.id) { index, entry in
+                            changeRow(entry: entry, isLast: index == changeLog.count - 1)
                         }
                     }
                     .padding(.top, 8)
@@ -1215,12 +1262,11 @@ struct WorkspaceSheet: View {
     }
 
     @ViewBuilder
-    private func historyRow(action: SuggestedAction, timestamp: Date, isLast: Bool) -> some View {
+    private func changeRow(entry: ChangeEntry, isLast: Bool) -> some View {
         HStack(alignment: .top, spacing: 10) {
-            // Timeline
             VStack(spacing: 0) {
                 Circle()
-                    .fill(statusColor(for: action.status))
+                    .fill(entry.tint)
                     .frame(width: 8, height: 8)
                 if !isLast {
                     Rectangle()
@@ -1232,45 +1278,20 @@ struct WorkspaceSheet: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Image(systemName: action.icon)
+                    Image(systemName: entry.icon)
                         .font(.caption2)
-                        .foregroundStyle(action.tintColor)
-                    Text(action.title)
+                        .foregroundStyle(entry.tint)
+                    Text(entry.label)
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                 }
 
-                HStack(spacing: 4) {
-                    Text(statusLabel(for: action.status))
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(statusColor(for: action.status))
-                    Text("·")
-                        .foregroundStyle(.tertiary)
-                    Text(timestamp, style: .time)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
+                Text(entry.timestamp, style: .time)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
             .padding(.bottom, isLast ? 0 : 10)
-        }
-    }
-
-    private func statusColor(for status: ActionStatus) -> Color {
-        switch status {
-        case .accepted: return .green
-        case .dismissed: return .gray
-        case .failed: return .red
-        case .pending: return .yellow
-        }
-    }
-
-    private func statusLabel(for status: ActionStatus) -> String {
-        switch status {
-        case .accepted: return "Applied"
-        case .dismissed: return "Dismissed"
-        case .failed(let reason): return "Failed: \(reason)"
-        case .pending: return "Pending"
         }
     }
 
@@ -1722,39 +1743,11 @@ struct WorkspaceSheet: View {
             }.joined(separator: "\n\n---\n\n")
         }
 
-        // Build page context if a page is selected
+        // Build structured page context as JSON
         let pageContext: String
         if let pageId = selectedPageId,
            let page = pages.first(where: { $0.id == pageId }) {
-            let body = page.body.trimmingCharacters(in: .whitespacesAndNewlines)
-            var parts: [String] = []
-            parts.append("Focused page (id: \(page.id)): \"\(page.displayTitle)\"")
-            parts.append("Body: \(body.isEmpty ? "(empty — user wants you to generate content here)" : String(body.prefix(500)))")
-
-            // Include section content for the focused page with IDs and types
-            let activeSections = cachedPageSections.filter { $0.deletedAt == nil }
-            let sectionTexts = activeSections
-                .prefix(20)
-                .compactMap { section -> String? in
-                    let cleaned = Self.cleanContentForAI(section.content)
-                    guard !cleaned.isEmpty else { return nil }
-                    let type = section.sectionType == .fold ? "node" : "line"
-                    let handleInfo: String
-                    if let hId = section.handleId,
-                       let h = HandleManager.shared.getHandle(id: hId) {
-                        handleInfo = ", loop: @\(h.displayName)"
-                    } else {
-                        handleInfo = ""
-                    }
-                    return "  Section (id: \(section.id), type: \(type)\(handleInfo)): \(cleaned)"
-                }
-            if !sectionTexts.isEmpty {
-                parts.append("Sections:\n\(sectionTexts.joined(separator: "\n"))")
-            } else if body.isEmpty {
-                parts.append("This page is completely blank. When the user asks you to write or create content, use the update_page_body tool with note_id \"\(page.id)\" and note_title \"\(page.displayTitle)\" to generate the content they request.")
-            }
-
-            pageContext = parts.joined(separator: "\n")
+            pageContext = buildStructuredPageContext(page: page)
         } else {
             pageContext = ""
         }
@@ -1842,6 +1835,60 @@ struct WorkspaceSheet: View {
             return ""
         }
         return String(trimmed.prefix(300))
+    }
+
+    /// Build a structured JSON representation of the focused page for AI context.
+    private func buildStructuredPageContext(page: Note) -> String {
+        let activeSections = cachedPageSections.filter { $0.deletedAt == nil }
+
+        var sectionDicts: [[String: Any]] = []
+        for (index, section) in activeSections.prefix(30).enumerated() {
+            let cleaned = Self.cleanContentForAI(section.content)
+            var dict: [String: Any] = [
+                "id": section.id,
+                "content": cleaned,
+                "type": section.sectionType == .fold ? "node" : "line",
+                "content_type": section.contentType.rawValue,
+                "indent": section.indentLevel,
+                "intent": section.intent.rawValue,
+                "order": index
+            ]
+            if let hId = section.handleId,
+               let h = HandleManager.shared.getHandle(id: hId) {
+                dict["handle"] = "@\(h.displayName)"
+                dict["handle_id"] = hId
+            }
+            sectionDicts.append(dict)
+        }
+
+        // Build interstitial map
+        var interstitials: [String: String] = [:]
+        for (key, value) in page.interstitialContent {
+            let cleaned = Self.cleanContentForAI(value)
+            if !cleaned.isEmpty {
+                interstitials[key] = cleaned
+            }
+        }
+
+        let noteDict: [String: Any] = [
+            "id": page.id,
+            "title": page.displayTitle,
+            "intent": page.intent.rawValue,
+            "body": Self.cleanContentForAI(page.body),
+            "sections": sectionDicts,
+            "interstitial_content": interstitials,
+            "tags": page.tags + page.aiTags
+        ]
+
+        let wrapper: [String: Any] = ["focused_page": noteDict]
+
+        if let data = try? JSONSerialization.data(withJSONObject: wrapper, options: [.prettyPrinted, .sortedKeys]),
+           let json = String(data: data, encoding: .utf8) {
+            return json
+        }
+
+        // Fallback to flat text
+        return "Focused page (id: \(page.id)): \"\(page.displayTitle)\""
     }
 
     private func buildRichContext(for query: String) async -> String {
@@ -1968,16 +2015,24 @@ struct WorkspaceSheet: View {
                     contentHasUnsavedChanges = false
                 }
 
-                // If a section was deleted, refresh the cached sections
-                if case .deleteSection = action.actionType,
-                   let pageId = selectedPageId {
-                    loadSectionsForPage(pageId)
+                // Refresh cached sections after any structural change
+                if let pageId = selectedPageId {
+                    switch action.actionType {
+                    case .deleteSection, .updateSectionContent, .addSection, .moveSection, .setSectionIntent:
+                        loadSectionsForPage(pageId)
+                    default:
+                        break
+                    }
                 }
 
-                messages[messageIndex].actions[actionIndex] = action.withStatus(.accepted)
+                let resolved = action.withStatus(.accepted)
+                messages[messageIndex].actions[actionIndex] = resolved
+                changeLog.append(ChangeEntry.fromAction(resolved))
                 haptic(.success)
             } catch {
-                messages[messageIndex].actions[actionIndex] = action.withStatus(.failed(error.localizedDescription))
+                let resolved = action.withStatus(.failed(error.localizedDescription))
+                messages[messageIndex].actions[actionIndex] = resolved
+                changeLog.append(ChangeEntry.fromAction(resolved))
                 haptic(.error)
             }
         }
@@ -1990,7 +2045,9 @@ struct WorkspaceSheet: View {
         let action = messages[messageIndex].actions[actionIndex]
         guard action.status == .pending else { return }
 
-        messages[messageIndex].actions[actionIndex] = action.withStatus(.dismissed)
+        let resolved = action.withStatus(.dismissed)
+        messages[messageIndex].actions[actionIndex] = resolved
+        changeLog.append(ChangeEntry.fromAction(resolved))
         haptic(.light)
     }
 
