@@ -46,6 +46,7 @@ struct ActionCardView: View {
             // Title
             Text(action.title)
                 .font(.subheadline.weight(.medium))
+                .foregroundStyle(Color(.lightGray))
                 .lineLimit(2)
 
             // Content area
@@ -57,7 +58,7 @@ struct ActionCardView: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(10)
-                        .background(Color.gray.opacity(0.08))
+                        .background(Color.white.opacity(0.05))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                 } else if isExpanded {
                     // Resolved + expanded: show full content
@@ -66,7 +67,7 @@ struct ActionCardView: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(10)
-                        .background(Color.gray.opacity(0.08))
+                        .background(Color.white.opacity(0.05))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
             } else {
@@ -81,7 +82,7 @@ struct ActionCardView: View {
             statusRow
         }
         .padding(14)
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(Color(red: 0.1, green: 0.1, blue: 0.1))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .stroke(action.tintColor.opacity(0.2), lineWidth: 1)
@@ -122,7 +123,7 @@ struct ActionCardView: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
-                    .background(Color.gray.opacity(0.1))
+                    .background(Color.white.opacity(0.08))
                     .clipShape(Capsule())
                 }
 

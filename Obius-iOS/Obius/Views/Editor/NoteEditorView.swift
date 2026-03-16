@@ -140,6 +140,9 @@ private struct NoteEditorContent: View {
                 }
             }
             .task {
+                try? await appState.noteRepository.incrementViewCount(noteId)
+            }
+            .task {
                 // Scroll to target section from insight navigation
                 guard let targetId = targetSectionId else { return }
                 // Wait for sections to load

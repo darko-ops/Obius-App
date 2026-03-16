@@ -243,7 +243,7 @@ struct UpcomingEchoCard: View {
         }
         .frame(width: 130, height: 50, alignment: .topLeading)
         .padding(5)
-        .background(Color(UIColor.secondarySystemBackground))
+        .background(Color(red: 0.1, green: 0.1, blue: 0.1))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(Color.orange.opacity(0.25), lineWidth: 1)
@@ -290,15 +290,23 @@ struct InsightDetailSheet: View {
     let onDismiss: (() -> Void)?
     let onUntrack: (() -> Void)?
     var onDeleteNote: (() -> Void)? = nil
+    var onCreateBlock: ((String) -> Void)? = nil
     var references: [InsightReference] = []
     var onNavigate: ((InsightReference) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var showCreateEcho = false
     @State private var echoCreated = false
+    @State private var showBlockPicker = false
+    @State private var showNewBlockDialog = false
+    @State private var blockName = ""
 
     private var isEchoSuggestion: Bool {
         insight.insightType == .reminder && insight.sourceSectionId == "suggested_echo"
+    }
+
+    private var isDormantLoop: Bool {
+        insight.insightType == .cleanup && insight.sourceSectionId == "dormant_loop"
     }
 
     var body: some View {
@@ -477,6 +485,24 @@ struct InsightDetailSheet: View {
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                         }
                     }
+
+                    // Move to Block button for dormant loop insights
+                    if isDormantLoop, onCreateBlock != nil {
+                        Button {
+                            showBlockPicker = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "cube.transparent")
+                                Text("Move to Block")
+                            }
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.blue)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.blue.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
                 }
                 .padding()
             }
@@ -499,6 +525,33 @@ struct InsightDetailSheet: View {
                 onTrack?()
                 dismiss()
             }
+        }
+        .sheet(isPresented: $showBlockPicker) {
+            BlockPickerSheet(
+                onSelectBlock: { name in
+                    onCreateBlock?(name)
+                    dismiss()
+                },
+                onCreateNew: {
+                    showBlockPicker = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        showNewBlockDialog = true
+                    }
+                }
+            )
+        }
+        .alert("New Block", isPresented: $showNewBlockDialog) {
+            TextField("Block name", text: $blockName)
+            Button("Create") {
+                let name = blockName.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty else { return }
+                onCreateBlock?(name)
+                blockName = ""
+                dismiss()
+            }
+            Button("Cancel", role: .cancel) { blockName = "" }
+        } message: {
+            Text("Enter a name for the new block")
         }
     }
 
@@ -790,6 +843,69 @@ struct CreateInsightSheet: View {
                     }
                     .fontWeight(.semibold)
                     .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+}
+
+// MARK: - Block Picker Sheet
+
+struct BlockPickerSheet: View {
+    @EnvironmentObject var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("selectedModuleId") private var selectedModuleId: String?
+    let onSelectBlock: (String) -> Void
+    let onCreateNew: () -> Void
+
+    private var existingBlocks: [String] {
+        let moduleNotes = appState.noteRepository.notes.filter { $0.moduleId == selectedModuleId }
+        return Array(Set(moduleNotes.compactMap { $0.groupName })).sorted()
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if !existingBlocks.isEmpty {
+                    SwiftUI.Section {
+                        ForEach(existingBlocks, id: \.self) { blockName in
+                            Button {
+                                onSelectBlock(blockName)
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "cube.transparent")
+                                        .foregroundStyle(Color.white.opacity(0.85))
+                                    Text(blockName)
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                SwiftUI.Section {
+                    Button {
+                        dismiss()
+                        onCreateNew()
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "plus")
+                                .foregroundStyle(.blue)
+                            Text("New Block")
+                                .foregroundStyle(.blue)
+                            Spacer()
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Move to Block")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Cancel") { dismiss() }
                 }
             }
         }

@@ -164,6 +164,8 @@ extension Insight {
             switch subtype {
             case "task":           return "checkmark.circle"
             case "question":       return "questionmark.bubble"
+            case "list":           return "list.bullet"
+            case "link":           return "link"
             case "suggested_echo": return "bell.and.waves.left.and.right"
             default:               return insightType.icon
             }
@@ -196,6 +198,8 @@ extension Insight {
             switch subtype {
             case "task":           return "Task"
             case "question":       return "Question"
+            case "list":           return "List"
+            case "link":           return "Link"
             case "suggested_echo": return "Echo"
             default:               return insightType.label
             }
@@ -225,12 +229,45 @@ extension Insight {
             switch subtype {
             case "task":     return .green
             case "question": return .yellow
-            default:         return .orange
+            case "list":     return .blue
+            case "link":           return .purple
+            default:               return .orange
             }
         case .safety:
             return .red
         default:
             return insightType.tint
+        }
+    }
+}
+
+// MARK: - Priority
+
+extension Insight {
+    /// Priority level: lower number = higher urgency.
+    var priority: Int {
+        let subtype = sourceSectionId ?? ""
+
+        switch insightType {
+        case .safety:
+            return 0 // P0 — critical
+        case .upcomingEcho:
+            return body == "Firing now" ? 1 : 3 // P1 firing, P3 upcoming
+        case .reminder:
+            switch subtype {
+            case "task":     return 2 // P2 — actionable
+            case "question": return 3 // P3 — informational
+            case "list":     return 3 // P3 — informational
+            case "link":     return 3 // P3 — informational
+            default:         return 3
+            }
+        case .cleanup:
+            switch subtype {
+            case "nonsense": return 4 // P4 — housekeeping
+            default:         return 5 // P5 — low (stale, dormant_loop, lonely_loop)
+            }
+        default:
+            return 5
         }
     }
 }

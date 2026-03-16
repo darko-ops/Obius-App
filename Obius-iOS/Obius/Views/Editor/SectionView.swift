@@ -29,6 +29,91 @@ enum RichTextHelper {
             documentAttributes: nil
         )
     }
+
+    /// Convert markdown-style text to NSAttributedString with rich formatting.
+    /// Supports: # headings, ## subheadings, **bold**, *italic*
+    static func fromMarkdown(_ text: String) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        let bodyFont = UIFont.systemFont(ofSize: 17)
+        let bodyColor = UIColor.label
+
+        let lines = text.components(separatedBy: "\n")
+
+        for (index, line) in lines.enumerated() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if index > 0 {
+                result.append(NSAttributedString(string: "\n"))
+            }
+
+            // Headings
+            if trimmed.hasPrefix("### ") {
+                let content = String(trimmed.dropFirst(4))
+                let font = UIFont.systemFont(ofSize: 19, weight: .semibold)
+                result.append(NSAttributedString(string: content, attributes: [
+                    .font: font, .foregroundColor: bodyColor
+                ]))
+            } else if trimmed.hasPrefix("## ") {
+                let content = String(trimmed.dropFirst(3))
+                let font = UIFont.systemFont(ofSize: 22, weight: .bold)
+                result.append(NSAttributedString(string: content, attributes: [
+                    .font: font, .foregroundColor: bodyColor
+                ]))
+            } else if trimmed.hasPrefix("# ") {
+                let content = String(trimmed.dropFirst(2))
+                let font = UIFont.systemFont(ofSize: 28, weight: .bold)
+                result.append(NSAttributedString(string: content, attributes: [
+                    .font: font, .foregroundColor: bodyColor
+                ]))
+            } else {
+                // Inline formatting: **bold** and *italic*
+                result.append(parseInlineFormatting(trimmed, bodyFont: bodyFont, bodyColor: bodyColor))
+            }
+        }
+
+        return result
+    }
+
+    /// Parse inline **bold** and *italic* markers within a line.
+    private static func parseInlineFormatting(_ text: String, bodyFont: UIFont, bodyColor: UIColor) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        var remaining = text[text.startIndex...]
+
+        while !remaining.isEmpty {
+            // Bold: **text**
+            if remaining.hasPrefix("**"),
+               let endRange = remaining[remaining.index(remaining.startIndex, offsetBy: 2)...].range(of: "**") {
+                let boldStart = remaining.index(remaining.startIndex, offsetBy: 2)
+                let boldText = String(remaining[boldStart..<endRange.lowerBound])
+                let boldFont = UIFont.systemFont(ofSize: bodyFont.pointSize, weight: .bold)
+                result.append(NSAttributedString(string: boldText, attributes: [
+                    .font: boldFont, .foregroundColor: bodyColor
+                ]))
+                remaining = remaining[endRange.upperBound...]
+            }
+            // Italic: *text*
+            else if remaining.hasPrefix("*"),
+                    let endRange = remaining[remaining.index(after: remaining.startIndex)...].range(of: "*") {
+                let italicStart = remaining.index(after: remaining.startIndex)
+                let italicText = String(remaining[italicStart..<endRange.lowerBound])
+                let italicFont = UIFont.italicSystemFont(ofSize: bodyFont.pointSize)
+                result.append(NSAttributedString(string: italicText, attributes: [
+                    .font: italicFont, .foregroundColor: bodyColor
+                ]))
+                remaining = remaining[endRange.upperBound...]
+            }
+            // Plain character
+            else {
+                let char = String(remaining[remaining.startIndex])
+                result.append(NSAttributedString(string: char, attributes: [
+                    .font: bodyFont, .foregroundColor: bodyColor
+                ]))
+                remaining = remaining[remaining.index(after: remaining.startIndex)...]
+            }
+        }
+
+        return result
+    }
 }
 #endif
 

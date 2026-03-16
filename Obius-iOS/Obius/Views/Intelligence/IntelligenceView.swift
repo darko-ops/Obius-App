@@ -195,6 +195,9 @@ struct IntelligenceView: View {
             }
             await runScan()
         }
+        .onChange(of: selectedModuleId) { _, _ in
+            Task { await runScan() }
+        }
         .navigationDestination(item: $navigateToNote) { note in
             NoteEditorView(noteId: note.id, targetSectionId: navigateSectionId)
         }
@@ -313,6 +316,10 @@ struct IntelligenceView: View {
     private var allSurfacedInsights: [Insight] {
         insightsInModule(insightRepository.surfacedInsights)
             .filter { $0.insightType != .upcomingEcho }
+            .sorted { lhs, rhs in
+                if lhs.priority != rhs.priority { return lhs.priority < rhs.priority }
+                return lhs.createdAt > rhs.createdAt
+            }
     }
 
     private var categoriesSection: some View {
@@ -415,7 +422,10 @@ struct IntelligenceView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    ForEach(insightsInModule(insightRepository.trackedInsights)) { insight in
+                    ForEach(insightsInModule(insightRepository.trackedInsights).sorted { lhs, rhs in
+                        if lhs.priority != rhs.priority { return lhs.priority < rhs.priority }
+                        return lhs.createdAt > rhs.createdAt
+                    }) { insight in
                         TrackedInsightChip(
                             insight: insight,
                             onTap: {
@@ -528,6 +538,15 @@ struct IntelligenceView: View {
                     }
                 }
             } : nil,
+            onCreateBlock: (insight.insightType == .cleanup && insight.sourceSectionId == "dormant_loop") ? { blockName in
+                Task {
+                    if let noteId = insight.sourceNoteId {
+                        try? await appState.noteRepository.setGroupName(noteId: noteId, groupName: blockName)
+                        try? await insightRepository.dismissInsight(insight.id)
+                        haptic(.success)
+                    }
+                }
+            } : nil,
             references: refs,
             onNavigate: { ref in
                 pendingGoToNoteId = ref.noteId
@@ -564,7 +583,7 @@ struct IntelligenceView: View {
 
     private func runScan() async {
         isScanning = true
-        await insightEngine.scan()
+        await insightEngine.scan(moduleId: selectedModuleId)
         isScanning = false
     }
 
@@ -615,8 +634,8 @@ struct ChatMessageView: View {
                 Text(message.content)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(message.role == .user ? Color.accentColor : Color.gray.opacity(0.15))
-                    .foregroundStyle(message.role == .user ? .white : .primary)
+                    .background(message.role == .user ? Color.accentColor : Color(red: 0.12, green: 0.12, blue: 0.12))
+                    .foregroundStyle(message.role == .user ? .white : Color(.lightGray))
                     .clipShape(RoundedRectangle(cornerRadius: 16))
             }
 
@@ -724,6 +743,14 @@ struct WorkspaceSheet: View {
     @State private var isLoading = false
     @FocusState private var isInputFocused: Bool
 
+    // Editable page content state
+    @State private var editableTitle = ""
+    @State private var editableBody = ""
+    @State private var editableSectionContents: [String: String] = [:]
+
+    // History
+    @State private var isHistoryExpanded = false
+
     private var selectedHandles: [Handle] {
         handles.filter { selectedHandleIds.contains($0.id) }
     }
@@ -781,13 +808,15 @@ struct WorkspaceSheet: View {
                             searchBar
                         }
 
-                        // Focus mode selector
-                        focusSelector
+                        // Focus mode selector (hidden when opened from editor with a specific page)
+                        if preselectedPageId == nil {
+                            focusSelector
+                        }
 
                         // Pages list or Loop list based on mode
-                        if focusMode == .pages {
+                        if focusMode == .pages && preselectedPageId == nil {
                             pagesList
-                        } else {
+                        } else if focusMode == .loops && preselectedPageId == nil {
                             loopSelector
                         }
 
@@ -795,6 +824,11 @@ struct WorkspaceSheet: View {
                         if let pageId = selectedPageId,
                            let page = pages.first(where: { $0.id == pageId }) {
                             pageFullContent(for: page)
+                        }
+
+                        // Change history (below page content)
+                        if selectedPageId != nil {
+                            changeHistory
                         }
 
                         // Loop content editor (only in loops mode)
@@ -894,33 +928,62 @@ struct WorkspaceSheet: View {
 
     @ViewBuilder
     private func pageFullContent(for note: Note) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let isEditable = preselectedPageId != nil
+        return VStack(alignment: .leading, spacing: 0) {
             // Page title
             HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 2)
                     .fill(note.intent.color)
                     .frame(width: 4, height: 18)
-                Text(note.displayTitle)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
+                if isEditable {
+                    TextField("Title", text: $editableTitle)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .textFieldStyle(.plain)
+                        .onChange(of: editableTitle) { _ in
+                            savePageTitle(noteId: note.id)
+                        }
+                } else {
+                    Text(note.displayTitle)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                }
                 Spacer()
             }
             .padding(.bottom, 8)
 
             // Page body + sections + interstitials
             VStack(alignment: .leading, spacing: 0) {
-                let body = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !body.isEmpty {
-                    Text(body)
-                        .font(.caption)
-                        .foregroundStyle(.primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.bottom, 6)
+                if isEditable {
+                    if !editableBody.isEmpty || true {
+                        TextField("Body", text: $editableBody, axis: .vertical)
+                            .font(.caption)
+                            .foregroundStyle(.primary)
+                            .textFieldStyle(.plain)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.bottom, 6)
+                            .onChange(of: editableBody) { _ in
+                                savePageBody(noteId: note.id)
+                            }
+                    }
+                } else {
+                    let body = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !body.isEmpty {
+                        Text(body)
+                            .font(.caption)
+                            .foregroundStyle(.primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.bottom, 6)
+                    }
                 }
 
                 let sections = cachedPageSections.filter { $0.deletedAt == nil }
                 ForEach(sections) { section in
-                    sectionRow(for: section)
+                    if isEditable {
+                        editableSectionRow(for: section)
+                    } else {
+                        sectionRow(for: section)
+                    }
 
                     // Interstitial text after this section
                     let interstitial = note.textAfterSection(section.id)
@@ -959,14 +1022,9 @@ struct WorkspaceSheet: View {
             .flatMap { HandleManager.shared.getHandle(id: $0) }
             .map { "@\($0.displayName)" }
 
-        HStack(alignment: .top, spacing: 6) {
-            // Section type indicator
-            RoundedRectangle(cornerRadius: 1)
-                .fill(section.intent.color.opacity(0.5))
-                .frame(width: 2, height: section.sectionType == .line ? 14 : 20)
-                .padding(.top, 2)
-
-            VStack(alignment: .leading, spacing: 2) {
+        if section.sectionType == .fold {
+            // Node / bubble style
+            VStack(alignment: .leading, spacing: 4) {
                 if let handleName {
                     Text(handleName)
                         .font(.caption2.weight(.semibold))
@@ -974,10 +1032,36 @@ struct WorkspaceSheet: View {
                 }
 
                 if section.contentType == .checklist {
-                    Image(systemName: content.isEmpty ? "square" : "checkmark.square")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 4) {
+                        Image(systemName: content.isEmpty ? "square" : "checkmark.square")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        if !content.isEmpty {
+                            Text(content)
+                                .font(.caption)
+                                .foregroundStyle(.primary)
+                        }
+                    }
+                } else if !content.isEmpty {
+                    Text(content)
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(section.intent.backgroundTint))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .padding(.vertical, 2)
+        } else {
+            // Line style — simple inline text
+            HStack(alignment: .top, spacing: 6) {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(section.intent.color.opacity(0.5))
+                    .frame(width: 2, height: 14)
+                    .padding(.top, 2)
 
                 if !content.isEmpty {
                     Text(content)
@@ -986,8 +1070,208 @@ struct WorkspaceSheet: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+            .padding(.vertical, 2)
         }
-        .padding(.vertical, 3)
+    }
+
+    @ViewBuilder
+    private func editableSectionRow(for section: Section) -> some View {
+        let handleName = section.handleId
+            .flatMap { HandleManager.shared.getHandle(id: $0) }
+            .map { "@\($0.displayName)" }
+
+        let binding = Binding<String>(
+            get: { editableSectionContents[section.id] ?? section.content },
+            set: { editableSectionContents[section.id] = $0 }
+        )
+
+        if section.sectionType == .fold {
+            // Node / bubble style — editable
+            VStack(alignment: .leading, spacing: 4) {
+                if let handleName {
+                    Text(handleName)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(section.intent.color)
+                }
+
+                TextField("Content", text: binding, axis: .vertical)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .textFieldStyle(.plain)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .onChange(of: binding.wrappedValue) { _ in
+                        saveSectionContent(sectionId: section.id)
+                    }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(section.intent.backgroundTint))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .padding(.vertical, 2)
+        } else {
+            // Line style — editable
+            HStack(alignment: .top, spacing: 6) {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(section.intent.color.opacity(0.5))
+                    .frame(width: 2, height: 14)
+                    .padding(.top, 2)
+
+                TextField("Content", text: binding, axis: .vertical)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .textFieldStyle(.plain)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .onChange(of: binding.wrappedValue) { _ in
+                        saveSectionContent(sectionId: section.id)
+                    }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func savePageTitle(noteId: String) {
+        let title = editableTitle
+        Task {
+            try? await appState.noteRepository.updateNoteTitle(noteId, title: title.isEmpty ? nil : title)
+        }
+    }
+
+    private func savePageBody(noteId: String) {
+        let body = editableBody
+        Task {
+            try? await appState.noteRepository.updateNoteBody(noteId, body: body)
+        }
+    }
+
+    private func saveSectionContent(sectionId: String) {
+        guard let content = editableSectionContents[sectionId] else { return }
+        Task {
+            try? await appState.sectionRepository.updateContent(sectionId, content: content)
+        }
+    }
+
+    // MARK: - Change History
+
+    private var resolvedActions: [(action: SuggestedAction, timestamp: Date)] {
+        messages.flatMap { message in
+            message.actions
+                .filter { action in
+                    switch action.status {
+                    case .accepted, .dismissed, .failed: return true
+                    case .pending: return false
+                    }
+                }
+                .map { (action: $0, timestamp: message.timestamp) }
+        }
+    }
+
+    private var changeHistory: some View {
+        let actions = resolvedActions
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isHistoryExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.caption)
+                    Text("HISTORY")
+                        .font(.caption.weight(.semibold))
+                    if !actions.isEmpty {
+                        Text("\(actions.count)")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.white.opacity(0.15)))
+                    }
+                    Spacer()
+                    Image(systemName: isHistoryExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption2)
+                }
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+
+            if isHistoryExpanded {
+                if actions.isEmpty {
+                    Text("No changes yet")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, 8)
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(actions.enumerated()), id: \.element.action.id) { index, item in
+                            historyRow(action: item.action, timestamp: item.timestamp, isLast: index == actions.count - 1)
+                        }
+                    }
+                    .padding(.top, 8)
+                }
+            }
+        }
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private func historyRow(action: SuggestedAction, timestamp: Date, isLast: Bool) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            // Timeline
+            VStack(spacing: 0) {
+                Circle()
+                    .fill(statusColor(for: action.status))
+                    .frame(width: 8, height: 8)
+                if !isLast {
+                    Rectangle()
+                        .fill(Color.gray.opacity(0.2))
+                        .frame(width: 1)
+                        .frame(maxHeight: .infinity)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Image(systemName: action.icon)
+                        .font(.caption2)
+                        .foregroundStyle(action.tintColor)
+                    Text(action.title)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
+
+                HStack(spacing: 4) {
+                    Text(statusLabel(for: action.status))
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(statusColor(for: action.status))
+                    Text("·")
+                        .foregroundStyle(.tertiary)
+                    Text(timestamp, style: .time)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.bottom, isLast ? 0 : 10)
+        }
+    }
+
+    private func statusColor(for status: ActionStatus) -> Color {
+        switch status {
+        case .accepted: return .green
+        case .dismissed: return .gray
+        case .failed: return .red
+        case .pending: return .yellow
+        }
+    }
+
+    private func statusLabel(for status: ActionStatus) -> String {
+        switch status {
+        case .accepted: return "Applied"
+        case .dismissed: return "Dismissed"
+        case .failed(let reason): return "Failed: \(reason)"
+        case .pending: return "Pending"
+        }
     }
 
     // MARK: - Loop Selector
@@ -1143,8 +1427,8 @@ struct WorkspaceSheet: View {
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
-                        .foregroundColor(focusMode == mode ? .white : .secondary)
-                        .background(focusMode == mode ? Color.accentColor : .clear)
+                        .foregroundColor(focusMode == mode ? .white : Color(.lightGray))
+                        .background(focusMode == mode ? Color.accentColor : Color(red: 0.06, green: 0.06, blue: 0.06))
                         .overlay(
                             Capsule()
                                 .strokeBorder(focusMode == mode ? Color.clear : Color.gray.opacity(0.3), lineWidth: 1)
@@ -1164,23 +1448,25 @@ struct WorkspaceSheet: View {
             if let selectedPage = pages.first(where: { $0.id == selectedPageId }) {
                 pageRow(for: selectedPage)
 
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        selectedPageId = nil
-                        cachedPageSections = []
-                        selectedHandleIds.removeAll()
-                        editableContent = ""
-                        editingHandleId = nil
-                        contentHasUnsavedChanges = false
-                        interactionMode = nil
-                        messages.removeAll()
+                if preselectedPageId == nil {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            selectedPageId = nil
+                            cachedPageSections = []
+                            selectedHandleIds.removeAll()
+                            editableContent = ""
+                            editingHandleId = nil
+                            contentHasUnsavedChanges = false
+                            interactionMode = nil
+                            messages.removeAll()
+                        }
+                    } label: {
+                        Label("Change page", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
                     }
-                } label: {
-                    Label("Change page", systemImage: "arrow.triangle.2.circlepath")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             } else {
                 ForEach(filteredPages) { note in
                     pageRow(for: note)
@@ -1194,7 +1480,7 @@ struct WorkspaceSheet: View {
         let isSelected = selectedPageId == note.id
         Button {
             withAnimation(.easeInOut(duration: 0.15)) {
-                if isSelected {
+                if isSelected && preselectedPageId == nil {
                     selectedPageId = nil
                     cachedPageSections = []
                     selectedHandleIds.removeAll()
@@ -1203,7 +1489,7 @@ struct WorkspaceSheet: View {
                     contentHasUnsavedChanges = false
                     interactionMode = nil
                     messages.removeAll()
-                } else {
+                } else if !isSelected {
                     selectedPageId = note.id
                     selectedHandleIds.removeAll()
                     editableContent = ""
@@ -1302,14 +1588,18 @@ struct WorkspaceSheet: View {
             VStack(spacing: 6) {
                 Image(systemName: icon)
                     .font(.title3)
+                    .foregroundStyle(Color(.lightGray))
                 Text(mode.rawValue)
                     .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color(.lightGray))
                 Text(description)
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.gray)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
+            .background(Color(red: 0.06, green: 0.06, blue: 0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
                     .stroke(Color.gray.opacity(0.3), lineWidth: 1)
@@ -1323,6 +1613,20 @@ struct WorkspaceSheet: View {
             if let sections = try? await appState.sectionRepository.getSections(noteId: noteId) {
                 await MainActor.run {
                     cachedPageSections = sections
+                    // Populate editable section contents
+                    var contents: [String: String] = [:]
+                    for section in sections where section.deletedAt == nil {
+                        contents[section.id] = section.content
+                    }
+                    editableSectionContents = contents
+                }
+            }
+            // Populate editable title/body from the note
+            if let note = appState.noteRepository.notes.first(where: { $0.id == noteId }) {
+                let sections = cachedPageSections
+                await MainActor.run {
+                    editableTitle = note.displayTitle(sections: sections)
+                    editableBody = note.body
                 }
             }
         }
@@ -1423,7 +1727,34 @@ struct WorkspaceSheet: View {
         if let pageId = selectedPageId,
            let page = pages.first(where: { $0.id == pageId }) {
             let body = page.body.trimmingCharacters(in: .whitespacesAndNewlines)
-            pageContext = "Focused page: \"\(page.displayTitle)\"\nBody: \(body.isEmpty ? "(empty)" : String(body.prefix(500)))"
+            var parts: [String] = []
+            parts.append("Focused page (id: \(page.id)): \"\(page.displayTitle)\"")
+            parts.append("Body: \(body.isEmpty ? "(empty — user wants you to generate content here)" : String(body.prefix(500)))")
+
+            // Include section content for the focused page with IDs and types
+            let activeSections = cachedPageSections.filter { $0.deletedAt == nil }
+            let sectionTexts = activeSections
+                .prefix(20)
+                .compactMap { section -> String? in
+                    let cleaned = Self.cleanContentForAI(section.content)
+                    guard !cleaned.isEmpty else { return nil }
+                    let type = section.sectionType == .fold ? "node" : "line"
+                    let handleInfo: String
+                    if let hId = section.handleId,
+                       let h = HandleManager.shared.getHandle(id: hId) {
+                        handleInfo = ", loop: @\(h.displayName)"
+                    } else {
+                        handleInfo = ""
+                    }
+                    return "  Section (id: \(section.id), type: \(type)\(handleInfo)): \(cleaned)"
+                }
+            if !sectionTexts.isEmpty {
+                parts.append("Sections:\n\(sectionTexts.joined(separator: "\n"))")
+            } else if body.isEmpty {
+                parts.append("This page is completely blank. When the user asks you to write or create content, use the update_page_body tool with note_id \"\(page.id)\" and note_title \"\(page.displayTitle)\" to generate the content they request.")
+            }
+
+            pageContext = parts.joined(separator: "\n")
         } else {
             pageContext = ""
         }
@@ -1635,6 +1966,12 @@ struct WorkspaceSheet: View {
                    p.handleId == editingHandleId {
                     editableContent = p.newContent
                     contentHasUnsavedChanges = false
+                }
+
+                // If a section was deleted, refresh the cached sections
+                if case .deleteSection = action.actionType,
+                   let pageId = selectedPageId {
+                    loadSectionsForPage(pageId)
                 }
 
                 messages[messageIndex].actions[actionIndex] = action.withStatus(.accepted)

@@ -24,9 +24,17 @@ final class InsightEngine {
     }
 
     /// Runs all detectors, deduplicates, and bulk-inserts new insights.
-    func scan() async {
-        let notes = noteRepository.notes.filter { !$0.isDeleted }
-        print("[InsightEngine] scan() started — \(notes.count) notes")
+    /// When `moduleId` is provided, only notes in that module are scanned
+    /// so caps and limits apply per-module rather than globally.
+    func scan(moduleId: String? = nil) async {
+        let allNotes = noteRepository.notes.filter { !$0.isDeleted }
+        let notes: [Note]
+        if let moduleId {
+            notes = allNotes.filter { $0.moduleId == moduleId }
+        } else {
+            notes = allNotes
+        }
+        print("[InsightEngine] scan(module: \(moduleId ?? "all")) started — \(notes.count) notes")
 
         // Skip scan entirely if notes haven't loaded yet — avoids wiping
         // existing insights via garbage collection on an empty list.
@@ -35,10 +43,10 @@ final class InsightEngine {
             return
         }
 
-        let validNoteIds = Set(notes.map(\.id))
-
-        // Garbage-collect surfaced insights whose source note was deleted
-        try? await insightRepository.removeOrphanedInsights(validNoteIds: validNoteIds)
+        // Garbage-collect using ALL notes (not module-filtered) to avoid
+        // deleting insights for notes in other modules.
+        let allValidNoteIds = Set(allNotes.map(\.id))
+        try? await insightRepository.removeOrphanedInsights(validNoteIds: allValidNoteIds)
 
         // Fetch all sections grouped by noteId
         var sectionsByNote: [String: [Section]] = [:]
@@ -58,6 +66,7 @@ final class InsightEngine {
         newInsights.append(contentsOf: detectReminders(notes: notes, sectionsByNote: sectionsByNote))
         newInsights.append(contentsOf: detectSafetyIssues(notes: notes, sectionsByNote: sectionsByNote))
         newInsights.append(contentsOf: detectUpcomingEchoes(sectionsByNote: sectionsByNote))
+        newInsights.append(contentsOf: detectLinks(notes: notes, sectionsByNote: sectionsByNote))
         // Phase 2 stubs:
         // newInsights.append(contentsOf: await detectDrift(...))
         // newInsights.append(contentsOf: await generateWeeklyReport(...))
@@ -85,18 +94,12 @@ final class InsightEngine {
 
     // MARK: - Cleanup Detector
 
-    /// Detects stale notes, dormant loops, lonely loops, and nonsense content.
+    /// Detects dormant loops and nonsense content.
     private func detectCleanup(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
         var insights: [Insight] = []
 
-        // -- Stale notes --
-        insights.append(contentsOf: detectStaleNotes(notes: notes, sectionsByNote: sectionsByNote))
-
         // -- Dormant loops --
-        insights.append(contentsOf: detectDormantLoops(sectionsByNote: sectionsByNote))
-
-        // -- Lonely loops --
-        insights.append(contentsOf: detectLonelyLoops(sectionsByNote: sectionsByNote))
+        insights.append(contentsOf: detectDormantLoops(notes: notes, sectionsByNote: sectionsByNote))
 
         // -- Nonsense content --
         insights.append(contentsOf: detectNonsense(notes: notes))
@@ -104,51 +107,7 @@ final class InsightEngine {
         return insights
     }
 
-    private func detectStaleNotes(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
-        let now = Int64(Date().timeIntervalSince1970 * 1000)
-        let fourteenDaysMs: Int64 = 14 * 86_400_000
-        var insights: [Insight] = []
-
-        let candidates = notes
-            .filter { note in
-                guard !note.isPinned else { return false }
-                guard note.updatedAt < now - fourteenDaysMs else { return false }
-                let hasTitle = note.title != nil
-                    && !note.title!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                let hasBody = note.body.trimmingCharacters(in: .whitespacesAndNewlines).count > 20
-                return hasTitle || hasBody
-            }
-            .sorted { $0.updatedAt < $1.updatedAt }
-
-        for note in candidates {
-            let daysSince = Int((now - note.updatedAt) / 86_400_000)
-            let sections = sectionsByNote[note.id] ?? []
-            let pageTitle = note.displayTitle(sections: sections)
-
-            let staleness: String
-            if daysSince >= 90 {
-                staleness = "Last edited \(daysSince / 30) months ago"
-            } else if daysSince >= 30 {
-                staleness = "Last edited about a month ago"
-            } else {
-                staleness = "Last edited \(daysSince) days ago"
-            }
-
-            insights.append(Insight(
-                insightType: .cleanup,
-                title: "'\(pageTitle)' is gathering dust",
-                body: staleness,
-                sourceNoteId: note.id,
-                sourceSectionId: "stale"
-            ))
-
-            if insights.count >= 5 { return insights }
-        }
-
-        return insights
-    }
-
-    private func detectDormantLoops(sectionsByNote: [String: [Section]]) -> [Insight] {
+    private func detectDormantLoops(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
         let handles = handleRepository.handles
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let fourteenDaysMs: Int64 = 14 * 86_400_000
@@ -172,55 +131,22 @@ final class InsightEngine {
             guard handle.updatedAt < now - fourteenDaysMs else { continue }
 
             let daysSince = Int((now - handle.updatedAt) / 86_400_000)
+            let noteId = handleFirstNoteId[handle.id]
+            let pageTitle: String
+            if let noteId, let note = notes.first(where: { $0.id == noteId }) {
+                pageTitle = note.displayTitle(sections: sectionsByNote[noteId] ?? [])
+            } else {
+                pageTitle = "a page"
+            }
             insights.append(Insight(
                 insightType: .cleanup,
-                title: "@\(handle.displayName) hasn't been updated in \(daysSince) days",
-                body: "Consider refreshing or archiving this loop",
-                sourceNoteId: handleFirstNoteId[handle.id],
+                title: "@\(handle.displayName) dormant for \(daysSince) days",
+                body: "Organize '\(pageTitle)' into a block to keep it accessible",
+                sourceNoteId: noteId,
                 sourceSectionId: "dormant_loop"
             ))
 
             if insights.count >= 5 { return insights }
-        }
-
-        return insights
-    }
-
-    private func detectLonelyLoops(sectionsByNote: [String: [Section]]) -> [Insight] {
-        let handles = handleRepository.handles
-        var insights: [Insight] = []
-
-        let echoHandleIds = Set(EchoManager.shared.activeEchoes.map { $0.handleId })
-
-        var handleRefCount: [String: Int] = [:]
-        var handleFirstLocation: [String: (noteId: String, sectionId: String)] = [:]
-        for (noteId, sections) in sectionsByNote {
-            for section in sections {
-                if let handleId = section.handleId {
-                    handleRefCount[handleId, default: 0] += 1
-                    if handleFirstLocation[handleId] == nil {
-                        handleFirstLocation[handleId] = (noteId, section.id)
-                    }
-                }
-            }
-        }
-
-        for handle in handles {
-            guard !echoHandleIds.contains(handle.id) else { continue }
-            let count = handleRefCount[handle.id] ?? 0
-            guard count == 1 else { continue }
-
-            let location = handleFirstLocation[handle.id]
-
-            insights.append(Insight(
-                insightType: .cleanup,
-                title: "@\(handle.displayName) only appears once",
-                body: "Consider linking it elsewhere",
-                sourceNoteId: location?.noteId,
-                sourceSectionId: "lonely_loop"
-            ))
-
-            if insights.count >= 3 { return insights }
         }
 
         return insights
@@ -279,11 +205,12 @@ final class InsightEngine {
 
     // MARK: - Reminders Detector
 
-    /// Detects tasks and open questions.
+    /// Detects tasks, open questions, and lists.
     private func detectReminders(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
         var insights: [Insight] = []
         insights.append(contentsOf: detectSuggestedTasks(notes: notes, sectionsByNote: sectionsByNote))
         insights.append(contentsOf: detectOpenQuestions(notes: notes, sectionsByNote: sectionsByNote))
+        insights.append(contentsOf: detectLists(notes: notes, sectionsByNote: sectionsByNote))
         return insights
     }
 
@@ -403,9 +330,19 @@ final class InsightEngine {
             "wouldn't it", "couldn't we", "shouldn't we"
         ]
 
+        // Short conversational fragments to ignore
+        let conversationalDismissals: Set<String> = [
+            "is this good", "is that ok", "is this ok", "does that work",
+            "does this work", "is that right", "is this right", "right",
+            "you know", "isn't it", "don't you think", "what do you think"
+        ]
+
         var insights: [Insight] = []
 
         for note in notes {
+            // Skip notes the user already categorized as questions
+            guard note.intent != .question else { continue }
+
             let sections = sectionsByNote[note.id] ?? []
             let pageTitle = note.displayTitle(sections: sections)
             let noteTitleLower = (note.title ?? "").lowercased()
@@ -414,19 +351,34 @@ final class InsightEngine {
             var matchCount = 0
             var firstMatch: (text: String, sectionId: String?)?
 
-            func checkForQuestion(_ text: String, sectionId: String? = nil) {
+            /// isStandalone = true when the entire section is a single question
+            func checkForQuestion(_ text: String, sectionId: String? = nil, isStandalone: Bool = false) {
                 let lines = text.components(separatedBy: .newlines)
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+
                 for line in lines {
-                    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else { continue }
+                    let trimmed = line
                     let lower = trimmed.lowercased()
 
+                    // Skip if it matches the note title
                     if !noteTitleLower.isEmpty && lower == noteTitleLower { continue }
+
+                    // Minimum length: at least 20 characters for inline questions
+                    if !isStandalone && trimmed.count < 20 { continue }
+
+                    // Skip short conversational fragments
+                    let stripped = lower.replacingOccurrences(of: "?", with: "")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if conversationalDismissals.contains(stripped) { continue }
 
                     let endsWithQuestion = trimmed.hasSuffix("?")
                     let words = lower.split(separator: " ")
 
-                    if endsWithQuestion && words.count >= 4 {
+                    // Require 6+ words for inline "?" questions, 4+ for standalone
+                    let minWords = isStandalone ? 4 : 6
+
+                    if endsWithQuestion && words.count >= minWords {
                         matchCount += 1
                         if firstMatch == nil {
                             firstMatch = (String(trimmed.prefix(120)), sectionId)
@@ -434,7 +386,8 @@ final class InsightEngine {
                         return
                     }
 
-                    if words.count >= 3,
+                    // Question-starter detection (who/what/why etc.) — require 5+ words
+                    if words.count >= 5,
                        let first = words.first,
                        questionStarters.contains(String(first)) {
                         matchCount += 1
@@ -444,7 +397,7 @@ final class InsightEngine {
                         return
                     }
 
-                    if questionPhrases.contains(where: { lower.hasPrefix($0) }) {
+                    if words.count >= 5, questionPhrases.contains(where: { lower.hasPrefix($0) }) {
                         matchCount += 1
                         if firstMatch == nil {
                             firstMatch = (String(trimmed.prefix(120)), sectionId)
@@ -464,7 +417,12 @@ final class InsightEngine {
                 guard section.contentType == .text else { continue }
                 let content = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !content.isEmpty else { continue }
-                checkForQuestion(content, sectionId: section.id)
+
+                // Standalone: section has only one non-empty line
+                let lineCount = content.components(separatedBy: .newlines)
+                    .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                    .count
+                checkForQuestion(content, sectionId: section.id, isStandalone: lineCount == 1)
             }
 
             for (_, text) in note.interstitialContent {
@@ -486,6 +444,254 @@ final class InsightEngine {
                 sourceNoteId: note.id,
                 sourceSectionId: "question"
             ))
+        }
+
+        return insights
+    }
+
+    // MARK: - List Detector
+
+    /// Detects list-like content: bullet points, numbered items, dashes, or checklists.
+    private func detectLists(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
+        // Patterns that indicate a list item
+        let bulletPrefixes = ["- ", "• ", "· ", "* ", "→ ", "‣ "]
+        let numberedPattern = try! NSRegularExpression(pattern: #"^\d{1,3}[\.\)]\s"#)
+        let letterPattern = try! NSRegularExpression(pattern: #"^[a-zA-Z][\.\)]\s"#)
+
+        var insights: [Insight] = []
+
+        for note in notes {
+            let sections = sectionsByNote[note.id] ?? []
+            let pageTitle = note.displayTitle(sections: sections)
+
+            var totalListItems = 0
+            var firstItem: String?
+            var listSectionId: String?
+
+            func scanForListItems(_ text: String, sectionId: String? = nil) {
+                let lines = text.components(separatedBy: .newlines)
+                var consecutiveItems = 0
+
+                for line in lines {
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    guard !trimmed.isEmpty else {
+                        consecutiveItems = 0
+                        continue
+                    }
+
+                    let isBullet = bulletPrefixes.contains(where: { trimmed.hasPrefix($0) })
+                    let range = NSRange(trimmed.startIndex..., in: trimmed)
+                    let isNumbered = numberedPattern.firstMatch(in: trimmed, range: range) != nil
+                    let isLettered = letterPattern.firstMatch(in: trimmed, range: range) != nil
+                    let isChecklist = trimmed.hasPrefix("[ ]") || trimmed.hasPrefix("[x]") || trimmed.hasPrefix("[X]")
+
+                    if isBullet || isNumbered || isLettered || isChecklist {
+                        consecutiveItems += 1
+                        totalListItems += 1
+                        if firstItem == nil {
+                            firstItem = String(trimmed.prefix(120))
+                            listSectionId = sectionId
+                        }
+                    } else {
+                        consecutiveItems = 0
+                    }
+                }
+            }
+
+            // Check note body
+            let bodyText = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !bodyText.isEmpty {
+                scanForListItems(bodyText)
+            }
+
+            // Check sections (skip checklists — they're already structured)
+            for section in sections {
+                guard section.contentType == .text else { continue }
+                let content = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !content.isEmpty else { continue }
+                scanForListItems(content, sectionId: section.id)
+            }
+
+            // Check interstitial content
+            for (_, text) in note.interstitialContent {
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+                scanForListItems(trimmed)
+            }
+
+            // Only surface if there are 3+ list items (avoids single-dash noise)
+            guard totalListItems >= 3, let first = firstItem else { continue }
+
+            insights.append(Insight(
+                insightType: .reminder,
+                title: "\(totalListItems) list items in '\(pageTitle)'",
+                body: first,
+                sourceNoteId: note.id,
+                sourceSectionId: "list"
+            ))
+        }
+
+        return insights
+    }
+
+    // MARK: - Link Detector
+
+    /// Detects shared concepts across pages using repeated keyphrases that are
+    /// specific to a small number of notes (TF-IDF style). Suggests connecting
+    /// related pages with loops.
+    private func detectLinks(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
+        guard notes.count >= 2 else { return [] }
+
+        let stopWords: Set<String> = [
+            "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+            "of", "with", "by", "from", "is", "it", "as", "be", "was", "are",
+            "this", "that", "have", "has", "had", "not", "they", "we", "you",
+            "he", "she", "its", "my", "your", "our", "their", "all", "can",
+            "will", "just", "do", "so", "if", "no", "up", "out", "about",
+            "into", "more", "some", "than", "them", "been", "would", "could",
+            "should", "also", "very", "much", "how", "what", "when", "where",
+            "which", "who", "why", "i", "me", "him", "her", "us", "am",
+            "did", "does", "don", "there", "here", "then", "now", "get",
+            "got", "like", "make", "made", "going", "went", "thing", "things",
+            "way", "think", "know", "see", "look", "come", "take", "good",
+            "new", "one", "two", "first", "last", "well", "back", "even",
+            "still", "over", "after", "before", "only", "other", "being",
+            "too", "need", "want", "use", "used", "using", "work", "let",
+            "try", "keep", "untitled", "note", "notes", "page", "really",
+            "actually", "maybe", "kind", "sort", "lot", "bit", "pretty",
+            "three", "four", "five", "same", "many", "most", "such", "each",
+            "every", "both", "another", "around", "through", "between",
+            "down", "right", "left", "long", "great", "little", "just",
+            "start", "started", "create", "created", "added", "adding",
+            "check", "checked", "update", "updated", "change", "changed",
+            "already", "done", "working", "might", "something", "anything",
+            "everything", "nothing", "seem", "seems", "went", "since"
+        ]
+
+        // Step 1: Extract meaningful words per note
+        var noteWords: [String: [String]] = [:]
+        for note in notes {
+            let sections = sectionsByNote[note.id] ?? []
+            var allText = ""
+            if let title = note.title { allText += title + " " }
+            if let aiTitle = note.aiTitle { allText += aiTitle + " " }
+            allText += note.body + " "
+            for section in sections where section.contentType == .text {
+                allText += section.content + " "
+            }
+
+            let words = allText.lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { $0.count >= 4 && !stopWords.contains($0) }
+
+            if words.count >= 5 { // Notes need substance
+                noteWords[note.id] = words
+            }
+        }
+
+        // Step 2: Build keyphrase frequency per note (bigrams that repeat 2+ times in the note)
+        // A concept is a bigram that the author returns to — not just mentioned once
+        var noteKeyphrases: [String: [String: Int]] = [:] // noteId -> phrase -> count
+
+        for (noteId, words) in noteWords {
+            var phraseCounts: [String: Int] = [:]
+            for i in 0..<(words.count - 1) {
+                let phrase = "\(words[i]) \(words[i + 1])"
+                phraseCounts[phrase, default: 0] += 1
+            }
+            // Only keep phrases mentioned 2+ times = the author is focusing on this concept
+            let repeated = phraseCounts.filter { $0.value >= 2 }
+            if !repeated.isEmpty {
+                noteKeyphrases[noteId] = repeated
+            }
+        }
+
+        // Step 3: Compute document frequency — how many notes contain each phrase
+        var phraseDocFreq: [String: Int] = [:]
+        for (_, phrases) in noteKeyphrases {
+            for phrase in phrases.keys {
+                phraseDocFreq[phrase, default: 0] += 1
+            }
+        }
+
+        // Step 4: Filter to "specific" concepts — appear in 2-4 notes (not universal, not unique)
+        // If a phrase appears in too many notes it's generic; if only 1 it can't link anything
+        let maxDocs = min(notes.count / 2 + 1, 5) // Scale with project size
+        let specificPhrases = Set(phraseDocFreq.filter { $0.value >= 2 && $0.value <= maxDocs }.keys)
+
+        // Build per-note concept sets (only specific phrases)
+        var noteConcepts: [String: Set<String>] = [:]
+        for (noteId, phrases) in noteKeyphrases {
+            let specific = Set(phrases.keys).intersection(specificPhrases)
+            if !specific.isEmpty {
+                noteConcepts[noteId] = specific
+            }
+        }
+
+        // Step 5: Check which notes already share a loop
+        var loopedPairs: Set<String> = []
+        var handleNotes: [String: Set<String>] = [:]
+        for (noteId, sections) in sectionsByNote {
+            for section in sections {
+                if let handleId = section.handleId {
+                    handleNotes[handleId, default: []].insert(noteId)
+                }
+            }
+        }
+        for (_, noteIds) in handleNotes where noteIds.count >= 2 {
+            let sorted = noteIds.sorted()
+            for i in 0..<sorted.count {
+                for j in (i + 1)..<sorted.count {
+                    loopedPairs.insert("\(sorted[i])|\(sorted[j])")
+                }
+            }
+        }
+
+        // Step 6: Find pairs with shared specific concepts
+        var insights: [Insight] = []
+        var seenPairs: Set<String> = []
+        let noteArray = notes.filter { noteConcepts[$0.id] != nil }
+
+        for i in 0..<noteArray.count {
+            for j in (i + 1)..<noteArray.count {
+                let noteA = noteArray[i]
+                let noteB = noteArray[j]
+
+                let pairKey = [noteA.id, noteB.id].sorted().joined(separator: "|")
+                guard !seenPairs.contains(pairKey) else { continue }
+                seenPairs.insert(pairKey)
+
+                if loopedPairs.contains(pairKey) { continue }
+
+                let conceptsA = noteConcepts[noteA.id]!
+                let conceptsB = noteConcepts[noteB.id]!
+                let shared = conceptsA.intersection(conceptsB)
+
+                // Require 2+ shared specific concepts
+                guard shared.count >= 2 else { continue }
+
+                let sectionsA = sectionsByNote[noteA.id] ?? []
+                let sectionsB = sectionsByNote[noteB.id] ?? []
+                let titleA = noteA.displayTitle(sections: sectionsA)
+                let titleB = noteB.displayTitle(sections: sectionsB)
+
+                let topConcepts = shared
+                    .sorted { $0.count > $1.count }
+                    .prefix(3)
+                    .joined(separator: ", ")
+
+                insights.append(Insight(
+                    insightType: .reminder,
+                    title: "Link '\(titleA)' and '\(titleB)'",
+                    body: "Shared concepts: \(topConcepts) — connect them with a loop",
+                    sourceNoteId: noteA.id,
+                    sourceSectionId: "link",
+                    relatedNoteId: noteB.id
+                ))
+
+                if insights.count >= 3 { break }
+            }
+            if insights.count >= 3 { break }
         }
 
         return insights

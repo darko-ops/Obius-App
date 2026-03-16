@@ -5,7 +5,7 @@ import Combine
 final class DatabaseManager {
     private let migrator: DatabaseMigrator
 
-    static let schemaVersion = 31
+    static let schemaVersion = 32
 
     /// The App Group container path for the shared database
     static var appGroupDatabaseURL: URL? {
@@ -774,6 +774,16 @@ final class DatabaseManager {
             """)
         }
 
+        migrator.registerMigration("v32_note_view_count") { db in
+            try db.alter(table: "notes") { t in
+                t.add(column: "viewCount", .integer).notNull().defaults(to: 0)
+            }
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 32
+            """)
+        }
+
         self.migrator = migrator
 
         // Extensions open read-only and must not run migrations
@@ -807,13 +817,86 @@ final class DatabaseManager {
     func observeNotes() -> AnyPublisher<[Note], Error> {
         ValueObservation
             .tracking { db in
-                try Note
+                let notes = try Note
                     .filter(Note.Columns.deletedAt == nil)
-                    .order(Note.Columns.isPinned.desc, Note.Columns.updatedAt.desc)
                     .fetchAll(db)
+
+                // Compute engagement scores and sort
+                let now = Date().timeIntervalSince1970 * 1000
+                let sectionCounts = try self.sectionCountsByNote(db)
+                let echoNoteIds = try self.noteIdsWithActiveEchoes(db)
+                let insightCounts = try self.cleanupInsightCountsByNote(db)
+
+                return notes.sorted { a, b in
+                    let scoreA = Self.engagementScore(note: a, now: now,
+                        sectionCount: sectionCounts[a.id] ?? 0,
+                        hasActiveEcho: echoNoteIds.contains(a.id),
+                        insightCount: insightCounts[a.id] ?? 0)
+                    let scoreB = Self.engagementScore(note: b, now: now,
+                        sectionCount: sectionCounts[b.id] ?? 0,
+                        hasActiveEcho: echoNoteIds.contains(b.id),
+                        insightCount: insightCounts[b.id] ?? 0)
+                    if scoreA != scoreB { return scoreA > scoreB }
+                    return a.updatedAt > b.updatedAt
+                }
             }
             .publisher(in: dbQueue, scheduling: .immediate)
             .eraseToAnyPublisher()
+    }
+
+    private static func engagementScore(
+        note: Note, now: Double,
+        sectionCount: Int, hasActiveEcho: Bool, insightCount: Int
+    ) -> Double {
+        let pinBoost: Double = note.isPinned ? 1000 : 0
+
+        // Recency: exponential decay over 7 days
+        let ageMs = max(now - Double(note.updatedAt), 0)
+        let ageDays = ageMs / (1000 * 60 * 60 * 24)
+        let recencyBoost = 100 * exp(-ageDays / 7)
+
+        let viewBoost = Double(note.viewCount) * 2
+        let sectionBoost = Double(sectionCount) * 1
+        let echoBoost: Double = hasActiveEcho ? 50 : 0
+        let insightPenalty = Double(insightCount) * -5
+
+        return pinBoost + recencyBoost + viewBoost + sectionBoost + echoBoost + insightPenalty
+    }
+
+    private func sectionCountsByNote(_ db: Database) throws -> [String: Int] {
+        let rows = try Row.fetchAll(db, sql: """
+            SELECT noteId, COUNT(*) as cnt FROM sections
+            WHERE deletedAt IS NULL GROUP BY noteId
+        """)
+        var result: [String: Int] = [:]
+        for row in rows {
+            result[row["noteId"]] = row["cnt"]
+        }
+        return result
+    }
+
+    private func noteIdsWithActiveEchoes(_ db: Database) throws -> Set<String> {
+        let rows = try Row.fetchAll(db, sql: """
+            SELECT DISTINCT s.noteId FROM sections s
+            JOIN echoes e ON e.handleId = s.handleId
+            WHERE s.deletedAt IS NULL AND s.handleId IS NOT NULL
+        """)
+        return Set(rows.compactMap { $0["noteId"] as String? })
+    }
+
+    private func cleanupInsightCountsByNote(_ db: Database) throws -> [String: Int] {
+        let rows = try Row.fetchAll(db, sql: """
+            SELECT sourceNoteId, COUNT(*) as cnt FROM insights
+            WHERE insightType = 'cleanup' AND status = 'surfaced'
+            GROUP BY sourceNoteId
+        """)
+        var result: [String: Int] = [:]
+        for row in rows {
+            if let noteId: String = row["sourceNoteId"] {
+                result[noteId] = row["cnt"]
+            }
+        }
+        return result
     }
 
     func observeNote(id: String) -> AnyPublisher<Note?, Error> {

@@ -24,6 +24,7 @@ struct SuggestedAction: Identifiable {
         case promoteToHandle(PromoteToHandleParams)
         case updateLoopContent(UpdateLoopContentParams)
         case updatePageBody(UpdatePageBodyParams)
+        case deleteSection(DeleteSectionParams)
     }
 
     struct ScheduleEchoParams {
@@ -59,6 +60,11 @@ struct SuggestedAction: Identifiable {
         let newBody: String
     }
 
+    struct DeleteSectionParams {
+        let sectionId: String
+        let sectionPreview: String
+    }
+
     // MARK: - Display Properties
 
     var icon: String {
@@ -68,6 +74,7 @@ struct SuggestedAction: Identifiable {
         case .promoteToHandle:   return "arrow.up.right.circle"
         case .updateLoopContent: return "pencil.and.outline"
         case .updatePageBody:    return "doc.text"
+        case .deleteSection:     return "trash"
         }
     }
 
@@ -85,6 +92,9 @@ struct SuggestedAction: Identifiable {
         case .updatePageBody(let p):
             let display = p.noteTitle.isEmpty ? "Untitled" : p.noteTitle
             return "Update \(display)"
+        case .deleteSection(let p):
+            let preview = p.sectionPreview.prefix(40)
+            return "Delete node: \(preview)"
         }
     }
 
@@ -105,6 +115,8 @@ struct SuggestedAction: Identifiable {
         case .updatePageBody(let p):
             let preview = p.newBody.prefix(80)
             return String(preview)
+        case .deleteSection(let p):
+            return "Remove: \(p.sectionPreview.prefix(60))"
         }
     }
 
@@ -113,7 +125,7 @@ struct SuggestedAction: Identifiable {
         switch actionType {
         case .updateLoopContent(let p): return p.newContent
         case .updatePageBody(let p):    return p.newBody
-        default:                        return nil
+        default:                         return nil
         }
     }
 
@@ -124,6 +136,7 @@ struct SuggestedAction: Identifiable {
         case .promoteToHandle:   return "promote_to_handle"
         case .updateLoopContent: return "update_loop_content"
         case .updatePageBody:    return "update_page_body"
+        case .deleteSection:     return "delete_section"
         }
     }
 
@@ -134,6 +147,7 @@ struct SuggestedAction: Identifiable {
         case .promoteToHandle:   return .purple
         case .updateLoopContent: return .green
         case .updatePageBody:    return .cyan
+        case .deleteSection:     return .red
         }
     }
 
@@ -215,6 +229,16 @@ struct SuggestedAction: Identifiable {
                 newBody: newBody
             ))
 
+        case "delete_section":
+            guard let sectionId = input["section_id"] as? String,
+                  let sectionPreview = input["section_preview"] as? String else {
+                return nil
+            }
+            actionType = .deleteSection(DeleteSectionParams(
+                sectionId: sectionId,
+                sectionPreview: sectionPreview
+            ))
+
         default:
             return nil
         }
@@ -268,7 +292,28 @@ struct SuggestedAction: Identifiable {
             try await HandleManager.shared.updateContent(handleId: p.handleId, content: p.newContent)
 
         case .updatePageBody(let p):
+            #if os(iOS)
+            let hasMarkdown = p.newBody.contains("# ") || p.newBody.contains("**") || p.newBody.contains("*")
+            let richText: String?
+            if hasMarkdown {
+                let attributed = RichTextHelper.fromMarkdown(p.newBody)
+                richText = RichTextHelper.serialize(attributed)
+            } else {
+                richText = nil
+            }
+            // Strip markdown markers from the plain text version
+            let plainBody = p.newBody
+                .replacingOccurrences(of: "### ", with: "")
+                .replacingOccurrences(of: "## ", with: "")
+                .replacingOccurrences(of: "# ", with: "")
+                .replacingOccurrences(of: "**", with: "")
+            try await appState.noteRepository.updateNoteBody(p.noteId, body: plainBody, richText: richText)
+            #else
             try await appState.noteRepository.updateNoteBody(p.noteId, body: p.newBody)
+            #endif
+
+        case .deleteSection(let p):
+            try await appState.sectionRepository.deleteSection(p.sectionId)
         }
     }
 

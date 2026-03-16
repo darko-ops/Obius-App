@@ -98,6 +98,19 @@ const TOOL_DEFINITIONS = [
       required: ['note_id', 'note_title', 'new_body'],
     },
   },
+  {
+    name: 'delete_section',
+    description:
+      'Delete a section (node or line) from the focused page. The user will see a confirmation card before it executes. If the user says "remove the node" and there are multiple nodes, ask them which one they mean before calling this tool.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        section_id: { type: 'string', description: 'The UUID of the section to delete' },
+        section_preview: { type: 'string', description: 'Short preview of the section content (for the confirmation card)' },
+      },
+      required: ['section_id', 'section_preview'],
+    },
+  },
 ];
 
 // ---------- System prompts per action ----------
@@ -117,6 +130,12 @@ use the update_page_body tool to propose the new content.
 
 When the user asks you to edit, refine, rewrite, or improve a loop's content, \
 use the update_loop_content tool to propose the new content.
+
+When the user asks to delete or remove a node/section, check the sections list in the context. \
+If there is exactly one node (type: node), use the delete_section tool with that section's ID. \
+If there are multiple nodes and the user's request is ambiguous (e.g. "remove the node"), \
+ask them which one they mean by listing the nodes with their content previews. \
+If the user specifies enough detail to identify which node, use delete_section directly.
 
 The user's workspace shows the focused content above and your suggestion as an \
 action card they can accept. Use the correct tool for the focused item (page vs loop).

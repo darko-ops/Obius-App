@@ -143,6 +143,15 @@ final class NoteRepository: ObservableObject {
         }
     }
 
+    func incrementViewCount(_ noteId: String) async throws {
+        try await database.write { db in
+            try db.execute(
+                sql: "UPDATE notes SET viewCount = viewCount + 1 WHERE id = ?",
+                arguments: [noteId]
+            )
+        }
+    }
+
     func togglePinned(_ noteId: String) async throws {
         try await database.write { db in
             guard var note = try Note.fetchOne(db, key: noteId) else { return }
