@@ -281,7 +281,7 @@ async function handleSendWithTools(body: ActionRequest, userId: string, supabase
     messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
     {
       model: AI_MODEL,
-      maxTokens: 1024,
+      maxTokens: 4096,
       system,
       tools: TOOL_DEFINITIONS,
     }
@@ -305,7 +305,7 @@ async function handleSendChat(body: ActionRequest, userId: string, supabase: Sup
   const response = await sendMessage(
     messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
     {
-      maxTokens: 1024,
+      maxTokens: 4096,
       system,
       model: AI_MODEL,
     }

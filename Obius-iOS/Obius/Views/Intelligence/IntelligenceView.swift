@@ -1826,27 +1826,29 @@ struct WorkspaceSheet: View {
 
     // MARK: - Context Builder
 
-    /// Strip non-readable content (base64 RTF, encoded data) from text
-    private static func cleanContentForAI(_ text: String) -> String {
+    /// Strip non-readable content (base64 RTF, encoded data) from text.
+    /// `truncate` limits to 300 chars for broad project summaries; false sends full content for the focused page.
+    private static func cleanContentForAI(_ text: String, truncate: Bool = true) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         // Skip base64-encoded RTF blobs
         if trimmed.hasPrefix("e]") || trimmed.hasPrefix("ew0") || trimmed.hasPrefix("eyJ") ||
            trimmed.contains("{\\rtf") || trimmed.contains("\\fonttbl") {
             return ""
         }
-        return String(trimmed.prefix(300))
+        return truncate ? String(trimmed.prefix(300)) : trimmed
     }
 
     /// Build a structured JSON representation of the focused page for AI context.
+    /// Sends full content (no truncation) so the AI can see everything it needs for restructuring.
     private func buildStructuredPageContext(page: Note) -> String {
         let activeSections = cachedPageSections.filter { $0.deletedAt == nil }
 
         var sectionDicts: [[String: Any]] = []
-        for (index, section) in activeSections.prefix(30).enumerated() {
-            let cleaned = Self.cleanContentForAI(section.content)
+        for (index, section) in activeSections.prefix(50).enumerated() {
+            let content = Self.cleanContentForAI(section.content, truncate: false)
             var dict: [String: Any] = [
                 "id": section.id,
-                "content": cleaned,
+                "content": content,
                 "type": section.sectionType == .fold ? "node" : "line",
                 "content_type": section.contentType.rawValue,
                 "indent": section.indentLevel,
@@ -1861,12 +1863,12 @@ struct WorkspaceSheet: View {
             sectionDicts.append(dict)
         }
 
-        // Build interstitial map
+        // Build interstitial map — full content
         var interstitials: [String: String] = [:]
         for (key, value) in page.interstitialContent {
-            let cleaned = Self.cleanContentForAI(value)
-            if !cleaned.isEmpty {
-                interstitials[key] = cleaned
+            let content = Self.cleanContentForAI(value, truncate: false)
+            if !content.isEmpty {
+                interstitials[key] = content
             }
         }
 
@@ -1874,7 +1876,7 @@ struct WorkspaceSheet: View {
             "id": page.id,
             "title": page.displayTitle,
             "intent": page.intent.rawValue,
-            "body": Self.cleanContentForAI(page.body),
+            "body": Self.cleanContentForAI(page.body, truncate: false),
             "sections": sectionDicts,
             "interstitial_content": interstitials,
             "tags": page.tags + page.aiTags
