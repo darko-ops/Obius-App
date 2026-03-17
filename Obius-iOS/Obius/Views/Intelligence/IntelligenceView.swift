@@ -1968,10 +1968,24 @@ struct WorkspaceSheet: View {
                     contentHasUnsavedChanges = false
                 }
 
-                // If a section was deleted, refresh the cached sections
+                // If a section was deleted or added, refresh the cached sections
                 if case .deleteSection = action.actionType,
                    let pageId = selectedPageId {
                     loadSectionsForPage(pageId)
+                }
+                if case .addSection = action.actionType,
+                   let pageId = selectedPageId {
+                    loadSectionsForPage(pageId)
+                }
+
+                // Create a commit to log this AI change
+                let noteId = action.affectedNoteId ?? selectedPageId
+                if let noteId = noteId {
+                    let commitName = "AI: \(action.title)"
+                    _ = try? await appState.commitModule.createCommit(
+                        noteId: noteId,
+                        name: commitName
+                    )
                 }
 
                 messages[messageIndex].actions[actionIndex] = action.withStatus(.accepted)

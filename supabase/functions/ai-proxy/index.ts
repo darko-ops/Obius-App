@@ -111,6 +111,29 @@ const TOOL_DEFINITIONS = [
       required: ['section_id', 'section_preview'],
     },
   },
+  {
+    name: 'add_section',
+    description:
+      'Add a new section (node) to the focused page. You can insert it after any existing section by providing after_section_id, or omit it to append at the end. Use this when the user asks to add a new node, insert content between existing sections, or split content into a new node. The user will see a confirmation card before it executes.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        note_id: { type: 'string', description: 'The UUID of the page to add the section to' },
+        note_title: { type: 'string', description: 'The title of the page (for the confirmation card)' },
+        content: { type: 'string', description: 'The text content for the new section' },
+        after_section_id: {
+          type: 'string',
+          description: 'The UUID of the section to insert after. If omitted, the new section is appended at the end of the page.',
+        },
+        intent: {
+          type: 'string',
+          enum: ['idea', 'question', 'task', 'evidence'],
+          description: 'Optional intent/category for the new section. Defaults to idea.',
+        },
+      },
+      required: ['note_id', 'note_title', 'content'],
+    },
+  },
 ];
 
 // ---------- System prompts per action ----------
@@ -130,6 +153,12 @@ use the update_page_body tool to propose the new content.
 
 When the user asks you to edit, refine, rewrite, or improve a loop's content, \
 use the update_loop_content tool to propose the new content.
+
+When the user asks to add a new node or insert content between existing sections, \
+use the add_section tool. You can specify after_section_id to insert the new node \
+after a specific existing section, allowing precise placement anywhere in the document. \
+If the user wants to split a paragraph or insert a node in the middle of content, \
+use add_section with the appropriate after_section_id from the sections list in the context.
 
 When the user asks to delete or remove a node/section, check the sections list in the context. \
 If there is exactly one node (type: node), use the delete_section tool with that section's ID. \

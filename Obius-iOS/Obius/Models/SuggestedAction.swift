@@ -25,6 +25,7 @@ struct SuggestedAction: Identifiable {
         case updateLoopContent(UpdateLoopContentParams)
         case updatePageBody(UpdatePageBodyParams)
         case deleteSection(DeleteSectionParams)
+        case addSection(AddSectionParams)
     }
 
     struct ScheduleEchoParams {
@@ -65,6 +66,14 @@ struct SuggestedAction: Identifiable {
         let sectionPreview: String
     }
 
+    struct AddSectionParams {
+        let noteId: String
+        let noteTitle: String
+        let content: String
+        let afterSectionId: String?
+        let intent: String?
+    }
+
     // MARK: - Display Properties
 
     var icon: String {
@@ -75,6 +84,7 @@ struct SuggestedAction: Identifiable {
         case .updateLoopContent: return "pencil.and.outline"
         case .updatePageBody:    return "doc.text"
         case .deleteSection:     return "trash"
+        case .addSection:        return "plus.rectangle"
         }
     }
 
@@ -95,6 +105,9 @@ struct SuggestedAction: Identifiable {
         case .deleteSection(let p):
             let preview = p.sectionPreview.prefix(40)
             return "Delete node: \(preview)"
+        case .addSection(let p):
+            let display = p.noteTitle.isEmpty ? "Untitled" : p.noteTitle
+            return "Add node to \(display)"
         }
     }
 
@@ -117,6 +130,9 @@ struct SuggestedAction: Identifiable {
             return String(preview)
         case .deleteSection(let p):
             return "Remove: \(p.sectionPreview.prefix(60))"
+        case .addSection(let p):
+            let preview = p.content.prefix(80)
+            return String(preview)
         }
     }
 
@@ -125,6 +141,7 @@ struct SuggestedAction: Identifiable {
         switch actionType {
         case .updateLoopContent(let p): return p.newContent
         case .updatePageBody(let p):    return p.newBody
+        case .addSection(let p):        return p.content
         default:                         return nil
         }
     }
@@ -137,6 +154,7 @@ struct SuggestedAction: Identifiable {
         case .updateLoopContent: return "update_loop_content"
         case .updatePageBody:    return "update_page_body"
         case .deleteSection:     return "delete_section"
+        case .addSection:        return "add_section"
         }
     }
 
@@ -148,6 +166,20 @@ struct SuggestedAction: Identifiable {
         case .updateLoopContent: return .green
         case .updatePageBody:    return .cyan
         case .deleteSection:     return .red
+        case .addSection:        return .mint
+        }
+    }
+
+    /// The note ID affected by this action, if applicable (for commit logging).
+    var affectedNoteId: String? {
+        switch actionType {
+        case .setNoteIntent(let p):     return p.noteId
+        case .updatePageBody(let p):    return p.noteId
+        case .addSection(let p):        return p.noteId
+        case .deleteSection:            return nil  // Section's noteId not stored in params
+        case .scheduleEcho:             return nil
+        case .promoteToHandle:          return nil
+        case .updateLoopContent:        return nil
         }
     }
 
@@ -239,6 +271,20 @@ struct SuggestedAction: Identifiable {
                 sectionPreview: sectionPreview
             ))
 
+        case "add_section":
+            guard let noteId = input["note_id"] as? String,
+                  let noteTitle = input["note_title"] as? String,
+                  let content = input["content"] as? String else {
+                return nil
+            }
+            actionType = .addSection(AddSectionParams(
+                noteId: noteId,
+                noteTitle: noteTitle,
+                content: content,
+                afterSectionId: input["after_section_id"] as? String,
+                intent: input["intent"] as? String
+            ))
+
         default:
             return nil
         }
@@ -314,6 +360,17 @@ struct SuggestedAction: Identifiable {
 
         case .deleteSection(let p):
             try await appState.sectionRepository.deleteSection(p.sectionId)
+
+        case .addSection(let p):
+            let section = try await appState.sectionRepository.createSection(
+                noteId: p.noteId,
+                content: p.content,
+                afterSectionId: p.afterSectionId
+            )
+            if let intentStr = p.intent,
+               let intent = IntentType(rawValue: intentStr.lowercased()) {
+                try await appState.sectionRepository.setIntent(section.id, intent: intent)
+            }
         }
     }
 
