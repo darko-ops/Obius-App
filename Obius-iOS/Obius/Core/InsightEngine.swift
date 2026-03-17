@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import UserNotifications
 
 @MainActor
 final class InsightEngine {
@@ -63,7 +64,7 @@ final class InsightEngine {
 
         // Run each detector
         newInsights.append(contentsOf: detectCleanup(notes: notes, sectionsByNote: sectionsByNote))
-        newInsights.append(contentsOf: detectReminders(notes: notes, sectionsByNote: sectionsByNote))
+        newInsights.append(contentsOf: detectLists(notes: notes, sectionsByNote: sectionsByNote))
         newInsights.append(contentsOf: detectSafetyIssues(notes: notes, sectionsByNote: sectionsByNote))
         newInsights.append(contentsOf: detectUpcomingEchoes(sectionsByNote: sectionsByNote))
         newInsights.append(contentsOf: detectLinks(notes: notes, sectionsByNote: sectionsByNote))
@@ -81,6 +82,11 @@ final class InsightEngine {
             do {
                 try await insightRepository.createInsights(deduped)
                 print("[InsightEngine] Inserted \(deduped.count) new insight(s): \(deduped.map { "\($0.insightType.rawValue)|\($0.sourceSectionId ?? "")|\($0.title)" })")
+
+                // Schedule local notifications for new insights
+                for insight in deduped {
+                    scheduleInsightNotification(insight)
+                }
             } catch {
                 print("[InsightEngine] Bulk insert failed: \(error)")
             }
@@ -102,7 +108,7 @@ final class InsightEngine {
         insights.append(contentsOf: detectDormantLoops(notes: notes, sectionsByNote: sectionsByNote))
 
         // -- Nonsense content --
-        insights.append(contentsOf: detectNonsense(notes: notes))
+        insights.append(contentsOf: detectNonsense(notes: notes, sectionsByNote: sectionsByNote))
 
         return insights
     }
@@ -152,7 +158,7 @@ final class InsightEngine {
         return insights
     }
 
-    private func detectNonsense(notes: [Note]) -> [Insight] {
+    private func detectNonsense(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
         var insights: [Insight] = []
 
         for note in notes {
@@ -185,7 +191,8 @@ final class InsightEngine {
 
             guard tooShort || tooMuchNoise else { continue }
 
-            let pageTitle = note.displayTitle
+            let sections = sectionsByNote[note.id] ?? []
+            let pageTitle = note.displayTitle(sections: sections)
 
             insights.append(Insight(
                 insightType: .cleanup,
@@ -198,252 +205,6 @@ final class InsightEngine {
             ))
 
             if insights.count >= 3 { return insights }
-        }
-
-        return insights
-    }
-
-    // MARK: - Reminders Detector
-
-    /// Detects tasks, open questions, and lists.
-    private func detectReminders(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
-        var insights: [Insight] = []
-        insights.append(contentsOf: detectSuggestedTasks(notes: notes, sectionsByNote: sectionsByNote))
-        insights.append(contentsOf: detectOpenQuestions(notes: notes, sectionsByNote: sectionsByNote))
-        insights.append(contentsOf: detectLists(notes: notes, sectionsByNote: sectionsByNote))
-        return insights
-    }
-
-    private func detectSuggestedTasks(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
-        let explicitMarkers = [
-            "todo:", "todo ", "to-do", "fixme", "action item",
-            "[ ]", "action:", "deadline"
-        ]
-
-        let lineStartPhrases = [
-            "need to", "have to", "follow up", "don't forget",
-            "remind me", "make sure", "by tomorrow"
-        ]
-
-        let subjectPhrases = ["should ", "must ", "gotta ", "ought to "]
-        let subjects = ["i ", "we ", "you "]
-
-        var insights: [Insight] = []
-
-        for note in notes {
-            guard note.intent != .task else { continue }
-
-            let sections = sectionsByNote[note.id] ?? []
-            let pageTitle = note.displayTitle(sections: sections)
-
-            var matchCount = 0
-            var firstMatch: (text: String, sectionId: String?)?
-
-            func checkText(_ text: String, sectionId: String? = nil) {
-                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { return }
-                let lower = trimmed.lowercased()
-
-                if explicitMarkers.contains(where: { lower.contains($0) }) {
-                    matchCount += 1
-                    if firstMatch == nil {
-                        firstMatch = (String(trimmed.prefix(120)), sectionId)
-                    }
-                    return
-                }
-
-                for line in lower.components(separatedBy: .newlines) {
-                    let l = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !l.isEmpty else { continue }
-
-                    let lineStartMatch = lineStartPhrases.contains(where: { l.hasPrefix($0) })
-                    let boundaryMatch = lineStartPhrases.contains(where: {
-                        l.contains(". \($0)") || l.contains("! \($0)")
-                    })
-                    let subjectMatch = subjectPhrases.contains(where: { phrase in
-                        subjects.contains(where: { l.hasPrefix($0 + phrase) }) ||
-                        subjects.contains(where: { subject in
-                            l.contains(". \(subject)\(phrase)") ||
-                            l.contains("! \(subject)\(phrase)")
-                        })
-                    })
-
-                    if lineStartMatch || boundaryMatch || subjectMatch {
-                        matchCount += 1
-                        if firstMatch == nil {
-                            let origLines = trimmed.components(separatedBy: .newlines)
-                            let origLine = origLines.first(where: {
-                                $0.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) == l
-                            }) ?? trimmed
-                            firstMatch = (
-                                String(origLine.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120)),
-                                sectionId
-                            )
-                        }
-                        return
-                    }
-                }
-            }
-
-            checkText(note.body)
-            for section in sections {
-                guard section.intent != .task else { continue }
-                guard section.contentType == .text || section.contentType == .checklist || section.contentType == .quote else { continue }
-                checkText(section.content, sectionId: section.id)
-            }
-            for (_, text) in note.interstitialContent {
-                checkText(text)
-            }
-
-            guard let first = firstMatch else { continue }
-
-            insights.append(Insight(
-                insightType: .reminder,
-                title: matchCount == 1
-                    ? "Possible task in '\(pageTitle)'"
-                    : "\(matchCount) possible tasks in '\(pageTitle)'",
-                body: matchCount == 1
-                    ? first.text
-                    : "\(first.text)\n+\(matchCount - 1) more",
-                sourceNoteId: note.id,
-                sourceSectionId: "task"
-            ))
-        }
-
-        return insights
-    }
-
-    private func detectOpenQuestions(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
-        let questionStarters: Set<String> = [
-            "who", "what", "when", "where", "why", "how",
-            "which", "whose", "whom"
-        ]
-
-        let questionPhrases = [
-            "should i", "should we", "could i", "could we",
-            "can i", "can we", "would i", "would we",
-            "do i", "do we", "do you", "does it", "does this",
-            "is there", "is it", "is this", "are there", "are we",
-            "will it", "will this", "was it", "was this",
-            "have i", "have we", "has it", "has this",
-            "am i", "aren't we", "isn't it", "isn't this",
-            "wouldn't it", "couldn't we", "shouldn't we"
-        ]
-
-        // Short conversational fragments to ignore
-        let conversationalDismissals: Set<String> = [
-            "is this good", "is that ok", "is this ok", "does that work",
-            "does this work", "is that right", "is this right", "right",
-            "you know", "isn't it", "don't you think", "what do you think"
-        ]
-
-        var insights: [Insight] = []
-
-        for note in notes {
-            // Skip notes the user already categorized as questions
-            guard note.intent != .question else { continue }
-
-            let sections = sectionsByNote[note.id] ?? []
-            let pageTitle = note.displayTitle(sections: sections)
-            let noteTitleLower = (note.title ?? "").lowercased()
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-
-            var matchCount = 0
-            var firstMatch: (text: String, sectionId: String?)?
-
-            /// isStandalone = true when the entire section is a single question
-            func checkForQuestion(_ text: String, sectionId: String? = nil, isStandalone: Bool = false) {
-                let lines = text.components(separatedBy: .newlines)
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-
-                for line in lines {
-                    let trimmed = line
-                    let lower = trimmed.lowercased()
-
-                    // Skip if it matches the note title
-                    if !noteTitleLower.isEmpty && lower == noteTitleLower { continue }
-
-                    // Minimum length: at least 20 characters for inline questions
-                    if !isStandalone && trimmed.count < 20 { continue }
-
-                    // Skip short conversational fragments
-                    let stripped = lower.replacingOccurrences(of: "?", with: "")
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    if conversationalDismissals.contains(stripped) { continue }
-
-                    let endsWithQuestion = trimmed.hasSuffix("?")
-                    let words = lower.split(separator: " ")
-
-                    // Require 6+ words for inline "?" questions, 4+ for standalone
-                    let minWords = isStandalone ? 4 : 6
-
-                    if endsWithQuestion && words.count >= minWords {
-                        matchCount += 1
-                        if firstMatch == nil {
-                            firstMatch = (String(trimmed.prefix(120)), sectionId)
-                        }
-                        return
-                    }
-
-                    // Question-starter detection (who/what/why etc.) — require 5+ words
-                    if words.count >= 5,
-                       let first = words.first,
-                       questionStarters.contains(String(first)) {
-                        matchCount += 1
-                        if firstMatch == nil {
-                            firstMatch = (String(trimmed.prefix(120)), sectionId)
-                        }
-                        return
-                    }
-
-                    if words.count >= 5, questionPhrases.contains(where: { lower.hasPrefix($0) }) {
-                        matchCount += 1
-                        if firstMatch == nil {
-                            firstMatch = (String(trimmed.prefix(120)), sectionId)
-                        }
-                        return
-                    }
-                }
-            }
-
-            let bodyText = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !bodyText.isEmpty {
-                checkForQuestion(bodyText)
-            }
-
-            for section in sections {
-                guard section.intent != .question else { continue }
-                guard section.contentType == .text else { continue }
-                let content = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !content.isEmpty else { continue }
-
-                // Standalone: section has only one non-empty line
-                let lineCount = content.components(separatedBy: .newlines)
-                    .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                    .count
-                checkForQuestion(content, sectionId: section.id, isStandalone: lineCount == 1)
-            }
-
-            for (_, text) in note.interstitialContent {
-                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { continue }
-                checkForQuestion(trimmed)
-            }
-
-            guard let first = firstMatch else { continue }
-
-            insights.append(Insight(
-                insightType: .reminder,
-                title: matchCount == 1
-                    ? "Question in '\(pageTitle)'"
-                    : "\(matchCount) questions in '\(pageTitle)'",
-                body: matchCount == 1
-                    ? first.text
-                    : "\(first.text)\n+\(matchCount - 1) more",
-                sourceNoteId: note.id,
-                sourceSectionId: "question"
-            ))
         }
 
         return insights
@@ -464,18 +225,34 @@ final class InsightEngine {
             let sections = sectionsByNote[note.id] ?? []
             let pageTitle = note.displayTitle(sections: sections)
 
-            var totalListItems = 0
-            var firstItem: String?
-            var listSectionId: String?
-
-            func scanForListItems(_ text: String, sectionId: String? = nil) {
+            /// Scans text for consecutive list runs and appends an insight per list.
+            func scanForLists(_ text: String, sectionId: String? = nil) {
                 let lines = text.components(separatedBy: .newlines)
-                var consecutiveItems = 0
+                var currentList: [String] = []
+
+                func flushList() {
+                    guard currentList.count >= 3 else {
+                        currentList.removeAll()
+                        return
+                    }
+                    let firstItem = currentList[0]
+                        .trimmingCharacters(in: .whitespaces)
+                        .prefix(60)
+                    let body = currentList.map { "• \($0)" }.joined(separator: "\n")
+                    insights.append(Insight(
+                        insightType: .list,
+                        title: "\(currentList.count)-item list in '\(pageTitle)' — \(firstItem)…",
+                        body: body,
+                        sourceNoteId: note.id,
+                        sourceSectionId: sectionId ?? "list"
+                    ))
+                    currentList.removeAll()
+                }
 
                 for line in lines {
                     let trimmed = line.trimmingCharacters(in: .whitespaces)
                     guard !trimmed.isEmpty else {
-                        consecutiveItems = 0
+                        flushList()
                         continue
                     }
 
@@ -486,22 +263,18 @@ final class InsightEngine {
                     let isChecklist = trimmed.hasPrefix("[ ]") || trimmed.hasPrefix("[x]") || trimmed.hasPrefix("[X]")
 
                     if isBullet || isNumbered || isLettered || isChecklist {
-                        consecutiveItems += 1
-                        totalListItems += 1
-                        if firstItem == nil {
-                            firstItem = String(trimmed.prefix(120))
-                            listSectionId = sectionId
-                        }
+                        currentList.append(String(trimmed.prefix(120)))
                     } else {
-                        consecutiveItems = 0
+                        flushList()
                     }
                 }
+                flushList()
             }
 
             // Check note body
             let bodyText = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
             if !bodyText.isEmpty {
-                scanForListItems(bodyText)
+                scanForLists(bodyText)
             }
 
             // Check sections (skip checklists — they're already structured)
@@ -509,26 +282,15 @@ final class InsightEngine {
                 guard section.contentType == .text else { continue }
                 let content = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !content.isEmpty else { continue }
-                scanForListItems(content, sectionId: section.id)
+                scanForLists(content, sectionId: section.id)
             }
 
             // Check interstitial content
             for (_, text) in note.interstitialContent {
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { continue }
-                scanForListItems(trimmed)
+                scanForLists(trimmed)
             }
-
-            // Only surface if there are 3+ list items (avoids single-dash noise)
-            guard totalListItems >= 3, let first = firstItem else { continue }
-
-            insights.append(Insight(
-                insightType: .reminder,
-                title: "\(totalListItems) list items in '\(pageTitle)'",
-                body: first,
-                sourceNoteId: note.id,
-                sourceSectionId: "list"
-            ))
         }
 
         return insights
@@ -681,7 +443,7 @@ final class InsightEngine {
                     .joined(separator: ", ")
 
                 insights.append(Insight(
-                    insightType: .reminder,
+                    insightType: .link,
                     title: "Link '\(titleA)' and '\(titleB)'",
                     body: "Shared concepts: \(topConcepts) — connect them with a loop",
                     sourceNoteId: noteA.id,
@@ -857,5 +619,48 @@ final class InsightEngine {
         }
 
         return insights
+    }
+
+    // MARK: - Notifications
+
+    /// Schedules a local notification with type-specific content for a new insight.
+    private func scheduleInsightNotification(_ insight: Insight) {
+        let content = UNMutableNotificationContent()
+        content.sound = .default
+
+        switch insight.insightType {
+        case .cleanup:
+            let subtype = insight.sourceSectionId ?? ""
+            if subtype == "dormant_loop" {
+                content.title = "Dormant loop: \(insight.title.components(separatedBy: " dormant").first ?? insight.title)"
+                content.body = insight.body
+            } else {
+                content.title = "Possible nonsense"
+                content.body = "'\(insight.title.replacingOccurrences(of: "' may be nonsense", with: ""))' may need cleanup"
+            }
+        case .list:
+            content.title = insight.title
+            content.body = insight.body.components(separatedBy: "\n").first ?? ""
+        case .link:
+            content.title = "Pages may be related"
+            content.body = insight.body
+        case .safety:
+            content.title = "Sensitive data detected"
+            content.body = insight.body
+        case .upcomingEcho:
+            content.title = insight.title
+            content.body = insight.body
+        default:
+            return
+        }
+
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        let request = UNNotificationRequest(identifier: insight.id, content: content, trigger: trigger)
+
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                print("[InsightEngine] Notification scheduling failed: \(error)")
+            }
+        }
     }
 }

@@ -5,7 +5,7 @@ import Combine
 final class DatabaseManager {
     private let migrator: DatabaseMigrator
 
-    static let schemaVersion = 32
+    static let schemaVersion = 33
 
     /// The App Group container path for the shared database
     static var appGroupDatabaseURL: URL? {
@@ -781,6 +781,30 @@ final class DatabaseManager {
 
             try db.execute(sql: """
                 UPDATE syncMetadata SET schemaVersion = 32
+            """)
+        }
+
+        // v33: Migrate list/link insights to dedicated types and remove orphaned reminder rows
+        migrator.registerMigration("v33_insight_list_link_types") { db in
+            // Lists were stored as cleanup with sourceSectionId 'list'
+            try db.execute(sql: """
+                UPDATE insights SET insightType = 'list'
+                WHERE insightType = 'cleanup' AND sourceSectionId = 'list'
+            """)
+
+            // Links were stored as reminder with sourceSectionId 'link'
+            try db.execute(sql: """
+                UPDATE insights SET insightType = 'link'
+                WHERE insightType = 'reminder' AND sourceSectionId = 'link'
+            """)
+
+            // Delete remaining orphaned reminder rows
+            try db.execute(sql: """
+                DELETE FROM insights WHERE insightType = 'reminder'
+            """)
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 33
             """)
         }
 

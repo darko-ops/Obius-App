@@ -54,7 +54,7 @@ struct IntelligenceView: View {
     // MARK: - Category Grouping
 
     /// Display order for categories on the main view.
-    private static let categoryOrder: [InsightType] = [.safety, .reminder, .cleanup]
+    private static let categoryOrder: [InsightType] = [.safety, .link, .list, .cleanup]
 
     /// Groups surfaced (non-echo) insights by type.
     private var categoryGroups: [(type: InsightType, insights: [Insight])] {
@@ -123,11 +123,10 @@ struct IntelligenceView: View {
             CreateInsightSheet { title, body in
                 Task {
                     try? await insightRepository.createInsight(
-                        type: .reminder,
+                        type: .cleanup,
                         title: title,
                         body: body,
-                        status: .tracked,
-                        sourceSectionId: "task"
+                        status: .tracked
                     )
                     haptic(.success)
                 }
@@ -374,15 +373,14 @@ struct IntelligenceView: View {
                     }
 
                     Text(insight.title)
-                        .font(.caption.weight(.medium))
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(2)
 
                     if !insight.body.isEmpty {
                         Text(insight.body)
-                            .font(.caption2)
+                            .font(.caption)
                             .foregroundStyle(.secondary)
-                            .lineLimit(2)
                     }
                 }
                 .padding(.vertical, 10)
@@ -567,9 +565,7 @@ struct IntelligenceView: View {
         }
 
         // relatedNoteId may contain comma-separated IDs for multi-reference insights
-        // (but not for suggested_echo, where it stores JSON config)
-        let isSuggestedEcho = insight.insightType == .reminder && insight.sourceSectionId == "suggested_echo"
-        if !isSuggestedEcho, let relatedField = insight.relatedNoteId {
+        if let relatedField = insight.relatedNoteId {
             let relatedIds = relatedField.split(separator: ",").map(String.init)
             for relatedId in relatedIds {
                 if let note = appState.noteRepository.notes.first(where: { $0.id == relatedId }) {
@@ -1030,7 +1026,7 @@ struct WorkspaceSheet: View {
                         } label: {
                             Label("Create Node from Selection", systemImage: "plus.rectangle.fill")
                                 .font(.caption.weight(.medium))
-                                .foregroundStyle(.accentColor)
+                                .foregroundStyle(Color.accentColor)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
                                 .background(Color.accentColor.opacity(0.12))

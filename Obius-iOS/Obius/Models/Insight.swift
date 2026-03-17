@@ -6,8 +6,9 @@ import SwiftUI
 
 enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable, Identifiable {
     var id: String { rawValue }
-    case cleanup        // Stale notes, dormant/lonely loops, nonsense
-    case reminder       // Tasks, open questions, suggested echoes
+    case cleanup        // Dormant loops, nonsense content
+    case list           // List-like content in notes
+    case link           // Shared concepts between pages
     case safety         // API keys, passwords, personal data
     case drift          // Off-topic notes, orphan tags (Phase 2: AI)
     case weeklyReport   // Activity digest (Phase 2: AI)
@@ -17,7 +18,8 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable, Ident
     var icon: String {
         switch self {
         case .cleanup:      return "trash.circle"
-        case .reminder:     return "bell.badge"
+        case .list:         return "list.bullet"
+        case .link:         return "link"
         case .safety:       return "exclamationmark.shield"
         case .drift:        return "safari"
         case .weeklyReport: return "chart.bar.doc.horizontal"
@@ -29,7 +31,8 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable, Ident
     var label: String {
         switch self {
         case .cleanup:      return "Clean Up"
-        case .reminder:     return "Reminders"
+        case .list:         return "List"
+        case .link:         return "Link"
         case .safety:       return "Safety"
         case .drift:        return "Drift"
         case .weeklyReport: return "Weekly"
@@ -41,7 +44,8 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable, Ident
     var tint: InsightTint {
         switch self {
         case .cleanup:      return .gray
-        case .reminder:     return .orange
+        case .list:         return .blue
+        case .link:         return .purple
         case .safety:       return .red
         case .drift:        return .blue
         case .weeklyReport: return .purple
@@ -132,12 +136,11 @@ extension Insight: FetchableRecord, PersistableRecord {
 
 extension Insight {
     /// Stable key used to prevent duplicate insights across scans.
-    /// Reminders (task/question) dedup per-note (consolidated), others include sectionId.
     var dedupKey: String {
         switch insightType {
-        case .reminder:
-            // One insight per note per subtype
-            return "\(insightType.rawValue)|\(sourceNoteId ?? "")|\(sourceSectionId ?? "")"
+        case .link:
+            // Link insights dedup by the pair of notes (relatedNoteId holds the second note)
+            return "\(insightType.rawValue)|\(sourceNoteId ?? "")|\(relatedNoteId ?? "")"
         default:
             return "\(insightType.rawValue)|\(sourceNoteId ?? "")|\(sourceSectionId ?? "")"
         }
@@ -160,15 +163,8 @@ extension Insight {
             case "nonsense":     return "trash.circle"
             default:             return insightType.icon
             }
-        case .reminder:
-            switch subtype {
-            case "task":           return "checkmark.circle"
-            case "question":       return "questionmark.bubble"
-            case "list":           return "list.bullet"
-            case "link":           return "link"
-            case "suggested_echo": return "bell.and.waves.left.and.right"
-            default:               return insightType.icon
-            }
+        case .list, .link:
+            return insightType.icon
         case .safety:
             switch subtype {
             case "api_key":       return "key"
@@ -194,15 +190,8 @@ extension Insight {
             case "nonsense":     return "Nonsense"
             default:             return insightType.label
             }
-        case .reminder:
-            switch subtype {
-            case "task":           return "Task"
-            case "question":       return "Question"
-            case "list":           return "List"
-            case "link":           return "Link"
-            case "suggested_echo": return "Echo"
-            default:               return insightType.label
-            }
+        case .list, .link:
+            return insightType.label
         case .safety:
             switch subtype {
             case "api_key":       return "API Key"
@@ -225,14 +214,8 @@ extension Insight {
             case "nonsense": return .red
             default:         return .gray
             }
-        case .reminder:
-            switch subtype {
-            case "task":     return .green
-            case "question": return .yellow
-            case "list":     return .blue
-            case "link":           return .purple
-            default:               return .orange
-            }
+        case .list, .link:
+            return insightType.tint
         case .safety:
             return .red
         default:
@@ -253,14 +236,10 @@ extension Insight {
             return 0 // P0 — critical
         case .upcomingEcho:
             return body == "Firing now" ? 1 : 3 // P1 firing, P3 upcoming
-        case .reminder:
-            switch subtype {
-            case "task":     return 2 // P2 — actionable
-            case "question": return 3 // P3 — informational
-            case "list":     return 3 // P3 — informational
-            case "link":     return 3 // P3 — informational
-            default:         return 3
-            }
+        case .list:
+            return 3 // P3 — informational
+        case .link:
+            return 3 // P3 — informational
         case .cleanup:
             switch subtype {
             case "nonsense": return 4 // P4 — housekeeping
