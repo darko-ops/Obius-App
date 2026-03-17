@@ -712,6 +712,60 @@ struct LoopsSheetView: View {
 
 // MARK: - Workspace Sheet
 
+// MARK: - Body Text Editor with Selection + Create Node
+
+/// A UITextView wrapper that supports text selection tracking.
+struct BodyTextEditor: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var selectedRange: NSRange?
+    var onCreateNode: () -> Void
+    var onTextChange: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIView(context: Context) -> UITextView {
+        let tv = UITextView()
+        tv.delegate = context.coordinator
+        tv.font = .preferredFont(forTextStyle: .caption1)
+        tv.textColor = .label
+        tv.backgroundColor = .clear
+        tv.isScrollEnabled = false
+        tv.textContainerInset = .zero
+        tv.textContainer.lineFragmentPadding = 0
+        return tv
+    }
+
+    func updateUIView(_ tv: UITextView, context: Context) {
+        if tv.text != text {
+            tv.text = text
+        }
+    }
+
+    class Coordinator: NSObject, UITextViewDelegate {
+        var parent: BodyTextEditor
+
+        init(_ parent: BodyTextEditor) {
+            self.parent = parent
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            parent.text = textView.text
+            parent.onTextChange()
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            let range = textView.selectedRange
+            if range.length > 0 {
+                parent.selectedRange = range
+            } else {
+                parent.selectedRange = nil
+            }
+        }
+    }
+}
+
 struct WorkspaceSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var appState: AppState
@@ -747,42 +801,12 @@ struct WorkspaceSheet: View {
     @State private var editableTitle = ""
     @State private var editableBody = ""
     @State private var editableSectionContents: [String: String] = [:]
+    @State private var bodySelection: NSRange?
+    @State private var showCreateNodeFromSelection = false
 
-    // History
+    // History — backed by real commits
     @State private var isHistoryExpanded = false
-    @State private var changeLog: [ChangeEntry] = []
-
-    struct ChangeEntry: Identifiable {
-        let id = UUID()
-        let timestamp = Date()
-        let icon: String
-        let label: String
-        let tint: Color
-
-        static func titleEdit(_ title: String) -> ChangeEntry {
-            ChangeEntry(icon: "character.cursor.ibeam", label: "Title → \(title.prefix(40))", tint: .white)
-        }
-        static func bodyEdit() -> ChangeEntry {
-            ChangeEntry(icon: "doc.text", label: "Body edited", tint: .cyan)
-        }
-        static func sectionEdit(_ preview: String) -> ChangeEntry {
-            ChangeEntry(icon: "pencil.line", label: "Section edited: \(preview.prefix(30))", tint: .green)
-        }
-        static func fromAction(_ action: SuggestedAction) -> ChangeEntry {
-            let statusLabel: String
-            switch action.status {
-            case .accepted: statusLabel = "Applied"
-            case .dismissed: statusLabel = "Dismissed"
-            case .failed(let r): statusLabel = "Failed: \(r)"
-            case .pending: statusLabel = "Pending"
-            }
-            return ChangeEntry(
-                icon: action.icon,
-                label: "\(statusLabel): \(action.title)",
-                tint: action.tintColor
-            )
-        }
-    }
+    @State private var pageCommits: [Commit] = []
 
     private var selectedHandles: [Handle] {
         handles.filter { selectedHandleIds.contains($0.id) }
@@ -913,6 +937,7 @@ struct WorkspaceSheet: View {
                 selectedPageId = preselectedPageId
                 focusMode = .pages
                 loadSectionsForPage(preselectedPageId)
+                loadCommits(for: preselectedPageId)
             }
         }
     }
@@ -988,16 +1013,31 @@ struct WorkspaceSheet: View {
             // Page body + sections + interstitials
             VStack(alignment: .leading, spacing: 0) {
                 if isEditable {
-                    if !editableBody.isEmpty || true {
-                        TextField("Body", text: $editableBody, axis: .vertical)
-                            .font(.caption)
-                            .foregroundStyle(.primary)
-                            .textFieldStyle(.plain)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.bottom, 6)
-                            .onChange(of: editableBody) { _ in
-                                savePageBody(noteId: note.id)
-                            }
+                    BodyTextEditor(
+                        text: $editableBody,
+                        selectedRange: $bodySelection,
+                        onCreateNode: { createNodeFromSelection(noteId: note.id) },
+                        onTextChange: { savePageBody(noteId: note.id) }
+                    )
+                    .frame(minHeight: 20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, 6)
+
+                    // Show "Create Node" button when text is selected
+                    if bodySelection != nil {
+                        Button {
+                            createNodeFromSelection(noteId: note.id)
+                        } label: {
+                            Label("Create Node from Selection", systemImage: "plus.rectangle.fill")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.accentColor)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.accentColor.opacity(0.12))
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.bottom, 6)
                     }
                 } else {
                     let body = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1163,16 +1203,60 @@ struct WorkspaceSheet: View {
         }
     }
 
-    // Track which field was last edited to coalesce rapid keystrokes into one history entry
-    @State private var lastEditedField: String?
-    @State private var editDebounceTask: Task<Void, Never>?
+    /// Create a node from the currently selected body text.
+    /// Splits the body into before/after, creates a section with the selected text.
+    private func createNodeFromSelection(noteId: String) {
+        guard let range = bodySelection,
+              range.length > 0,
+              let swiftRange = Range(range, in: editableBody) else { return }
+
+        let selectedText = String(editableBody[swiftRange])
+        let beforeText = String(editableBody[editableBody.startIndex..<swiftRange.lowerBound])
+        let afterText = String(editableBody[swiftRange.upperBound..<editableBody.endIndex])
+
+        // Update the body to only contain the text before the selection
+        editableBody = beforeText.trimmingCharacters(in: .whitespacesAndNewlines)
+        bodySelection = nil
+
+        Task {
+            // Save the trimmed body
+            try? await appState.noteRepository.updateNoteBody(noteId, body: editableBody)
+
+            // Create a section with the selected text
+            let section = try? await appState.sectionRepository.createSection(
+                noteId: noteId,
+                content: selectedText.trimmingCharacters(in: .whitespacesAndNewlines),
+                contentType: .text,
+                sectionType: .fold
+            )
+
+            // If there's text after the selection, save it as interstitial content after the new section
+            let trimmedAfter = afterText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedAfter.isEmpty, let section = section {
+                try? await appState.noteRepository.updateInterstitialContent(
+                    noteId,
+                    afterSectionId: section.id,
+                    content: trimmedAfter
+                )
+            }
+
+            // Refresh the workspace view
+            loadSectionsForPage(noteId)
+
+            // Auto-commit this change
+            _ = try? await appState.commitModule.createCommit(
+                noteId: noteId,
+                name: "Created node from body text"
+            )
+            loadCommits(for: noteId)
+        }
+    }
 
     private func savePageTitle(noteId: String) {
         let title = editableTitle
         Task {
             try? await appState.noteRepository.updateNoteTitle(noteId, title: title.isEmpty ? nil : title)
         }
-        logEdit(field: "title") { ChangeEntry.titleEdit(title) }
     }
 
     private func savePageBody(noteId: String) {
@@ -1180,7 +1264,6 @@ struct WorkspaceSheet: View {
         Task {
             try? await appState.noteRepository.updateNoteBody(noteId, body: body)
         }
-        logEdit(field: "body") { ChangeEntry.bodyEdit() }
     }
 
     private func saveSectionContent(sectionId: String) {
@@ -1188,31 +1271,35 @@ struct WorkspaceSheet: View {
         Task {
             try? await appState.sectionRepository.updateContent(sectionId, content: content)
         }
-        logEdit(field: "section_\(sectionId)") { ChangeEntry.sectionEdit(content) }
     }
 
-    /// Debounced history logging — coalesces rapid keystrokes into a single entry per field.
-    private func logEdit(field: String, entry: @escaping () -> ChangeEntry) {
-        editDebounceTask?.cancel()
-        if lastEditedField != field {
-            // Different field — flush immediately
-            lastEditedField = field
-        }
-        editDebounceTask = Task {
-            try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5s debounce
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                // Replace the last entry if it was the same field, otherwise append
-                if let last = changeLog.last, last.label.hasPrefix(entry().label.prefix(15).description) {
-                    changeLog[changeLog.count - 1] = entry()
-                } else {
-                    changeLog.append(entry())
+    // MARK: - Commit Helpers
+
+    private func loadCommits(for noteId: String) {
+        Task {
+            if let commits = try? await appState.commitRepository.getCommits(noteId: noteId) {
+                await MainActor.run {
+                    pageCommits = commits
                 }
             }
         }
     }
 
-    // MARK: - Change History
+    /// Create a commit snapshot after an accepted AI action.
+    private func autoCommitAction(_ action: SuggestedAction, noteId: String) {
+        Task {
+            let name = "AI: \(action.title)"
+            _ = try? await appState.commitModule.createCommit(
+                noteId: noteId,
+                name: name,
+                isAutoCommit: false
+            )
+            // Reload commits to update the history
+            loadCommits(for: noteId)
+        }
+    }
+
+    // MARK: - Change History (backed by real commits)
 
     private var changeHistory: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1226,8 +1313,8 @@ struct WorkspaceSheet: View {
                         .font(.caption)
                     Text("HISTORY")
                         .font(.caption.weight(.semibold))
-                    if !changeLog.isEmpty {
-                        Text("\(changeLog.count)")
+                    if !pageCommits.isEmpty {
+                        Text("\(pageCommits.count)")
                             .font(.caption2.weight(.bold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 6)
@@ -1243,15 +1330,15 @@ struct WorkspaceSheet: View {
             .buttonStyle(.plain)
 
             if isHistoryExpanded {
-                if changeLog.isEmpty {
-                    Text("No changes yet")
+                if pageCommits.isEmpty {
+                    Text("No history yet")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                         .padding(.top, 8)
                 } else {
                     VStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(changeLog.reversed().enumerated()), id: \.element.id) { index, entry in
-                            changeRow(entry: entry, isLast: index == changeLog.count - 1)
+                        ForEach(Array(pageCommits.prefix(20).enumerated()), id: \.element.id) { index, commit in
+                            commitRow(commit: commit, isLast: index == min(pageCommits.count, 20) - 1)
                         }
                     }
                     .padding(.top, 8)
@@ -1262,11 +1349,15 @@ struct WorkspaceSheet: View {
     }
 
     @ViewBuilder
-    private func changeRow(entry: ChangeEntry, isLast: Bool) -> some View {
+    private func commitRow(commit: Commit, isLast: Bool) -> some View {
+        let isAI = commit.name?.hasPrefix("AI:") ?? false
+        let tint: Color = isAI ? .accentColor : (commit.isAutoCommit ? .orange : .white)
+        let date = Date(timeIntervalSince1970: Double(commit.createdAt) / 1000)
+
         HStack(alignment: .top, spacing: 10) {
             VStack(spacing: 0) {
                 Circle()
-                    .fill(entry.tint)
+                    .fill(tint)
                     .frame(width: 8, height: 8)
                 if !isLast {
                     Rectangle()
@@ -1278,18 +1369,25 @@ struct WorkspaceSheet: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Image(systemName: entry.icon)
+                    Image(systemName: isAI ? "sparkles" : (commit.isAutoCommit ? "clock" : "arrow.trianglehead.branch"))
                         .font(.caption2)
-                        .foregroundStyle(entry.tint)
-                    Text(entry.label)
+                        .foregroundStyle(tint)
+                    Text(commit.name ?? commit.shortId)
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                 }
 
-                Text(entry.timestamp, style: .time)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                HStack(spacing: 4) {
+                    Text(commit.shortId)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text("·")
+                        .foregroundStyle(.tertiary)
+                    Text(date, style: .relative)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
             .padding(.bottom, isLast ? 0 : 10)
         }
@@ -1761,10 +1859,13 @@ struct WorkspaceSheet: View {
         Task {
             do {
                 let apiMessages = buildAPIMessages()
-                let richContext = await buildRichContext(for: text)
 
                 var contextParts: [String] = []
-                contextParts.append(richContext)
+                // When a page is focused, the structured JSON has full content — skip the heavy project scan
+                if pageContext.isEmpty {
+                    let richContext = await buildRichContext(for: text)
+                    contextParts.append(richContext)
+                }
                 if !pageContext.isEmpty { contextParts.append(pageContext) }
                 if !loopContent.isEmpty { contextParts.append("Selected loop content:\n\n\(loopContent)") }
                 let context = contextParts.joined(separator: "\n\n")
@@ -1776,9 +1877,14 @@ struct WorkspaceSheet: View {
                         noteContext: context
                     )
 
-                    let content = response.text.isEmpty && !response.actions.isEmpty
-                        ? "Here's what I suggest:"
-                        : response.text
+                    let content: String
+                    if !response.text.isEmpty {
+                        content = response.text
+                    } else if !response.actions.isEmpty {
+                        content = "Here's what I suggest:"
+                    } else {
+                        content = "I wasn't able to generate a response. Try rephrasing your request."
+                    }
                     messages.append(ChatMessage(
                         role: .assistant,
                         content: content,
@@ -2027,14 +2133,21 @@ struct WorkspaceSheet: View {
                     }
                 }
 
-                let resolved = action.withStatus(.accepted)
-                messages[messageIndex].actions[actionIndex] = resolved
-                changeLog.append(ChangeEntry.fromAction(resolved))
+                await MainActor.run {
+                    messages[messageIndex].actions[actionIndex] = action.withStatus(.accepted)
+                    isHistoryExpanded = true
+                }
+
+                // Auto-commit the change so it appears in page history
+                if let pageId = selectedPageId {
+                    autoCommitAction(action, noteId: pageId)
+                }
+
                 haptic(.success)
             } catch {
-                let resolved = action.withStatus(.failed(error.localizedDescription))
-                messages[messageIndex].actions[actionIndex] = resolved
-                changeLog.append(ChangeEntry.fromAction(resolved))
+                await MainActor.run {
+                    messages[messageIndex].actions[actionIndex] = action.withStatus(.failed(error.localizedDescription))
+                }
                 haptic(.error)
             }
         }
@@ -2047,9 +2160,7 @@ struct WorkspaceSheet: View {
         let action = messages[messageIndex].actions[actionIndex]
         guard action.status == .pending else { return }
 
-        let resolved = action.withStatus(.dismissed)
-        messages[messageIndex].actions[actionIndex] = resolved
-        changeLog.append(ChangeEntry.fromAction(resolved))
+        messages[messageIndex].actions[actionIndex] = action.withStatus(.dismissed)
         haptic(.light)
     }
 

@@ -77,6 +77,7 @@ struct SuggestedAction: Identifiable {
 
     struct AddSectionParams {
         let noteId: String
+        let noteTitle: String
         let content: String
         let sectionType: String    // "fold" or "line"
         let contentType: String?   // "text", "checklist", "code", "quote"
@@ -131,8 +132,9 @@ struct SuggestedAction: Identifiable {
             return "Delete: \(p.sectionPreview.prefix(40))"
         case .updateSectionContent(let p):
             return "Edit: \(p.sectionPreview.prefix(40))"
-        case .addSection:
-            return "Add new section"
+        case .addSection(let p):
+            let type = p.sectionType == "fold" ? "node" : "line"
+            return "Create \(type) on \(p.noteTitle.isEmpty ? "Untitled" : p.noteTitle)"
         case .moveSection(let p):
             return "Move: \(p.sectionPreview.prefix(40))"
         case .setSectionIntent(let p):
@@ -188,7 +190,7 @@ struct SuggestedAction: Identifiable {
         case .updatePageBody:       return "update_page_body"
         case .deleteSection:        return "delete_section"
         case .updateSectionContent: return "update_section_content"
-        case .addSection:           return "add_section"
+        case .addSection:           return "create_section"
         case .moveSection:          return "move_section"
         case .setSectionIntent:     return "set_section_intent"
         }
@@ -213,10 +215,12 @@ struct SuggestedAction: Identifiable {
 
     static func from(toolUseBlock: [String: Any]) -> SuggestedAction? {
         guard let id = toolUseBlock["id"] as? String,
-              let name = toolUseBlock["name"] as? String,
-              let input = toolUseBlock["input"] as? [String: Any] else {
+              let name = toolUseBlock["name"] as? String else {
+            print("[SuggestedAction] Missing id or name in tool_use block: \(Array(toolUseBlock.keys))")
             return nil
         }
+        // input might be an empty dict {} or might be missing — default to empty
+        let input = (toolUseBlock["input"] as? [String: Any]) ?? [:]
 
         let actionType: ActionType?
 
@@ -309,14 +313,17 @@ struct SuggestedAction: Identifiable {
                 newContent: newContent
             ))
 
-        case "add_section":
+        case "create_section", "add_section":
+            // note_id and content are required; section_type defaults to "fold" (node)
             guard let noteId = input["note_id"] as? String,
-                  let content = input["content"] as? String,
-                  let sectionType = input["section_type"] as? String else {
+                  let content = input["content"] as? String else {
+                print("[SuggestedAction] create_section parse failed — note_id: \(input["note_id"] ?? "nil"), content: \(input["content"] != nil ? "present" : "nil"), allKeys: \(Array(input.keys))")
                 return nil
             }
+            let sectionType = (input["section_type"] as? String) ?? "fold"
             actionType = .addSection(AddSectionParams(
                 noteId: noteId,
+                noteTitle: (input["note_title"] as? String) ?? "",
                 content: content,
                 sectionType: sectionType,
                 contentType: input["content_type"] as? String,
@@ -351,7 +358,10 @@ struct SuggestedAction: Identifiable {
             return nil
         }
 
-        guard let type = actionType else { return nil }
+        guard let type = actionType else {
+            print("[SuggestedAction] actionType was nil for tool '\(name)' — input keys: \(Array(input.keys)), values: \(input)")
+            return nil
+        }
         return SuggestedAction(id: id, actionType: type)
     }
 

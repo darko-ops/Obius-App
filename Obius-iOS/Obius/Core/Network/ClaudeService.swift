@@ -83,13 +83,27 @@ enum ClaudeService {
 
         let data = try await invokeProxyRaw(request)
 
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = json["content"] as? [[String: Any]] else {
-            throw ClaudeError.unexpectedBody
+        let rawString = String(data: data, encoding: .utf8) ?? ""
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ClaudeError.proxyError("Could not parse response: \(rawString.prefix(200))")
+        }
+
+        // The Anthropic API returns content as an array of blocks
+        guard let content = json["content"] as? [[String: Any]] else {
+            // Check if there's an error message in the response
+            if let errorObj = json["error"] as? [String: Any],
+               let message = errorObj["message"] as? String {
+                throw ClaudeError.proxyError(message)
+            }
+            let keys = Array(json.keys).joined(separator: ", ")
+            let stopReason = json["stop_reason"] as? String ?? "unknown"
+            throw ClaudeError.proxyError("Unexpected response (keys: \(keys), stop_reason: \(stopReason)). Raw: \(rawString.prefix(300))")
         }
 
         var textParts: [String] = []
         var actions: [SuggestedAction] = []
+        var failedTools: [(name: String, reason: String)] = []
 
         for block in content {
             guard let blockType = block["type"] as? String else { continue }
@@ -99,8 +113,20 @@ enum ClaudeService {
             } else if blockType == "tool_use" {
                 if let action = SuggestedAction.from(toolUseBlock: block) {
                     actions.append(action)
+                } else {
+                    let toolName = block["name"] as? String ?? "unknown"
+                    let inputKeys = (block["input"] as? [String: Any])?.keys.joined(separator: ", ") ?? "no input"
+                    let hasId = block["id"] != nil
+                    failedTools.append((name: toolName, reason: "id=\(hasId), inputKeys=[\(inputKeys)]"))
+                    print("[ClaudeService] Failed to parse tool_use: \(toolName), id=\(hasId), inputKeys=[\(inputKeys)], raw=\(block)")
                 }
             }
+        }
+
+        // If all tool calls failed to parse, show exactly what went wrong
+        if actions.isEmpty && !failedTools.isEmpty {
+            let details = failedTools.map { "\($0.name) (\($0.reason))" }.joined(separator: "; ")
+            textParts.append("Tool calls failed to parse: \(details). Please try again.")
         }
 
         let combinedText = textParts.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)

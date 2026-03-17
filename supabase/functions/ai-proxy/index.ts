@@ -150,18 +150,19 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'add_section',
+    name: 'create_section',
     description:
-      'Add a new section (node or line) to the focused page. Specify where to insert it.',
+      'Create a new section (node or line) on the focused page. Use this when the user asks to add a node, create a section, convert content into a node, turn text into nodes, or restructure a page into sections. Call this tool MULTIPLE TIMES to create several nodes at once.',
     input_schema: {
       type: 'object',
       properties: {
         note_id: { type: 'string', description: 'The UUID of the page to add the section to' },
+        note_title: { type: 'string', description: 'The title of the page (for the confirmation card)' },
         content: { type: 'string', description: 'The content for the new section' },
         section_type: {
           type: 'string',
           enum: ['fold', 'line'],
-          description: 'fold = node with background, line = plain text',
+          description: 'fold = node with colored background, line = plain text',
         },
         content_type: {
           type: 'string',
@@ -170,7 +171,7 @@ const TOOL_DEFINITIONS = [
         },
         after_section_id: {
           type: 'string',
-          description: 'Insert after this section ID. Null or omitted = add at the beginning.',
+          description: 'Insert after this section ID. Null or omitted = add at the end.',
         },
         intent: {
           type: 'string',
