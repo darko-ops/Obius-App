@@ -158,13 +158,19 @@ extension Insight {
         case .cleanup:
             switch subtype {
             case "stale":        return "clock.arrow.circlepath"
-            case "dormant_loop": return "moon.zzz"
+            case "dormant_loop":  return "moon.zzz"
             case "lonely_loop":  return "link"
+            case "inactive_loop": return "sleep.circle"
             case "nonsense":     return "trash.circle"
             default:             return insightType.icon
             }
-        case .list, .link:
+        case .list:
             return insightType.icon
+        case .link:
+            switch subtype {
+            case "block_link": return "cube.transparent"
+            default:           return insightType.icon
+            }
         case .safety:
             switch subtype {
             case "api_key":       return "key"
@@ -185,13 +191,19 @@ extension Insight {
         case .cleanup:
             switch subtype {
             case "stale":        return "Stale"
-            case "dormant_loop": return "Dormant"
+            case "dormant_loop":  return "Dormant"
             case "lonely_loop":  return "Lonely Loop"
+            case "inactive_loop": return "Inactive"
             case "nonsense":     return "Nonsense"
             default:             return insightType.label
             }
-        case .list, .link:
+        case .list:
             return insightType.label
+        case .link:
+            switch subtype {
+            case "block_link": return "Block Link"
+            default:           return insightType.label
+            }
         case .safety:
             switch subtype {
             case "api_key":       return "API Key"

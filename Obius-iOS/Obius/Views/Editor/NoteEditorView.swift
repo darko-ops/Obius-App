@@ -309,8 +309,8 @@ private struct NoteEditorContent: View {
                 )
             }
             #endif
-            .overlay(alignment: .bottomTrailing) {
-                pageFAB
+            .overlay {
+                WorkspaceFAB { showWorkspaceSheet = true }
             }
             .sheet(isPresented: $showWorkspaceSheet) {
                 WorkspaceSheet(handles: handleManager.handles, preselectedPageId: noteId)
@@ -329,30 +329,7 @@ private struct NoteEditorContent: View {
             }
     }
 
-    // MARK: - FAB
-
-    private var pageFAB: some View {
-        Button {
-            showWorkspaceSheet = true
-        } label: {
-            Image("MobiusStrip")
-                .renderingMode(.template)
-                .resizable()
-                .scaledToFit()
-                .frame(width: 85, height: 85)
-                .foregroundStyle(.white)
-                .frame(width: 56, height: 56)
-                .background(Color(red: 0.08, green: 0.08, blue: 0.08))
-                .clipShape(Circle())
-                .overlay(
-                    Circle()
-                        .stroke(Color.white, lineWidth: 1)
-                )
-                .shadow(color: .white.opacity(0.2), radius: 10)
-        }
-        .padding(.trailing, 20)
-        .padding(.bottom, 20)
-    }
+    // MARK: - FAB (moved to shared WorkspaceFAB component)
 
     // MARK: - Main Content
 
@@ -2062,8 +2039,8 @@ struct PageHistorySheet: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 8) {
-                            ForEach(commits) { commit in
-                                CommitRowView(commit: commit, noteName: noteName)
+                            ForEach(Array(commits.enumerated()), id: \.element.id) { index, commit in
+                                CommitRowView(commit: commit, noteName: noteName, isFirst: index == 0, isLast: index == commits.count - 1)
                                     .padding(.horizontal)
                                     .padding(.vertical, 6)
                                     .contentShape(Rectangle())

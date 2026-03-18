@@ -433,7 +433,24 @@ struct SuggestedAction: Identifiable {
             try await appState.sectionRepository.deleteSection(p.sectionId)
 
         case .updateSectionContent(let p):
+            #if os(iOS)
+            let hasMarkdown = p.newContent.contains("# ") || p.newContent.contains("**") || p.newContent.contains("*")
+            let richText: String?
+            if hasMarkdown {
+                let attributed = RichTextHelper.fromMarkdown(p.newContent)
+                richText = RichTextHelper.serialize(attributed)
+            } else {
+                richText = nil
+            }
+            let plainContent = p.newContent
+                .replacingOccurrences(of: "### ", with: "")
+                .replacingOccurrences(of: "## ", with: "")
+                .replacingOccurrences(of: "# ", with: "")
+                .replacingOccurrences(of: "**", with: "")
+            try await appState.sectionRepository.updateContent(p.sectionId, content: plainContent, richText: richText)
+            #else
             try await appState.sectionRepository.updateContent(p.sectionId, content: p.newContent)
+            #endif
 
         case .addSection(let p):
             let secType: SectionType = p.sectionType == "fold" ? .fold : .line
@@ -444,13 +461,30 @@ struct SuggestedAction: Identifiable {
             case "quote":     conType = .quote
             default:          conType = .text
             }
+            #if os(iOS)
+            let hasMarkdown = p.content.contains("# ") || p.content.contains("**") || p.content.contains("*")
+            let plainContent = p.content
+                .replacingOccurrences(of: "### ", with: "")
+                .replacingOccurrences(of: "## ", with: "")
+                .replacingOccurrences(of: "# ", with: "")
+                .replacingOccurrences(of: "**", with: "")
+            #else
+            let plainContent = p.content
+            #endif
             let section = try await appState.sectionRepository.createSection(
                 noteId: p.noteId,
-                content: p.content,
+                content: plainContent,
                 contentType: conType,
                 sectionType: secType,
                 afterSectionId: p.afterSectionId
             )
+            #if os(iOS)
+            if hasMarkdown {
+                let attributed = RichTextHelper.fromMarkdown(p.content)
+                let richText = RichTextHelper.serialize(attributed)
+                try await appState.sectionRepository.updateContent(section.id, content: plainContent, richText: richText)
+            }
+            #endif
             if let intentStr = p.intent, let intent = IntentType(rawValue: intentStr.lowercased()) {
                 try await appState.sectionRepository.setIntent(section.id, intent: intent)
             }

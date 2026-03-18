@@ -64,6 +64,7 @@
 		B8A1D0010000000000000057 /* EchoRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000057 /* EchoRepository.swift */; };
 		B8A1D0010000000000000058 /* EchoManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000058 /* EchoManager.swift */; };
 		B8A1D0010000000000000059 /* EchoConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000059 /* EchoConfigSheet.swift */; };
+		B8A1D0010000000000000300 /* WorkspaceFAB.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000300 /* WorkspaceFAB.swift */; };
 		B8A1D0010000000000000060 /* ImageNodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000060 /* ImageNodeView.swift */; };
 		B8A1D0010000000000000061 /* ImagePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000061 /* ImagePickerView.swift */; };
 		B8A1D0030000000000000001 /* ActivityViewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0030000000000000001 /* ActivityViewSheet.swift */; };
@@ -182,6 +183,7 @@
 		B8A1F0010000000000000057 /* EchoRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoRepository.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000058 /* EchoManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoManager.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000059 /* EchoConfigSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoConfigSheet.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000300 /* WorkspaceFAB.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFAB.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000060 /* ImageNodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageNodeView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000061 /* ImagePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePickerView.swift; sourceTree = "<group>"; };
 		B8A1F0030000000000000001 /* ActivityViewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityViewSheet.swift; sourceTree = "<group>"; };
@@ -469,6 +471,7 @@
 				B8A1F0010000000000000045 /* SyncStatusView.swift */,
 				B8A1F0090000000000000033 /* EntitySuggestionBanner.swift */,
 				B8A1F0090000000000000034 /* EchoContextCard.swift */,
+				B8A1F0010000000000000300 /* WorkspaceFAB.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -732,6 +735,7 @@
 				B8A1D0010000000000000057 /* EchoRepository.swift in Sources */,
 				B8A1D0010000000000000058 /* EchoManager.swift in Sources */,
 				B8A1D0010000000000000059 /* EchoConfigSheet.swift in Sources */,
+				B8A1D0010000000000000300 /* WorkspaceFAB.swift in Sources */,
 				B8A1D0020000000000000001 /* ShareLink.swift in Sources */,
 				B8A1D0020000000000000002 /* Comment.swift in Sources */,
 				B8A1D0020000000000000003 /* ShareLinkRepository.swift in Sources */,

@@ -47,6 +47,8 @@ private struct NotesListContent: View {
     @State private var showingGroupDialog = false
     @State private var newGroupName = ""
     @State private var selectedBlockName: String?
+    @State private var longPressedBlockName: String?
+    @State private var blockToDelete: String?
     @AppStorage("trackedBlockNames") private var trackedBlockNamesData: String = "[]"
 
     private var trackedBlockNames: [String] {
@@ -375,7 +377,104 @@ private struct NotesListContent: View {
         List {
             if !pinnedNotes.isEmpty || !activeTrackedBlocks.isEmpty {
                 SwiftUI.Section {
-                    trackingRow
+                    ForEach(activeTrackedBlocks, id: \.self) { blockName in
+                        TrackedBlockRow(
+                            blockName: blockName,
+                            onTap: { selectedBlockName = blockName },
+                            onUntrack: {
+                                var names = trackedBlockNames
+                                names.removeAll { $0 == blockName }
+                                setTrackedBlockNames(names)
+                            }
+                        )
+                    }
+
+                    ForEach(pinnedNotes) { note in
+                        TrackedPageRow(
+                            title: autoTitles[note.id] ?? note.displayTitle,
+                            preview: pagePreviewText(for: note),
+                            intent: note.intent,
+                            onTap: { selectedNote = note }
+                        )
+                        .contextMenu {
+                            Button {
+                                Task {
+                                    try? await noteRepository.togglePinned(note.id)
+                                    if let updated = try? await noteRepository.getNote(id: note.id) {
+                                        syncLogger.logNoteUpdate(updated)
+                                    }
+                                }
+                            } label: {
+                                Label("Untrack", systemImage: "location.slash")
+                            }
+
+                            Menu {
+                                ForEach(IntentType.allCases, id: \.self) { intent in
+                                    Button {
+                                        Task {
+                                            try? await noteRepository.setIntent(note.id, intent: intent)
+                                            if let updated = try? await noteRepository.getNote(id: note.id) {
+                                                syncLogger.logNoteUpdate(updated)
+                                            }
+                                        }
+                                    } label: {
+                                        HStack {
+                                            Image(systemName: intent.icon)
+                                            Text(intent.displayName)
+                                            if note.intent == intent {
+                                                Image(systemName: "checkmark")
+                                            }
+                                        }
+                                    }
+                                }
+                            } label: {
+                                Label("Status", systemImage: "paintpalette")
+                            }
+
+                            Divider()
+
+                            Button {
+                                pageCommitItem = PageCommitItem(noteId: note.id, pageTitle: note.title ?? "")
+                            } label: {
+                                Label("Commit Page", systemImage: "arrow.down.doc")
+                            }
+
+                            Button {
+                                Task {
+                                    await createPageShareLink(for: note)
+                                }
+                            } label: {
+                                Label("Share", systemImage: "square.and.arrow.up")
+                            }
+
+                            if moduleRepository.modules.count > 1 {
+                                Menu {
+                                    ForEach(moduleRepository.modules.filter { $0.id != note.moduleId }) { module in
+                                        Button {
+                                            Task {
+                                                try? await noteRepository.setModuleId(noteId: note.id, moduleId: module.id)
+                                            }
+                                        } label: {
+                                            Label(module.name, systemImage: module.icon)
+                                        }
+                                    }
+                                } label: {
+                                    Label("Move to Project", systemImage: "folder")
+                                }
+                            }
+
+                            Divider()
+
+                            Button(role: .destructive) {
+                                Task {
+                                    try? await noteRepository.deleteNote(note.id)
+                                    syncLogger.logNoteDelete(note.id)
+                                }
+                            } label: {
+                                Label("Delete Page", systemImage: "trash")
+                            }
+                        }
+                    }
                 } header: {
                     Text("TRACKING")
                         .font(.caption.weight(.semibold))
@@ -401,68 +500,54 @@ private struct NotesListContent: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         #endif
-    }
-
-    private var trackingRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(activeTrackedBlocks, id: \.self) { blockName in
-                    Button {
-                        selectedBlockName = blockName
-                    } label: {
-                        VStack(spacing: 4) {
-                            Image(systemName: "cube.transparent")
-                                .font(.system(size: 24))
-                                .foregroundStyle(Color.white.opacity(0.85))
-
-                            Text(blockName)
-                                .font(.caption2.weight(.medium))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                        }
-                        .frame(width: 64, height: 80)
+        .confirmationDialog(
+            longPressedBlockName ?? "",
+            isPresented: Binding(
+                get: { longPressedBlockName != nil },
+                set: { if !$0 { longPressedBlockName = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let name = longPressedBlockName {
+                if trackedBlockNames.contains(name) {
+                    Button("Untrack") {
+                        var names = trackedBlockNames
+                        names.removeAll { $0 == name }
+                        setTrackedBlockNames(names)
                     }
-                    .buttonStyle(.plain)
-                }
-
-                ForEach(pinnedNotes) { note in
-                    Button {
-                        selectedNote = note
-                    } label: {
-                        trackedPageCard(note: note)
+                } else {
+                    Button("Track") {
+                        var names = trackedBlockNames
+                        names.append(name)
+                        setTrackedBlockNames(names)
                     }
-                    .buttonStyle(.plain)
                 }
-            }
-            .padding(.vertical, 4)
-        }
-        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-        .listRowBackground(Color.clear)
-        .listRowSeparator(.hidden)
-    }
-
-    private func trackedPageCard(note: Note) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(autoTitles[note.id] ?? note.displayTitle)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-
-            if let preview = pagePreviewText(for: note) {
-                Text(preview)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
+                Button("Delete Block", role: .destructive) {
+                    blockToDelete = name
+                }
+                Button("Cancel", role: .cancel) {}
             }
         }
-        .padding(10)
-        .frame(width: 140, height: 80, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemGray6))
-        )
+        .alert(
+            "Delete \"\(blockToDelete ?? "")\"?",
+            isPresented: Binding(
+                get: { blockToDelete != nil },
+                set: { if !$0 { blockToDelete = nil } }
+            )
+        ) {
+            Button("Delete", role: .destructive) {
+                if let name = blockToDelete {
+                    Task { await deleteBlock(name: name) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            let count = groupedNotes[blockToDelete ?? ""]?.count ?? 0
+            Text("This will permanently delete the block and all \(count) page\(count == 1 ? "" : "s") inside it.")
+        }
     }
+
+
 
     private func pagePreviewText(for note: Note) -> String? {
         let body = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -480,17 +565,10 @@ private struct NotesListContent: View {
                         BlockCellView(
                             groupName: groupName,
                             count: groupedNotes[groupName]?.count ?? 0,
-                            isTracked: trackedBlockNames.contains(groupName),
                             onTap: { selectedBlockName = groupName },
-                            onTrack: {
-                                var names = trackedBlockNames
-                                names.append(groupName)
-                                setTrackedBlockNames(names)
-                            },
-                            onUntrack: {
-                                var names = trackedBlockNames
-                                names.removeAll { $0 == groupName }
-                                setTrackedBlockNames(names)
+                            onLongPress: {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                longPressedBlockName = groupName
                             }
                         )
                     }
@@ -550,7 +628,7 @@ private struct NotesListContent: View {
                         }
                     }
                 } label: {
-                    Label(note.isPinned ? "Unpin" : "Pin", systemImage: note.isPinned ? "pin.slash" : "pin")
+                    Label(note.isPinned ? "Untrack" : "Track", systemImage: note.isPinned ? "location.slash" : "location")
                 }
 
                 // Intent submenu
@@ -643,7 +721,7 @@ private struct NotesListContent: View {
                         }
                     }
                 } label: {
-                    Label(note.isPinned ? "Unpin" : "Pin", systemImage: note.isPinned ? "pin.slash" : "pin")
+                    Label(note.isPinned ? "Untrack" : "Track", systemImage: note.isPinned ? "location.slash" : "location")
                 }
                 .tint(.orange)
             }
@@ -760,6 +838,25 @@ private struct NotesListContent: View {
         withAnimation {
             selectedNoteIds.removeAll()
             isSelectionMode = false
+        }
+    }
+
+    private func deleteBlock(name: String) async {
+        // Remove from tracked list if tracked
+        if trackedBlockNames.contains(name) {
+            var names = trackedBlockNames
+            names.removeAll { $0 == name }
+            setTrackedBlockNames(names)
+        }
+        // Delete all notes in the block
+        let notes = groupedNotes[name] ?? []
+        for note in notes {
+            do {
+                try await noteRepository.deleteNote(note.id)
+                syncLogger.logNoteDelete(note.id)
+            } catch {
+                print("Failed to delete note \(note.id): \(error)")
+            }
         }
     }
 
@@ -880,39 +977,104 @@ struct RoundedSearchBar: View {
 private struct BlockCellView: View {
     let groupName: String
     let count: Int
-    let isTracked: Bool
     let onTap: () -> Void
-    let onTrack: () -> Void
+    let onLongPress: () -> Void
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "cube.transparent")
+                .font(.system(size: 32))
+                .foregroundStyle(Color.white.opacity(0.85))
+
+            Text(groupName)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .onTapGesture { onTap() }
+        .onLongPressGesture(minimumDuration: 0.5) { onLongPress() }
+    }
+}
+
+// MARK: - Tracked Block Row (separate struct for independent context menus)
+
+private struct TrackedBlockRow: View {
+    let blockName: String
+    let onTap: () -> Void
     let onUntrack: () -> Void
 
     var body: some View {
-        Button(action: onTap) {
-            VStack(spacing: 6) {
-                Image(systemName: "cube.transparent")
-                    .font(.system(size: 32))
-                    .foregroundStyle(Color.white.opacity(0.85))
+        HStack(spacing: 12) {
+            Image(systemName: "cube.transparent")
+                .font(.system(size: 20))
+                .foregroundStyle(Color.white.opacity(0.85))
+                .frame(width: 28)
 
-                Text(groupName)
-                    .font(.caption.weight(.medium))
+            Text(blockName)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            Spacer()
+
+            Image(systemName: "location.fill")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .listRowBackground(Color(red: 0.06, green: 0.06, blue: 0.06))
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
+        .contextMenu {
+            Button {
+                onUntrack()
+            } label: {
+                Label("Untrack", systemImage: "location.slash")
+            }
+        }
+    }
+}
+
+// MARK: - Tracked Page Row (separate struct for independent context menus)
+
+private struct TrackedPageRow: View {
+    let title: String
+    let preview: String?
+    let intent: IntentType
+    let onTap: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(intent.color)
+                .frame(width: 4, height: 24)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12))
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            if isTracked {
-                Button(action: onUntrack) {
-                    Label("Untrack", systemImage: "eye.slash")
-                }
-            } else {
-                Button(action: onTrack) {
-                    Label("Track", systemImage: "eye")
+
+                if let preview {
+                    Text(preview)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
+            .padding(.leading, 10)
+
+            Spacer()
+
+            Image(systemName: "location.fill")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
+        .listRowBackground(Color(red: 0.06, green: 0.06, blue: 0.06))
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
     }
 }
 

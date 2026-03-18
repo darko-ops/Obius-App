@@ -39,7 +39,6 @@ struct LibraryView: View {
 
                 // Section filter
                 HStack(spacing: 20) {
-                    Spacer()
                     ForEach(LibrarySection.allCases, id: \.self) { section in
                         let isSelected = selectedSection == section
                         Button {
@@ -216,6 +215,7 @@ struct LibraryView: View {
 // MARK: - Loops List View
 
 struct LoopsListView: View {
+    @EnvironmentObject var appState: AppState
     @StateObject private var handleManager = HandleManager.shared
     @State private var showingCreateSheet = false
     @State private var selectedHandle: Handle?
@@ -235,9 +235,6 @@ struct LoopsListView: View {
         VStack(spacing: 12) {
             // Header with add button
             HStack {
-                Image(systemName: "infinity")
-                    .font(.title2.weight(.medium))
-                    .foregroundStyle(.secondary)
                 Spacer()
                 Button {
                     showingCreateSheet = true
@@ -436,11 +433,13 @@ struct CreateLoopSheet: View {
 
 struct LoopDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var appState: AppState
     let handle: Handle
 
     @StateObject private var handleManager = HandleManager.shared
     @State private var content: String
     @State private var intent: IntentType
+    @State private var references: [(note: Note, section: Section)] = []
 
     init(handle: Handle) {
         self.handle = handle
@@ -471,6 +470,23 @@ struct LoopDetailSheet: View {
                     .pickerStyle(.menu)
                 }
 
+                SwiftUI.Section("Appears In") {
+                    if references.isEmpty {
+                        Text("Not referenced in any pages")
+                            .font(.subheadline)
+                            .foregroundStyle(.tertiary)
+                    } else {
+                        ForEach(references, id: \.section.id) { ref in
+                            NavigationLink {
+                                NoteEditorView(noteId: ref.note.id, targetSectionId: ref.section.id)
+                                    .environmentObject(appState)
+                            } label: {
+                                loopReferenceRow(note: ref.note, section: ref.section)
+                            }
+                        }
+                    }
+                }
+
                 SwiftUI.Section("Actions") {
                     Button(role: .destructive) {
                         deleteLoop()
@@ -496,6 +512,65 @@ struct LoopDetailSheet: View {
                     }
                 }
             }
+            .task {
+                await loadReferences()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func loopReferenceRow(note: Note, section: Section) -> some View {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(note.intent.color)
+                .frame(width: 4, height: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(note.displayTitle)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                let preview = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !preview.isEmpty {
+                    Text(String(preview.prefix(60)))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            Text(relativeTime(for: section.updatedAt))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func relativeTime(for timestamp: Int64) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        let date = Date(timeIntervalSince1970: Double(timestamp) / 1000)
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private func loadReferences() async {
+        guard let sections = try? await appState.handleRepository.getSectionsWithHandle(handleId: handle.id) else { return }
+
+        let notes = appState.noteRepository.notes
+        var refs: [(note: Note, section: Section)] = []
+        var seenNoteIds: Set<String> = []
+
+        for section in sections {
+            guard !seenNoteIds.contains(section.noteId),
+                  let note = notes.first(where: { $0.id == section.noteId }) else { continue }
+            seenNoteIds.insert(section.noteId)
+            refs.append((note: note, section: section))
+        }
+
+        await MainActor.run {
+            references = refs
         }
     }
 
@@ -525,12 +600,38 @@ struct CommitListItem: Identifiable {
     var createdAt: Int64 { commit.createdAt }
 }
 
+enum CommitFilter: String, CaseIterable {
+    case all
+    case manual
+    case auto
+    case ai
+
+    var icon: String {
+        switch self {
+        case .all: return "line.3.horizontal.decrease.circle"
+        case .manual: return "arrow.trianglehead.branch"
+        case .auto: return "clock.fill"
+        case .ai: return "sparkles"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .all: return .white
+        case .manual: return .accentColor
+        case .auto: return .orange
+        case .ai: return .purple
+        }
+    }
+}
+
 struct CommitsListView: View {
     @EnvironmentObject var appState: AppState
     @State private var commits: [Commit] = []
     @State private var noteNames: [String: String] = [:]
     @State private var isLoading = true
     @State private var selectedCommit: Commit?
+    @State private var selectedFilter: CommitFilter = .all
 @State private var shareSheetLink: ShareLink?
     @State private var sharePreview: String = ""
     @State private var shareError: String?
@@ -545,24 +646,35 @@ struct CommitsListView: View {
     }
 
     private var filteredItems: [CommitListItem] {
-        if searchQuery.isEmpty { return allItems }
-        return allItems.filter { item in
-            (item.commit.name ?? "").localizedCaseInsensitiveContains(searchQuery) ||
-                item.noteName.localizedCaseInsensitiveContains(searchQuery) ||
-                item.commit.shortId.localizedCaseInsensitiveContains(searchQuery)
+        var items = allItems
+
+        switch selectedFilter {
+        case .all:
+            break
+        case .ai:
+            items = items.filter { $0.commit.name?.hasPrefix("AI:") ?? false }
+        case .auto:
+            items = items.filter { $0.commit.isAutoCommit && !($0.commit.name?.hasPrefix("AI:") ?? false) }
+        case .manual:
+            items = items.filter { !$0.commit.isAutoCommit && !($0.commit.name?.hasPrefix("AI:") ?? false) }
         }
+
+        if !searchQuery.isEmpty {
+            items = items.filter { item in
+                (item.commit.name ?? "").localizedCaseInsensitiveContains(searchQuery) ||
+                    item.noteName.localizedCaseInsensitiveContains(searchQuery) ||
+                    item.commit.shortId.localizedCaseInsensitiveContains(searchQuery)
+            }
+        }
+
+        return items
     }
 
     var body: some View {
         VStack(spacing: 12) {
-            // Header with stats
-            HStack {
-                Image(systemName: "square.stack.3d.up")
-                    .font(.title2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-            .padding(.horizontal)
+
+            // Filter bar
+            commitFilterBar
 
             if isLoading {
                 ProgressView()
@@ -599,6 +711,33 @@ struct CommitsListView: View {
         }
     }
 
+    private var commitFilterBar: some View {
+        HStack(spacing: 8) {
+            ForEach(CommitFilter.allCases, id: \.self) { filter in
+                let isSelected = selectedFilter == filter
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selectedFilter = filter
+                    }
+                } label: {
+                    Image(systemName: filter.icon)
+                        .font(.system(size: 12))
+                        .frame(width: 32, height: 32)
+                        .foregroundStyle(isSelected ? .black : filter.tint)
+                        .background(
+                            Circle()
+                                .fill(isSelected ? filter.tint : filter.tint.opacity(0.12))
+                        )
+                        .overlay(
+                            Circle()
+                                .stroke(filter.tint.opacity(isSelected ? 0 : 0.3), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "clock.arrow.circlepath")
@@ -616,8 +755,8 @@ struct CommitsListView: View {
 
     private var commitsList: some View {
         LazyVStack(spacing: 8) {
-            ForEach(filteredItems) { item in
-                CommitRowView(commit: item.commit, noteName: item.noteName, viewCount: commitViewCounts[item.commit.hash] ?? 0)
+            ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
+                CommitRowView(commit: item.commit, noteName: item.noteName, viewCount: commitViewCounts[item.commit.hash] ?? 0, isFirst: index == 0, isLast: index == filteredItems.count - 1)
                     .padding(.horizontal)
                     .padding(.vertical, 6)
                     .background(Color(.systemBackground))
@@ -755,6 +894,8 @@ struct CommitRowView: View {
     let commit: Commit
     let noteName: String
     var viewCount: Int = 0
+    var isFirst: Bool = false
+    var isLast: Bool = false
 
     private var relativeTime: String {
         let formatter = RelativeDateTimeFormatter()
@@ -763,45 +904,55 @@ struct CommitRowView: View {
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 
-    /// Spine color: accent for manual, orange for auto
-    private var spineColor: Color {
-        commit.isAutoCommit ? .orange : .accentColor
+    private var isAI: Bool {
+        commit.name?.hasPrefix("AI:") ?? false
+    }
+
+    private var tint: Color {
+        isAI ? .purple : (commit.isAutoCommit ? .orange : .accentColor)
+    }
+
+    private var icon: String {
+        isAI ? "sparkles" : (commit.isAutoCommit ? "clock.fill" : "arrow.trianglehead.branch")
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Auto label sits to the left of the spine
-            if commit.isAutoCommit {
-                Text("Auto")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.orange.opacity(0.12))
-                    .clipShape(Capsule())
-            }
-
-            // Spine: 4px wide
-            RoundedRectangle(cornerRadius: 2)
-                .fill(spineColor)
-                .frame(width: 4)
+        HStack(spacing: 10) {
+            // Icon
+            Image(systemName: icon)
+                .font(.system(size: 10))
+                .foregroundStyle(tint)
+                .frame(width: 20, height: 20)
+                .background(tint.opacity(0.15))
+                .clipShape(Circle())
 
             VStack(alignment: .leading, spacing: 3) {
                 // Row 1: Name + pills + time
                 HStack(spacing: 6) {
+                    if isAI {
+                        Text("AI")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.purple)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.purple.opacity(0.12))
+                            .clipShape(Capsule())
+                    } else if commit.isAutoCommit {
+                        Text("Auto")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
+
                     Text(commit.name ?? noteName)
-                        .font(.subheadline.weight(commit.isAutoCommit ? .regular : .semibold))
+                        .font(.subheadline.weight(commit.isAutoCommit && !isAI ? .regular : .semibold))
+                        .foregroundStyle(.primary)
                         .lineLimit(1)
 
                     Spacer()
-
-                    Text("#\(commit.shortId)")
-                        .font(.system(size: 10))
-                        .foregroundStyle(spineColor)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(spineColor.opacity(0.12))
-                        .clipShape(Capsule())
 
                     if viewCount > 0 {
                         Label("\(viewCount)", systemImage: "eye")
@@ -822,9 +973,8 @@ struct CommitRowView: View {
                         .lineLimit(1)
                 }
             }
-            .padding(.leading, 10)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 2)
     }
 }
 

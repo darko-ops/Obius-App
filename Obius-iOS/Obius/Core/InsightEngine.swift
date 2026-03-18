@@ -98,6 +98,29 @@ final class InsightEngine {
         try? await insightRepository.purgeDismissed()
     }
 
+    // MARK: - Content Helpers
+
+    /// Collects all scannable text from a note: title, body, section titles,
+    /// section content (all content types), and interstitial content.
+    private static func allText(for note: Note, sections: [Section]) -> String {
+        var parts: [String] = []
+        if let title = note.title { parts.append(title) }
+        if !note.body.isEmpty { parts.append(note.body) }
+        for section in sections {
+            if let sectionTitle = section.title, !sectionTitle.isEmpty {
+                parts.append(sectionTitle)
+            }
+            if !section.content.isEmpty {
+                parts.append(section.content)
+            }
+        }
+        for (_, text) in note.interstitialContent {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { parts.append(trimmed) }
+        }
+        return parts.joined(separator: "\n")
+    }
+
     // MARK: - Cleanup Detector
 
     /// Detects dormant loops and nonsense content.
@@ -106,6 +129,9 @@ final class InsightEngine {
 
         // -- Dormant loops --
         insights.append(contentsOf: detectDormantLoops(notes: notes, sectionsByNote: sectionsByNote))
+
+        // -- Inactive loops (zero references) --
+        insights.append(contentsOf: detectInactiveLoops(sectionsByNote: sectionsByNote))
 
         // -- Nonsense content --
         insights.append(contentsOf: detectNonsense(notes: notes, sectionsByNote: sectionsByNote))
@@ -158,40 +184,93 @@ final class InsightEngine {
         return insights
     }
 
+    private func detectInactiveLoops(sectionsByNote: [String: [Section]]) -> [Insight] {
+        let handles = handleRepository.handles
+        var insights: [Insight] = []
+
+        // Collect all handleIds referenced by any section
+        var referencedHandleIds: Set<String> = []
+        for (_, sections) in sectionsByNote {
+            for section in sections where section.deletedAt == nil {
+                if let handleId = section.handleId {
+                    referencedHandleIds.insert(handleId)
+                }
+            }
+        }
+
+        for handle in handles {
+            guard !referencedHandleIds.contains(handle.id) else { continue }
+
+            insights.append(Insight(
+                insightType: .cleanup,
+                title: "@\(handle.displayName) has no references",
+                body: "This loop isn't used in any pages. Delete it to keep your project clean.",
+                sourceNoteId: handle.id,
+                sourceSectionId: "inactive_loop"
+            ))
+
+            if insights.count >= 5 { return insights }
+        }
+
+        return insights
+    }
+
+    /// Patterns that indicate personal/sensitive data — notes matching these
+    /// should be flagged as safety issues, not nonsense.
+    private static let sensitivePatterns: [NSRegularExpression] = [
+        try! NSRegularExpression(pattern: #"\b\d{3}-\d{2}-\d{4}\b"#),                          // SSN
+        try! NSRegularExpression(pattern: #"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b"#),     // Credit card
+        try! NSRegularExpression(pattern: #"(?:password|pwd|secret|token)\s*[:=]\s*\S+"#, options: [.caseInsensitive]), // Passwords
+        try! NSRegularExpression(pattern: #"sk-[a-zA-Z0-9]{20,}"#),                             // API key
+        try! NSRegularExpression(pattern: #"pk_[a-zA-Z0-9]{20,}"#),                             // API key
+        try! NSRegularExpression(pattern: #"AKIA[0-9A-Z]{16}"#),                                // AWS key
+        try! NSRegularExpression(pattern: #"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}"#),              // Phone number (with or without separators)
+    ]
+
+    private static func containsSensitiveData(_ text: String) -> Bool {
+        let range = NSRange(text.startIndex..., in: text)
+        return sensitivePatterns.contains { $0.firstMatch(in: text, range: range) != nil }
+    }
+
     private func detectNonsense(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
         var insights: [Insight] = []
 
         for note in notes {
-            let body = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            let sections = sectionsByNote[note.id] ?? []
+            let combined = Self.allText(for: note, sections: sections)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // Skip notes with a real title but empty body — those are just titled stubs
+            // Skip notes with a real title but no other content — those are just titled stubs
             if let title = note.title,
-               !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-               body.isEmpty {
-                continue
+               !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let withoutTitle = combined.dropFirst(title.count)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if withoutTitle.isEmpty { continue }
             }
 
             // Skip empty notes entirely
-            guard !body.isEmpty else { continue }
+            guard !combined.isEmpty else { continue }
+
+            // Skip notes that contain sensitive data — those belong to the safety detector
+            if Self.containsSensitiveData(combined) { continue }
 
             // Strip whitespace and special characters for meaningful char count
-            let meaningful = body.unicodeScalars.filter {
+            let meaningful = combined.unicodeScalars.filter {
                 CharacterSet.alphanumerics.contains($0)
             }
             let meaningfulCount = meaningful.count
 
-            // Flag if body < 10 meaningful chars
+            // Flag if combined content < 10 meaningful chars
             let tooShort = meaningfulCount < 10
 
             // Flag if >80% non-alphabetic characters
-            let alphabetic = body.unicodeScalars.filter {
+            let alphabetic = combined.unicodeScalars.filter {
                 CharacterSet.letters.contains($0)
             }
-            let tooMuchNoise = !body.isEmpty && Double(alphabetic.count) / Double(body.count) < 0.2
+            let tooMuchNoise = Double(alphabetic.count) / Double(combined.count) < 0.2
 
             guard tooShort || tooMuchNoise else { continue }
 
-            let sections = sectionsByNote[note.id] ?? []
             let pageTitle = note.displayTitle(sections: sections)
 
             insights.append(Insight(
@@ -212,12 +291,30 @@ final class InsightEngine {
 
     // MARK: - List Detector
 
-    /// Detects list-like content: bullet points, numbered items, dashes, or checklists.
+    /// Detects list-like content: bullet points, numbered items, dashes, checklists,
+    /// and plain-text lists (consecutive short lines of similar structure).
     private func detectLists(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
-        // Patterns that indicate a list item
+        // Patterns that indicate a prefixed list item
         let bulletPrefixes = ["- ", "• ", "· ", "* ", "→ ", "‣ "]
         let numberedPattern = try! NSRegularExpression(pattern: #"^\d{1,3}[\.\)]\s"#)
         let letterPattern = try! NSRegularExpression(pattern: #"^[a-zA-Z][\.\)]\s"#)
+        let prefixStrip = try! NSRegularExpression(pattern: #"^(?:[-•·*→‣]\s|\d{1,3}[.\)]\s|[a-zA-Z][.\)]\s|\[[ xX]\]\s?)"#)
+
+        let listStopWords: Set<String> = [
+            "the", "a", "an", "and", "or", "but", "in", "on", "at", "to",
+            "for", "of", "with", "by", "from", "is", "it", "as", "be", "was",
+            "are", "this", "that", "have", "has", "not", "they", "we", "you",
+            "he", "she", "its", "my", "your", "our", "all", "can", "will",
+            "just", "do", "so", "if", "no", "up", "out", "about", "more",
+            "some", "than", "been", "would", "could", "should", "also", "very",
+            "i", "me", "him", "her", "us", "am", "did", "does", "there",
+            "here", "then", "now", "get", "got", "like", "make", "going",
+            "thing", "things", "way", "one", "two", "first", "last", "new"
+        ]
+
+        // Max word count for a line to qualify as a plain-text list item.
+        // Real list items are terse; full sentences are not list items.
+        let plainItemMaxWords = 8
 
         var insights: [Insight] = []
 
@@ -228,31 +325,48 @@ final class InsightEngine {
             /// Scans text for consecutive list runs and appends an insight per list.
             func scanForLists(_ text: String, sectionId: String? = nil) {
                 let lines = text.components(separatedBy: .newlines)
-                var currentList: [String] = []
+                var prefixedList: [String] = []
+                var plainList: [String] = []
 
-                func flushList() {
-                    guard currentList.count >= 3 else {
-                        currentList.removeAll()
+                func flushPrefixed() {
+                    guard prefixedList.count >= 3 else {
+                        prefixedList.removeAll()
                         return
                     }
-                    let firstItem = currentList[0]
-                        .trimmingCharacters(in: .whitespaces)
-                        .prefix(60)
-                    let body = currentList.map { "• \($0)" }.joined(separator: "\n")
+                    appendListInsight(items: prefixedList, sectionId: sectionId)
+                    prefixedList.removeAll()
+                }
+
+                func flushPlain() {
+                    guard plainList.count >= 3 else {
+                        plainList.removeAll()
+                        return
+                    }
+                    appendListInsight(items: plainList, sectionId: sectionId)
+                    plainList.removeAll()
+                }
+
+                func appendListInsight(items: [String], sectionId: String?) {
+                    let miniTitle = Self.listMiniTitle(
+                        items: items,
+                        prefixStrip: prefixStrip,
+                        stopWords: listStopWords
+                    )
+                    let body = items.joined(separator: "\n")
                     insights.append(Insight(
                         insightType: .list,
-                        title: "\(currentList.count)-item list in '\(pageTitle)' — \(firstItem)…",
+                        title: "\(items.count) items in '\(pageTitle)' — \(miniTitle)",
                         body: body,
                         sourceNoteId: note.id,
                         sourceSectionId: sectionId ?? "list"
                     ))
-                    currentList.removeAll()
                 }
 
                 for line in lines {
                     let trimmed = line.trimmingCharacters(in: .whitespaces)
                     guard !trimmed.isEmpty else {
-                        flushList()
+                        flushPrefixed()
+                        flushPlain()
                         continue
                     }
 
@@ -263,12 +377,30 @@ final class InsightEngine {
                     let isChecklist = trimmed.hasPrefix("[ ]") || trimmed.hasPrefix("[x]") || trimmed.hasPrefix("[X]")
 
                     if isBullet || isNumbered || isLettered || isChecklist {
-                        currentList.append(String(trimmed.prefix(120)))
+                        // Prefixed item — flush any ongoing plain run
+                        flushPlain()
+                        prefixedList.append(String(trimmed.prefix(120)))
                     } else {
-                        flushList()
+                        // Flush any ongoing prefixed run
+                        flushPrefixed()
+
+                        // Check if this line looks like a plain-text list item:
+                        // short (≤ N words), no ending punctuation that signals a sentence
+                        let wordCount = trimmed.split(separator: " ").count
+                        let endsLikeSentence = trimmed.hasSuffix(".")
+                            || trimmed.hasSuffix("!")
+                            || trimmed.hasSuffix("?")
+                        let isShortItem = wordCount <= plainItemMaxWords && !endsLikeSentence
+
+                        if isShortItem {
+                            plainList.append(String(trimmed.prefix(120)))
+                        } else {
+                            flushPlain()
+                        }
                     }
                 }
-                flushList()
+                flushPrefixed()
+                flushPlain()
             }
 
             // Check note body
@@ -277,8 +409,14 @@ final class InsightEngine {
                 scanForLists(bodyText)
             }
 
-            // Check sections (skip checklists — they're already structured)
+            // Check sections — scan titles and content (skip checklist content, already structured)
             for section in sections {
+                if let sectionTitle = section.title {
+                    let trimmedTitle = sectionTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmedTitle.isEmpty {
+                        scanForLists(trimmedTitle, sectionId: section.id)
+                    }
+                }
                 guard section.contentType == .text else { continue }
                 let content = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !content.isEmpty else { continue }
@@ -294,6 +432,56 @@ final class InsightEngine {
         }
 
         return insights
+    }
+
+    /// Derives a short descriptive label from the content of list items.
+    /// Picks the top 1-2 most frequent meaningful words across all items.
+    private static func listMiniTitle(
+        items: [String],
+        prefixStrip: NSRegularExpression,
+        stopWords: Set<String>
+    ) -> String {
+        var wordCounts: [String: Int] = [:]
+
+        for item in items {
+            // Strip the list prefix (bullet, number, checkbox)
+            let range = NSRange(item.startIndex..., in: item)
+            let stripped = prefixStrip.stringByReplacingMatches(
+                in: item, range: range, withTemplate: ""
+            )
+
+            let words = stripped.lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { $0.count >= 3 && !stopWords.contains($0) }
+
+            // Count each word once per item (presence, not frequency within an item)
+            for word in Set(words) {
+                wordCounts[word, default: 0] += 1
+            }
+        }
+
+        // Pick words that appear in 40%+ of items, sorted by frequency then length
+        let threshold = max(2, items.count * 2 / 5)
+        let topWords = wordCounts
+            .filter { $0.value >= threshold }
+            .sorted { a, b in
+                if a.value != b.value { return a.value > b.value }
+                return a.key.count > b.key.count
+            }
+            .prefix(2)
+            .map { $0.key.capitalized }
+
+        if topWords.isEmpty {
+            // Fallback: first item content, trimmed
+            let fallback = items[0]
+            let range = NSRange(fallback.startIndex..., in: fallback)
+            let stripped = prefixStrip.stringByReplacingMatches(
+                in: fallback, range: range, withTemplate: ""
+            ).trimmingCharacters(in: .whitespaces)
+            return String(stripped.prefix(40))
+        }
+
+        return topWords.joined(separator: " & ")
     }
 
     // MARK: - Link Detector
@@ -334,13 +522,8 @@ final class InsightEngine {
         var noteWords: [String: [String]] = [:]
         for note in notes {
             let sections = sectionsByNote[note.id] ?? []
-            var allText = ""
-            if let title = note.title { allText += title + " " }
-            if let aiTitle = note.aiTitle { allText += aiTitle + " " }
-            allText += note.body + " "
-            for section in sections where section.contentType == .text {
-                allText += section.content + " "
-            }
+            var allText = Self.allText(for: note, sections: sections)
+            if let aiTitle = note.aiTitle { allText += " " + aiTitle }
 
             let words = allText.lowercased()
                 .components(separatedBy: CharacterSet.alphanumerics.inverted)
@@ -390,7 +573,7 @@ final class InsightEngine {
             }
         }
 
-        // Step 5: Check which notes already share a loop
+        // Step 5: Check which notes already share a loop or a block
         var loopedPairs: Set<String> = []
         var handleNotes: [String: Set<String>] = [:]
         for (noteId, sections) in sectionsByNote {
@@ -409,7 +592,19 @@ final class InsightEngine {
             }
         }
 
-        // Step 6: Find pairs with shared specific concepts
+        // Build block membership — notes in the same block are already grouped
+        var sameBlockPairs: Set<String> = []
+        let notesByBlock = Dictionary(grouping: notes.filter { $0.groupName != nil }, by: { $0.groupName! })
+        for (_, blockNotes) in notesByBlock where blockNotes.count >= 2 {
+            let sorted = blockNotes.map(\.id).sorted()
+            for i in 0..<sorted.count {
+                for j in (i + 1)..<sorted.count {
+                    sameBlockPairs.insert("\(sorted[i])|\(sorted[j])")
+                }
+            }
+        }
+
+        // Step 6: Find note-level pairs with shared specific concepts (skip same-block)
         var insights: [Insight] = []
         var seenPairs: Set<String> = []
         let noteArray = notes.filter { noteConcepts[$0.id] != nil }
@@ -423,7 +618,9 @@ final class InsightEngine {
                 guard !seenPairs.contains(pairKey) else { continue }
                 seenPairs.insert(pairKey)
 
+                // Skip notes already connected by a loop or already in the same block
                 if loopedPairs.contains(pairKey) { continue }
+                if sameBlockPairs.contains(pairKey) { continue }
 
                 let conceptsA = noteConcepts[noteA.id]!
                 let conceptsB = noteConcepts[noteB.id]!
@@ -437,15 +634,20 @@ final class InsightEngine {
                 let titleA = noteA.displayTitle(sections: sectionsA)
                 let titleB = noteB.displayTitle(sections: sectionsB)
 
-                let topConcepts = shared
+                let topConcepts = Array(shared
                     .sorted { $0.count > $1.count }
-                    .prefix(3)
-                    .joined(separator: ", ")
+                    .prefix(3))
+
+                let description = Self.linkDescription(
+                    titleA: titleA,
+                    titleB: titleB,
+                    concepts: topConcepts
+                )
 
                 insights.append(Insight(
                     insightType: .link,
                     title: "Link '\(titleA)' and '\(titleB)'",
-                    body: "Shared concepts: \(topConcepts) — connect them with a loop",
+                    body: description,
                     sourceNoteId: noteA.id,
                     sourceSectionId: "link",
                     relatedNoteId: noteB.id
@@ -456,7 +658,192 @@ final class InsightEngine {
             if insights.count >= 3 { break }
         }
 
+        // Step 7: Block-level link detection — compare blocks to each other and to ungrouped notes
+        if insights.count < 5 {
+            insights.append(contentsOf: detectBlockLinks(
+                notes: notes,
+                sectionsByNote: sectionsByNote,
+                noteWords: noteWords,
+                stopWords: stopWords,
+                loopedPairs: loopedPairs,
+                existingLinkCount: insights.count
+            ))
+        }
+
         return insights
+    }
+
+    /// Detects thematic connections between blocks, and between blocks and ungrouped notes.
+    /// Aggregates all text within a block to reason about its collective theme.
+    private func detectBlockLinks(
+        notes: [Note],
+        sectionsByNote: [String: [Section]],
+        noteWords: [String: [String]],
+        stopWords: Set<String>,
+        loopedPairs: Set<String>,
+        existingLinkCount: Int
+    ) -> [Insight] {
+        // Group notes by block name
+        let notesByBlock = Dictionary(grouping: notes.filter { $0.groupName != nil }, by: { $0.groupName! })
+        guard !notesByBlock.isEmpty else { return [] }
+
+        // Build aggregated words per block
+        var blockWords: [String: [String]] = [:]
+        for (blockName, blockNotes) in notesByBlock {
+            let combined = blockNotes.flatMap { noteWords[$0.id] ?? [] }
+            if combined.count >= 10 {
+                blockWords[blockName] = combined
+            }
+        }
+
+        // Build keyphrases per block (same logic as per-note, but aggregated)
+        var blockKeyphrases: [String: [String: Int]] = [:]
+        for (blockName, words) in blockWords {
+            var phraseCounts: [String: Int] = [:]
+            for i in 0..<(words.count - 1) {
+                let phrase = "\(words[i]) \(words[i + 1])"
+                phraseCounts[phrase, default: 0] += 1
+            }
+            let repeated = phraseCounts.filter { $0.value >= 2 }
+            if !repeated.isEmpty {
+                blockKeyphrases[blockName] = repeated
+            }
+        }
+
+        // Build keyphrases for ungrouped notes (each note is its own unit)
+        var ungroupedKeyphrases: [String: [String: Int]] = [:] // noteId -> phrases
+        for note in notes where note.groupName == nil {
+            guard let words = noteWords[note.id] else { continue }
+            var phraseCounts: [String: Int] = [:]
+            for i in 0..<(words.count - 1) {
+                let phrase = "\(words[i]) \(words[i + 1])"
+                phraseCounts[phrase, default: 0] += 1
+            }
+            let repeated = phraseCounts.filter { $0.value >= 2 }
+            if !repeated.isEmpty {
+                ungroupedKeyphrases[note.id] = repeated
+            }
+        }
+
+        // Compute document frequency across all blocks + ungrouped notes
+        var phraseDocFreq: [String: Int] = [:]
+        for (_, phrases) in blockKeyphrases {
+            for phrase in phrases.keys { phraseDocFreq[phrase, default: 0] += 1 }
+        }
+        for (_, phrases) in ungroupedKeyphrases {
+            for phrase in phrases.keys { phraseDocFreq[phrase, default: 0] += 1 }
+        }
+
+        let totalDocs = blockKeyphrases.count + ungroupedKeyphrases.count
+        let maxDocs = min(totalDocs / 2 + 1, 5)
+        let specificPhrases = Set(phraseDocFreq.filter { $0.value >= 2 && $0.value <= maxDocs }.keys)
+
+        // Build concept sets for blocks
+        var blockConcepts: [String: Set<String>] = [:]
+        for (blockName, phrases) in blockKeyphrases {
+            let specific = Set(phrases.keys).intersection(specificPhrases)
+            if !specific.isEmpty { blockConcepts[blockName] = specific }
+        }
+
+        // Build concept sets for ungrouped notes
+        var ungroupedConcepts: [String: Set<String>] = [:]
+        for (noteId, phrases) in ungroupedKeyphrases {
+            let specific = Set(phrases.keys).intersection(specificPhrases)
+            if !specific.isEmpty { ungroupedConcepts[noteId] = specific }
+        }
+
+        var insights: [Insight] = []
+        let cap = 5 - existingLinkCount
+
+        // Block-to-block comparisons
+        let blockNames = Array(blockConcepts.keys).sorted()
+        for i in 0..<blockNames.count {
+            for j in (i + 1)..<blockNames.count {
+                guard insights.count < cap else { return insights }
+
+                let blockA = blockNames[i]
+                let blockB = blockNames[j]
+                let shared = blockConcepts[blockA]!.intersection(blockConcepts[blockB]!)
+                guard shared.count >= 2 else { continue }
+
+                let topConcepts = Array(shared.sorted { $0.count > $1.count }.prefix(3))
+                let description = Self.linkDescription(
+                    titleA: blockA,
+                    titleB: blockB,
+                    concepts: topConcepts
+                )
+
+                // Use the first note in each block as source/related for navigation
+                let sourceNoteId = notesByBlock[blockA]?.first?.id
+                let relatedNoteId = notesByBlock[blockB]?.first?.id
+
+                insights.append(Insight(
+                    insightType: .link,
+                    title: "Link block '\(blockA)' and block '\(blockB)'",
+                    body: description,
+                    sourceNoteId: sourceNoteId,
+                    sourceSectionId: "block_link",
+                    relatedNoteId: relatedNoteId
+                ))
+            }
+        }
+
+        // Block-to-ungrouped-note comparisons
+        for blockName in blockNames {
+            guard insights.count < cap else { return insights }
+            guard let blockConceptSet = blockConcepts[blockName] else { continue }
+
+            for note in notes where note.groupName == nil {
+                guard insights.count < cap else { return insights }
+                guard let noteConceptSet = ungroupedConcepts[note.id] else { continue }
+
+                let shared = blockConceptSet.intersection(noteConceptSet)
+                guard shared.count >= 2 else { continue }
+
+                let sections = sectionsByNote[note.id] ?? []
+                let noteTitle = note.displayTitle(sections: sections)
+
+                let topConcepts = Array(shared.sorted { $0.count > $1.count }.prefix(3))
+                let description = Self.linkDescription(
+                    titleA: blockName,
+                    titleB: noteTitle,
+                    concepts: topConcepts
+                )
+
+                insights.append(Insight(
+                    insightType: .link,
+                    title: "'\(noteTitle)' relates to block '\(blockName)'",
+                    body: description,
+                    sourceNoteId: note.id,
+                    sourceSectionId: "block_link",
+                    relatedNoteId: notesByBlock[blockName]?.first?.id
+                ))
+            }
+        }
+
+        return insights
+    }
+
+    /// Builds a purposeful explanation of how two pages relate through shared concepts.
+    /// Instead of listing raw word pairs, describes the thematic connection.
+    private static func linkDescription(titleA: String, titleB: String, concepts: [String]) -> String {
+        // Capitalize concepts for readability
+        let themed = concepts.map { phrase in
+            phrase.split(separator: " ")
+                .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+                .joined(separator: " ")
+        }
+
+        switch themed.count {
+        case 1:
+            return "Both pages explore \(themed[0]) — a loop could unify these ideas"
+        case 2:
+            return "Both pages touch on \(themed[0]) and \(themed[1]) — linking them could surface deeper connections"
+        default:
+            let last = themed.last!
+            let rest = themed.dropLast().joined(separator: ", ")
+            return "Both pages discuss \(rest), and \(last) — connecting them may reveal a broader theme"
+        }
     }
 
     // MARK: - Safety Detector
@@ -480,6 +867,10 @@ final class InsightEngine {
             pattern: #"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b"#,
             options: []
         )
+        let phonePattern = try! NSRegularExpression(
+            pattern: #"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}"#,
+            options: []
+        )
 
         var insights: [Insight] = []
         var seenNoteSubtype: Set<String> = []
@@ -488,11 +879,8 @@ final class InsightEngine {
             let sections = sectionsByNote[note.id] ?? []
             let pageTitle = note.displayTitle(sections: sections)
 
-            // Collect all text from note body + sections
-            var allText = note.body
-            for section in sections {
-                allText += "\n" + section.content
-            }
+            // Collect all text: title, body, section titles, section content, interstitial
+            let allText = Self.allText(for: note, sections: sections)
 
             let range = NSRange(allText.startIndex..<allText.endIndex, in: allText)
 
@@ -506,7 +894,7 @@ final class InsightEngine {
                     insights.append(Insight(
                         insightType: .safety,
                         title: "Possible API key in '\(pageTitle)'",
-                        body: "Found what looks like a secret key — consider removing it",
+                        body: "Found what looks like a secret key — consider removing it or locking this node with Face ID",
                         sourceNoteId: note.id,
                         sourceSectionId: "api_key"
                     ))
@@ -520,7 +908,7 @@ final class InsightEngine {
                     insights.append(Insight(
                         insightType: .safety,
                         title: "Possible password in '\(pageTitle)'",
-                        body: "Found text that looks like a stored credential",
+                        body: "Found text that looks like a stored credential — lock this node with Face ID to protect it",
                         sourceNoteId: note.id,
                         sourceSectionId: "password"
                     ))
@@ -534,7 +922,7 @@ final class InsightEngine {
                     insights.append(Insight(
                         insightType: .safety,
                         title: "Possible SSN in '\(pageTitle)'",
-                        body: "Found a pattern that looks like a Social Security Number",
+                        body: "Found a pattern that looks like a Social Security Number — lock this node with Face ID to protect it",
                         sourceNoteId: note.id,
                         sourceSectionId: "personal_data"
                     ))
@@ -548,7 +936,21 @@ final class InsightEngine {
                     insights.append(Insight(
                         insightType: .safety,
                         title: "Possible credit card number in '\(pageTitle)'",
-                        body: "Found a pattern that looks like a credit card number",
+                        body: "Found a pattern that looks like a credit card number — lock this node with Face ID to protect it",
+                        sourceNoteId: note.id,
+                        sourceSectionId: "personal_data"
+                    ))
+                }
+            }
+
+            // Phone number
+            if phonePattern.firstMatch(in: allText, range: range) != nil {
+                let key = "\(note.id)|personal_data"
+                if seenNoteSubtype.insert(key).inserted {
+                    insights.append(Insight(
+                        insightType: .safety,
+                        title: "Possible phone number in '\(pageTitle)'",
+                        body: "Found a pattern that looks like a phone number — lock this node with Face ID to protect it",
                         sourceNoteId: note.id,
                         sourceSectionId: "personal_data"
                     ))
@@ -634,6 +1036,9 @@ final class InsightEngine {
             if subtype == "dormant_loop" {
                 content.title = "Dormant loop: \(insight.title.components(separatedBy: " dormant").first ?? insight.title)"
                 content.body = insight.body
+            } else if subtype == "inactive_loop" {
+                content.title = "Inactive loop"
+                content.body = insight.title
             } else {
                 content.title = "Possible nonsense"
                 content.body = "'\(insight.title.replacingOccurrences(of: "' may be nonsense", with: ""))' may need cleanup"

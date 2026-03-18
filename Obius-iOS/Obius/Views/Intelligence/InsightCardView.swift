@@ -290,6 +290,7 @@ struct InsightDetailSheet: View {
     let onDismiss: (() -> Void)?
     let onUntrack: (() -> Void)?
     var onDeleteNote: (() -> Void)? = nil
+    var onDeleteLoop: (() -> Void)? = nil
     var onCreateBlock: ((String) -> Void)? = nil
     var references: [InsightReference] = []
     var onNavigate: ((InsightReference) -> Void)? = nil
@@ -452,6 +453,26 @@ struct InsightDetailSheet: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "trash")
                                 Text("Delete Page")
+                            }
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.red)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.red.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
+
+                    // Delete loop button for inactive loop insights
+                    if insight.insightType == .cleanup && insight.sourceSectionId == "inactive_loop",
+                       let onDeleteLoop {
+                        Button(role: .destructive) {
+                            onDeleteLoop()
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "trash")
+                                Text("Delete Loop")
                             }
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(.red)
