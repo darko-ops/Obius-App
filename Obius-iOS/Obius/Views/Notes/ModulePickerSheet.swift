@@ -166,6 +166,10 @@ struct ModulePickerSheet: View {
     }
 
     private func createNewModule(storageType: ModuleStorageType) {
+        guard TierManager.shared.requireModuleCreation(currentCount: moduleRepository.modules.count) else {
+            newModuleName = ""
+            return
+        }
         let name = newModuleName
         newModuleName = ""
         Task {

@@ -46,9 +46,10 @@ struct BlockDetailView: View {
                         Divider()
 
                         Button {
+                            guard TierManager.shared.requireFeature(.commits) else { return }
                             pageCommitItem = PageCommitItem(noteId: note.id, pageTitle: note.title ?? "")
                         } label: {
-                            Label("Commit Page", systemImage: "arrow.down.doc")
+                            Label("Save Version", systemImage: "arrow.down.doc")
                         }
 
                         if moduleRepository.modules.count > 1 {

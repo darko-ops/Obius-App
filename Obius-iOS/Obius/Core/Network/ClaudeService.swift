@@ -68,6 +68,19 @@ enum ClaudeService {
         return data
     }
 
+    // MARK: - Tier Gate
+
+    private static func checkAIGate() async throws {
+        let allowed = await MainActor.run { TierManager.shared.requireAI() }
+        guard allowed else {
+            throw ClaudeError.proxyError("AI action limit reached. Upgrade for more.")
+        }
+    }
+
+    private static func recordAIUsage() async {
+        await MainActor.run { TierManager.shared.recordAIAction() }
+    }
+
     // MARK: - Send With Tools
 
     /// Send a conversation with tool definitions so Claude can suggest structured actions.
@@ -75,6 +88,8 @@ enum ClaudeService {
         messages: [Message],
         noteContext: String
     ) async throws -> ToolResponse {
+        try await checkAIGate()
+        await recordAIUsage()
         let request = AIProxyRequest(
             action: "send_with_tools",
             messages: messages,
@@ -140,6 +155,8 @@ enum ClaudeService {
         messages: [Message],
         noteContext: String
     ) async throws -> String {
+        try await checkAIGate()
+        await recordAIUsage()
         let request = AIProxyRequest(
             action: "send_chat",
             messages: messages,
@@ -153,6 +170,8 @@ enum ClaudeService {
 
     /// Generate a short AI title (2-5 words) from note content.
     static func generateTitle(from content: String) async throws -> String {
+        try await checkAIGate()
+        await recordAIUsage()
         let request = AIProxyRequest(action: "generate_title", content: content)
         let response: TextResponse = try await invokeProxy(request)
         return response.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -162,6 +181,8 @@ enum ClaudeService {
 
     /// Generate concept tags from note content. Returns 1-5 single-word tags.
     static func generateTags(from content: String) async throws -> [String] {
+        try await checkAIGate()
+        await recordAIUsage()
         let request = AIProxyRequest(action: "generate_tags", content: content)
         let response: TextResponse = try await invokeProxy(request)
         return response.text
@@ -233,6 +254,8 @@ enum ClaudeService {
 
     /// Analyze notes for temporal phrases and suggest Echo configurations.
     static func extractTemporalEchoes(_ noteSummaries: String, handles: String) async throws -> [TemporalEchoSuggestion] {
+        try await checkAIGate()
+        await recordAIUsage()
         let request = AIProxyRequest(
             action: "extract_temporal_echoes",
             noteSummaries: noteSummaries,
@@ -256,6 +279,8 @@ enum ClaudeService {
 
     /// Analyze note sections and suggest entities that could become Loops.
     static func extractEntities(from sections: [(id: String, content: String)]) async throws -> [ExtractedEntity] {
+        try await checkAIGate()
+        await recordAIUsage()
         let sectionsText = sections.map { "sectionId: \($0.id)\n\($0.content)" }.joined(separator: "\n---\n")
         let request = AIProxyRequest(action: "extract_entities", sectionsText: sectionsText)
         let response: TextResponse = try await invokeProxy(request)

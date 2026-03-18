@@ -223,6 +223,9 @@ final class EchoManager: ObservableObject {
         guard let repository = echoRepository else {
             throw EchoError.notInitialized
         }
+        guard TierManager.shared.requireEchoCreation(activeCount: activeEchoes.count) else {
+            throw EchoError.notInitialized
+        }
 
         let fireDateMs = Int64(fireDate.timeIntervalSince1970 * 1000)
 

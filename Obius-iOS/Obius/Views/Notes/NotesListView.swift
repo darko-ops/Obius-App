@@ -321,6 +321,7 @@ private struct NotesListContent: View {
 
             if !isSelectionMode {
                 Button {
+                    guard TierManager.shared.requireNoteCreation(currentCount: noteRepository.notes.count) else { return }
                     Task {
                         do {
                             let note = try await noteRepository.createNote(moduleId: selectedModuleId)
@@ -355,6 +356,7 @@ private struct NotesListContent: View {
                 Text("Tap + to create your first note")
             } actions: {
                 Button {
+                    guard TierManager.shared.requireNoteCreation(currentCount: noteRepository.notes.count) else { return }
                     Task {
                         if let note = try? await noteRepository.createNote(moduleId: selectedModuleId) {
                             syncLogger.logNoteCreate(note)
@@ -445,9 +447,10 @@ private struct NotesListContent: View {
                             Divider()
 
                             Button {
+                                guard TierManager.shared.requireFeature(.commits) else { return }
                                 pageCommitItem = PageCommitItem(noteId: note.id, pageTitle: note.title ?? "")
                             } label: {
-                                Label("Commit Page", systemImage: "arrow.down.doc")
+                                Label("Save Version", systemImage: "arrow.down.doc")
                             }
 
                             Button {
@@ -672,7 +675,7 @@ private struct NotesListContent: View {
                 Button {
                     pageCommitItem = PageCommitItem(noteId: note.id, pageTitle: note.title ?? "")
                 } label: {
-                    Label("Commit Page", systemImage: "arrow.down.doc")
+                    Label("Save Version", systemImage: "arrow.down.doc")
                 }
 
                 // Share

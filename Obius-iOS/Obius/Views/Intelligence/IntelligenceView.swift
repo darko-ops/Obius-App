@@ -216,13 +216,13 @@ struct IntelligenceView: View {
         VStack(spacing: 0) {
             ScrollView {
                 LazyVStack(spacing: 16) {
-                    trackedSection
-
                     activeEchoesSection
 
                     if !upcomingEchoInsights.isEmpty {
                         upcomingEchoesSection
                     }
+
+                    trackedSection
 
                     if !allSurfacedInsights.isEmpty {
                         categoriesSection
@@ -242,7 +242,10 @@ struct IntelligenceView: View {
                 await refreshIfNeeded()
             }
             .overlay {
-                WorkspaceFAB { showWorkspaceSheet = true }
+                WorkspaceFAB {
+                    guard TierManager.shared.requireFeature(.aiWorkspace) else { return }
+                    showWorkspaceSheet = true
+                }
             }
         }
     }
@@ -509,25 +512,20 @@ struct IntelligenceView: View {
     // MARK: - Empty State
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 0) {
             Spacer()
-                .frame(height: 60)
 
-            Image(systemName: "brain")
-                .font(.system(size: 60))
-                .foregroundStyle(.secondary)
+            VStack(spacing: 16) {
+                EmptyStatePulse()
 
-            Text("Intelligence")
-                .font(.title2.weight(.semibold))
-
-            Text("Insights about your notes will appear here automatically.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
+                Text("All clear")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 32)
+            .padding(.horizontal, 40)
 
             Spacer()
-                .frame(height: 60)
         }
     }
 
@@ -2479,6 +2477,25 @@ struct FlowLayout: Layout {
         }
 
         return (CGSize(width: maxX, height: y + rowHeight), positions)
+    }
+}
+
+// MARK: - Empty State Pulse
+
+/// Separate view so SwiftUI destroys animation state when removed.
+private struct EmptyStatePulse: View {
+    @State private var pulse = false
+
+    var body: some View {
+        Image(systemName: "brain.head.profile")
+            .font(.system(size: 36))
+            .foregroundStyle(Color(white: 0.25))
+            .opacity(pulse ? 0.4 : 0.7)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 3).repeatForever(autoreverses: true)) {
+                    pulse = true
+                }
+            }
     }
 }
 

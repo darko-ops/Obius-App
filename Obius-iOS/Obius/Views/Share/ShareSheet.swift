@@ -105,13 +105,13 @@ struct ShareSheet: View {
             Button {
                 showingCommitPicker = true
             } label: {
-                Label("Commit Link", systemImage: "doc.zipper")
+                Label("Version Link", systemImage: "doc.zipper")
             }
             .disabled(isLoading)
         } header: {
             Text("Create New Link")
         } footer: {
-            Text("Live links update in real-time as you edit. Commit links are permanent snapshots.")
+            Text("Live links update in real-time as you edit. Version links are permanent snapshots.")
         }
     }
 

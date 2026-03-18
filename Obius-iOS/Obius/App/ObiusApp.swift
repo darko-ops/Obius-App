@@ -1,5 +1,6 @@
 import SwiftUI
 import UserNotifications
+import RevenueCat
 
 @main
 struct ObiusApp: App {
@@ -7,11 +8,18 @@ struct ObiusApp: App {
     @StateObject private var authManager = AuthManager.shared
     @StateObject private var deepLinkRouter = DeepLinkRouter.shared
     @StateObject private var appearanceManager = AppearanceManager.shared
+    @StateObject private var tierManager = TierManager.shared
     private let notificationDelegate = NotificationDelegate()
 
     init() {
         UNUserNotificationCenter.current().delegate = notificationDelegate
         InterFontRegistration.registerAsDefault()
+
+        let rcKey = AppConfiguration.revenueCatAPIKey
+        if !rcKey.isEmpty {
+            Purchases.logLevel = AppConfiguration.environment.isDebug ? .debug : .error
+            Purchases.configure(withAPIKey: rcKey)
+        }
     }
 
     @Environment(\.scenePhase) private var scenePhase
@@ -24,9 +32,15 @@ struct ObiusApp: App {
                 .environmentObject(authManager)
                 .environmentObject(deepLinkRouter)
                 .environmentObject(appearanceManager)
+                .environmentObject(tierManager)
                 .preferredColorScheme(appearanceManager.currentMode.colorScheme)
                 .task {
+                    await TierManager.shared.initialize()
+                    await StoreManager.shared.initialize()
                     await appState.initialize()
+                }
+                .sheet(isPresented: $tierManager.showPaywall) {
+                    PaywallSheet()
                 }
                 .onChange(of: scenePhase) { phase in
                     if phase == .active {
@@ -167,8 +181,8 @@ class AppState: ObservableObject {
         // Auto-commit check (creates commits for notes modified before today)
         await autoCommitManager.checkAndAutoCommit()
 
-        // Auto-sync if authenticated
-        if AuthManager.shared.isAuthenticated {
+        // Auto-sync if authenticated and tier allows it
+        if AuthManager.shared.isAuthenticated && TierManager.shared.limits.cloudSync {
             await syncEngine.sync()
         }
 
@@ -222,6 +236,7 @@ class AppState: ObservableObject {
     }
 
     func triggerSync() async {
+        guard TierManager.shared.limits.cloudSync else { return }
         await syncEngine.sync()
     }
 }

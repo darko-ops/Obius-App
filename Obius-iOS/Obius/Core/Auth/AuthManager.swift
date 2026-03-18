@@ -82,6 +82,9 @@ final class AuthManager: ObservableObject {
             let user = try await supabase.signUp(email: email, password: password, data: metadata)
             currentUser = user
             isAuthenticated = true
+
+            // Sync RevenueCat identity
+            await StoreManager.shared.identify(userId: user.id.uuidString.lowercased())
         } catch {
             authError = error.localizedDescription
         }
@@ -98,6 +101,9 @@ final class AuthManager: ObservableObject {
             let session = try await supabase.signIn(email: email, password: password)
             currentUser = session.user
             isAuthenticated = true
+
+            // Sync RevenueCat identity
+            await StoreManager.shared.identify(userId: session.user.id.uuidString.lowercased())
         } catch {
             authError = error.localizedDescription
         }
@@ -114,6 +120,9 @@ final class AuthManager: ObservableObject {
             try await supabase.signOut()
             currentUser = nil
             isAuthenticated = false
+
+            // Reset RevenueCat to anonymous user
+            await StoreManager.shared.logout()
         } catch {
             authError = error.localizedDescription
         }

@@ -17,7 +17,7 @@ struct ShareLinkRow: View {
 
             // Info
             VStack(alignment: .leading, spacing: 2) {
-                Text(shareLink.shareType == .live ? "Live Link" : "Commit Link")
+                Text(shareLink.shareType == .live ? "Live Link" : "Version Link")
                     .font(.subheadline.weight(.medium))
 
                 if let name = shareLink.commitName {

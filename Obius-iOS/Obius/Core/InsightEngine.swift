@@ -80,12 +80,17 @@ final class InsightEngine {
 
         var newInsights: [Insight] = []
 
-        // Run each detector
-        newInsights.append(contentsOf: detectCleanup(notes: notes, sectionsByNote: sectionsByNote, allSectionsByNote: allSectionsByNote))
-        newInsights.append(contentsOf: detectLists(notes: notes, sectionsByNote: sectionsByNote))
+        // Run detectors — free tier only gets safety insights
+        let hasFullInsights = TierManager.shared.limits.fullInsights
+        if hasFullInsights {
+            newInsights.append(contentsOf: detectCleanup(notes: notes, sectionsByNote: sectionsByNote, allSectionsByNote: allSectionsByNote))
+            newInsights.append(contentsOf: detectLists(notes: notes, sectionsByNote: sectionsByNote))
+        }
         newInsights.append(contentsOf: detectSafetyIssues(notes: notes, sectionsByNote: sectionsByNote))
-        newInsights.append(contentsOf: detectUpcomingEchoes(sectionsByNote: sectionsByNote))
-        newInsights.append(contentsOf: detectLinks(notes: notes, sectionsByNote: sectionsByNote))
+        if hasFullInsights {
+            newInsights.append(contentsOf: detectUpcomingEchoes(sectionsByNote: sectionsByNote))
+            newInsights.append(contentsOf: detectLinks(notes: notes, sectionsByNote: sectionsByNote))
+        }
         // Phase 2 stubs:
         // newInsights.append(contentsOf: await detectDrift(...))
         // newInsights.append(contentsOf: await generateWeeklyReport(...))
@@ -101,8 +106,8 @@ final class InsightEngine {
                 try await insightRepository.createInsights(deduped)
                 print("[InsightEngine] Inserted \(deduped.count) new insight(s): \(deduped.map { "\($0.insightType.rawValue)|\($0.sourceSectionId ?? "")|\($0.title)" })")
 
-                // Schedule local notifications for new insights
-                for insight in deduped {
+                // Only schedule notifications for safety insights
+                for insight in deduped where insight.insightType == .safety {
                     scheduleInsightNotification(insight)
                 }
             } catch {

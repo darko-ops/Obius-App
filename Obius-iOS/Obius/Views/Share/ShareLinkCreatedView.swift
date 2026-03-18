@@ -27,7 +27,7 @@ struct ShareLinkCreatedView: View {
                 .foregroundStyle(shareLink.shareType == .live ? .blue : .purple)
 
             // Title
-            Text(shareLink.shareType == .live ? "Live Link Created" : "Commit Link Created")
+            Text(shareLink.shareType == .live ? "Live Link Created" : "Version Link Created")
                 .font(.title2.weight(.semibold))
 
             // URL display

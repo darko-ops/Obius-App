@@ -657,9 +657,10 @@ private struct NoteEditorContent: View {
             Divider()
 
             Button {
+                guard TierManager.shared.requireFeature(.commits) else { return }
                 pageCommitItem = PageCommitItem(noteId: noteId, pageTitle: titleText)
             } label: {
-                Label("Commit Page", systemImage: "arrow.down.doc")
+                Label("Save Version", systemImage: "arrow.down.doc")
             }
 
             Button {
@@ -1830,7 +1831,7 @@ struct PageCommitSheet: View {
 
                 Spacer()
 
-                Text("Commit Page")
+                Text("Save Version")
                     .font(.headline)
 
                 Spacer()
@@ -1846,7 +1847,7 @@ struct PageCommitSheet: View {
 
             // Title input
             VStack(alignment: .leading, spacing: 4) {
-                Text("Commit Title")
+                Text("Version Title")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
@@ -2031,7 +2032,7 @@ struct PageHistorySheet: View {
                         Text("No History")
                             .font(.headline)
                             .foregroundStyle(.secondary)
-                        Text("Commits for this page will appear here.")
+                        Text("Versions for this page will appear here.")
                             .font(.subheadline)
                             .foregroundStyle(.tertiary)
                     }

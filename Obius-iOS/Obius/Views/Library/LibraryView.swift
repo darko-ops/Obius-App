@@ -14,7 +14,7 @@ struct LibraryView: View {
 
     enum LibrarySection: String, CaseIterable {
         case loops = "Loops"
-        case commits = "Commits"
+        case commits = "Versions"
 
         var icon: String {
             switch self {
@@ -641,7 +641,7 @@ struct CommitsListView: View {
 
     private var allItems: [CommitListItem] {
         commits
-            .map { CommitListItem(commit: $0, noteName: noteNames[$0.noteId] ?? $0.name ?? "Archived Commit") }
+            .map { CommitListItem(commit: $0, noteName: noteNames[$0.noteId] ?? $0.name ?? "Archived Version") }
             .sorted { $0.createdAt > $1.createdAt }
     }
 
@@ -697,7 +697,7 @@ struct CommitsListView: View {
         .sheet(item: $shareSheetLink) { link in
             NodeShareSheet(
                 url: URL(string: link.url)!,
-                title: link.commitName ?? "Commit Snapshot",
+                title: link.commitName ?? "Version Snapshot",
                 preview: sharePreview
             )
         }
@@ -746,9 +746,9 @@ struct CommitsListView: View {
             Image(systemName: "clock.arrow.circlepath")
                 .font(.largeTitle)
                 .foregroundStyle(.secondary)
-            Text("No Commits")
+            Text("No Versions")
                 .font(.headline)
-            Text("Commits save snapshots of your notes")
+            Text("Versions save snapshots of your notes")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -871,7 +871,7 @@ struct CommitsListView: View {
             let payload = MessageSharePayload(
                 slug: link.slug,
                 shareType: "commit",
-                title: commit.name ?? noteNames[commit.noteId] ?? "Commit Snapshot",
+                title: commit.name ?? noteNames[commit.noteId] ?? "Version Snapshot",
                 creatorName: SupabaseManager.shared.currentUser?.displayName,
                 commitShortId: commit.shortId,
                 sectionPreviews: Array(sectionPreviews),
@@ -1021,7 +1021,7 @@ struct CommitDetailSheet: View {
                 } else if let content = content {
                     commitContentView(content)
                 } else {
-                    Text("Failed to load commit")
+                    Text("Failed to load version")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -1092,7 +1092,7 @@ struct CommitDetailSheet: View {
                         HStack(spacing: 6) {
                             Image(systemName: "doc.zipper")
                                 .font(.caption2)
-                            Text("Commit")
+                            Text("Version")
                                 .font(.caption2.weight(.medium))
                         }
                         .padding(.horizontal, 10)
@@ -1384,7 +1384,7 @@ struct CommitDetailSheet: View {
             let payload = MessageSharePayload(
                 slug: link.slug,
                 shareType: "commit",
-                title: commit.name ?? noteName ?? "Commit Snapshot",
+                title: commit.name ?? noteName ?? "Version Snapshot",
                 creatorName: SupabaseManager.shared.currentUser?.displayName,
                 commitShortId: commit.shortId,
                 sectionPreviews: Array(sectionPreviews),
@@ -1394,7 +1394,7 @@ struct CommitDetailSheet: View {
             payload.writeToSharedDefaults()
 
             shareURL = URL(string: link.url)
-            shareTitle = commit.name ?? noteName ?? "Commit Snapshot"
+            shareTitle = commit.name ?? noteName ?? "Version Snapshot"
             sharePreview = content.sections.first.map { String($0.content.prefix(200)) } ?? ""
             showingShareSheet = true
         } catch {

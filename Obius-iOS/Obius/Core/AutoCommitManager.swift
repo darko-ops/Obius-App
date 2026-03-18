@@ -29,6 +29,7 @@ class AutoCommitManager {
     /// Checks whether a day boundary has been crossed since the last check,
     /// and creates auto-commits for notes the user edited yesterday.
     func checkAndAutoCommit() async {
+        guard TierManager.shared.limits.commits else { return }
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
 

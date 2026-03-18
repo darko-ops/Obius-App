@@ -124,6 +124,14 @@ actor SyncEngine {
 
     /// Perform semantic search
     func semanticSearch(query: String, limit: Int = 20) async throws -> [SemanticSearchResult] {
+        let allowed = await MainActor.run { TierManager.shared.limits.semanticSearch }
+        guard allowed else {
+            await MainActor.run {
+                TierManager.shared.paywallFeature = .semanticSearch
+                TierManager.shared.showPaywall = true
+            }
+            throw SyncError.offline
+        }
         guard networkMonitor.isConnected else {
             throw SyncError.offline
         }

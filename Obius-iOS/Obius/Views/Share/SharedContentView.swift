@@ -153,7 +153,7 @@ struct SharedContentView: View {
                   : "doc.zipper")
                 .font(.caption2)
 
-            Text(viewModel.shareType == .live ? "Live" : "Commit")
+            Text(viewModel.shareType == .live ? "Live" : "Version")
                 .font(.caption2.weight(.medium))
         }
         .padding(.horizontal, 10)
