@@ -354,15 +354,26 @@ private struct NotesListContent: View {
             } description: {
                 Text("Tap + to create your first note")
             } actions: {
-                Button("Create Note") {
+                Button {
                     Task {
                         if let note = try? await noteRepository.createNote(moduleId: selectedModuleId) {
                             syncLogger.logNoteCreate(note)
                             selectedNote = note
                         }
                     }
+                } label: {
+                    Text("Create Note")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .background(Color(white: 0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color(white: 0.3), lineWidth: 1)
+                        )
                 }
-                .buttonStyle(.borderedProminent)
             }
         } else if !searchQuery.isEmpty && filteredNotes.isEmpty {
             ContentUnavailableView.search(text: searchQuery)

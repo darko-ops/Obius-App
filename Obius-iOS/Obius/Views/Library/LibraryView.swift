@@ -712,7 +712,7 @@ struct CommitsListView: View {
     }
 
     private var commitFilterBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 4) {
             ForEach(CommitFilter.allCases, id: \.self) { filter in
                 let isSelected = selectedFilter == filter
                 Button {
@@ -720,18 +720,21 @@ struct CommitsListView: View {
                         selectedFilter = filter
                     }
                 } label: {
-                    Image(systemName: filter.icon)
-                        .font(.system(size: 12))
-                        .frame(width: 32, height: 32)
-                        .foregroundStyle(isSelected ? .black : filter.tint)
-                        .background(
-                            Circle()
-                                .fill(isSelected ? filter.tint : filter.tint.opacity(0.12))
-                        )
-                        .overlay(
-                            Circle()
-                                .stroke(filter.tint.opacity(isSelected ? 0 : 0.3), lineWidth: 1)
-                        )
+                    HStack(spacing: 4) {
+                        Image(systemName: filter.icon)
+                            .font(.system(size: 9))
+                        if isSelected {
+                            Text(filter.rawValue.capitalized)
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                    }
+                    .foregroundStyle(isSelected ? filter.tint : .secondary)
+                    .padding(.horizontal, isSelected ? 10 : 8)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule()
+                            .fill(isSelected ? filter.tint.opacity(0.12) : Color.clear)
+                    )
                 }
                 .buttonStyle(.plain)
             }
