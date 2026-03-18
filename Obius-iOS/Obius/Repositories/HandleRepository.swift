@@ -55,14 +55,27 @@ final class HandleRepository: ObservableObject {
         let normalizedName = Handle.normalizeName(name)
 
         return try await database.write { db in
-            // Check if name already exists
-            let existingCount = try Handle
+            // Check if name already exists (active)
+            let existingActive = try Handle
                 .filter(Handle.Columns.name == normalizedName)
                 .filter(Handle.Columns.deletedAt == nil)
-                .fetchCount(db)
+                .fetchOne(db)
 
-            if existingCount > 0 {
+            if existingActive != nil {
                 throw HandleError.nameAlreadyExists(name)
+            }
+
+            // If a soft-deleted handle with this name exists, reactivate it
+            if var deleted = try Handle
+                .filter(Handle.Columns.name == normalizedName)
+                .fetchOne(db) {
+                deleted.deletedAt = nil
+                deleted.content = content
+                deleted.displayName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                deleted.intent = intent
+                deleted.updatedAt = Int64(Date().timeIntervalSince1970 * 1000)
+                try deleted.update(db)
+                return deleted
             }
 
             let handle = Handle(

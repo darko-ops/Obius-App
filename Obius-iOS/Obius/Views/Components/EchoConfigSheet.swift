@@ -538,10 +538,12 @@ struct CreateEchoSheet: View {
     @State private var useExistingHandle = true
     @State private var selectedHandleId: String?
     @State private var newHandleName = ""
+    @State private var content = ""
     @State private var startDate = Date().addingTimeInterval(3600)
     @State private var isRecurring = false
     @State private var intervals = [EchoInterval(value: 1, unit: .days)]
     @State private var isCreating = false
+    @State private var errorMessage: String?
 
     private var handles: [Handle] { handleManager.handles }
 
@@ -553,7 +555,8 @@ struct CreateEchoSheet: View {
         if useExistingHandle {
             return selectedHandleId != nil
         } else {
-            return trimmedName.count >= 2
+            return Handle.validateName(trimmedName) == nil
+                && !handleManager.handleExists(name: trimmedName)
         }
     }
 
@@ -578,10 +581,31 @@ struct CreateEchoSheet: View {
                             }
                         }
                     } else {
-                        TextField("Loop name", text: $newHandleName)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
+                        HStack {
+                            Text("@")
+                                .foregroundStyle(.secondary)
+                            TextField("LoopName", text: $newHandleName)
+                                .autocorrectionDisabled()
+                                #if os(iOS)
+                                .textInputAutocapitalization(.never)
+                                #endif
+                        }
+
+                        if let error = Handle.validateName(trimmedName), !newHandleName.isEmpty {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                        } else if handleManager.handleExists(name: trimmedName) {
+                            Text("This name is already taken")
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                        }
                     }
+                }
+
+                SwiftUI.Section("Notes") {
+                    TextEditor(text: $content)
+                        .frame(minHeight: 80)
                 }
 
                 SwiftUI.Section("Schedule") {
@@ -615,6 +639,13 @@ struct CreateEchoSheet: View {
                         }
                     }
                 }
+                if let errorMessage {
+                    SwiftUI.Section {
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                }
             }
             .navigationTitle("New Echo")
             .navigationBarTitleDisplayMode(.inline)
@@ -628,6 +659,11 @@ struct CreateEchoSheet: View {
                         .disabled(!canCreate || isCreating)
                 }
             }
+            .onChange(of: selectedHandleId) { _, newId in
+                if let newId, let handle = handleManager.getHandle(id: newId) {
+                    content = handle.content
+                }
+            }
         }
         .presentationDetents([.large])
         .onAppear {
@@ -637,15 +673,22 @@ struct CreateEchoSheet: View {
 
     private func createEcho() {
         isCreating = true
+        errorMessage = nil
         Task {
             do {
                 let handleId: String
                 if useExistingHandle, let existing = selectedHandleId {
                     handleId = existing
                 } else {
-                    let handle = try await HandleManager.shared.createHandle(name: trimmedName)
+                    let handle = try await HandleManager.shared.createHandle(name: trimmedName, content: content)
                     handleId = handle.id
                 }
+
+                // Update content on existing handle if notes were provided
+                if useExistingHandle, let id = selectedHandleId, !content.isEmpty {
+                    try? await HandleManager.shared.updateContent(handleId: id, content: content)
+                }
+
                 _ = try await EchoManager.shared.createEcho(
                     handleId: handleId,
                     isRecurring: isRecurring,
@@ -654,6 +697,7 @@ struct CreateEchoSheet: View {
                 )
                 dismiss()
             } catch {
+                errorMessage = error.localizedDescription
                 isCreating = false
             }
         }

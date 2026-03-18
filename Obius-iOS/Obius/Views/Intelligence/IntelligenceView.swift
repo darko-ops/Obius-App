@@ -28,6 +28,7 @@ struct IntelligenceView: View {
             noteRepository: appState.noteRepository,
             sectionRepository: appState.sectionRepository,
             handleRepository: appState.handleRepository,
+            echoRepository: appState.echoRepository,
             insightRepository: insightRepository,
             database: appState.database
         )

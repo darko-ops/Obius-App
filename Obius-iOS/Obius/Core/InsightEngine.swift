@@ -7,6 +7,7 @@ final class InsightEngine {
     private let noteRepository: NoteRepository
     private let sectionRepository: SectionRepository
     private let handleRepository: HandleRepository
+    private let echoRepository: EchoRepository
     private let insightRepository: InsightRepository
     private let database: DatabaseManager
 
@@ -14,12 +15,14 @@ final class InsightEngine {
         noteRepository: NoteRepository,
         sectionRepository: SectionRepository,
         handleRepository: HandleRepository,
+        echoRepository: EchoRepository,
         insightRepository: InsightRepository,
         database: DatabaseManager
     ) {
         self.noteRepository = noteRepository
         self.sectionRepository = sectionRepository
         self.handleRepository = handleRepository
+        self.echoRepository = echoRepository
         self.insightRepository = insightRepository
         self.database = database
     }
@@ -60,10 +63,25 @@ final class InsightEngine {
             }
         }
 
+        // Fetch sections for ALL notes so inactive-loop detection is global
+        // (loops are not project-scoped, so a loop referenced in any project
+        // should not be flagged as inactive).
+        var allSectionsByNote: [String: [Section]] = sectionsByNote
+        if moduleId != nil {
+            let otherNotes = allNotes.filter { $0.moduleId != moduleId }
+            for note in otherNotes {
+                if allSectionsByNote[note.id] == nil {
+                    if let sections = try? await sectionRepository.getSections(noteId: note.id) {
+                        allSectionsByNote[note.id] = sections
+                    }
+                }
+            }
+        }
+
         var newInsights: [Insight] = []
 
         // Run each detector
-        newInsights.append(contentsOf: detectCleanup(notes: notes, sectionsByNote: sectionsByNote))
+        newInsights.append(contentsOf: detectCleanup(notes: notes, sectionsByNote: sectionsByNote, allSectionsByNote: allSectionsByNote))
         newInsights.append(contentsOf: detectLists(notes: notes, sectionsByNote: sectionsByNote))
         newInsights.append(contentsOf: detectSafetyIssues(notes: notes, sectionsByNote: sectionsByNote))
         newInsights.append(contentsOf: detectUpcomingEchoes(sectionsByNote: sectionsByNote))
@@ -124,14 +142,14 @@ final class InsightEngine {
     // MARK: - Cleanup Detector
 
     /// Detects dormant loops and nonsense content.
-    private func detectCleanup(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
+    private func detectCleanup(notes: [Note], sectionsByNote: [String: [Section]], allSectionsByNote: [String: [Section]]) -> [Insight] {
         var insights: [Insight] = []
 
         // -- Dormant loops --
         insights.append(contentsOf: detectDormantLoops(notes: notes, sectionsByNote: sectionsByNote))
 
         // -- Inactive loops (zero references) --
-        insights.append(contentsOf: detectInactiveLoops(sectionsByNote: sectionsByNote))
+        insights.append(contentsOf: detectInactiveLoops(allSectionsByNote: allSectionsByNote))
 
         // -- Nonsense content --
         insights.append(contentsOf: detectNonsense(notes: notes, sectionsByNote: sectionsByNote))
@@ -184,22 +202,29 @@ final class InsightEngine {
         return insights
     }
 
-    private func detectInactiveLoops(sectionsByNote: [String: [Section]]) -> [Insight] {
+    private func detectInactiveLoops(allSectionsByNote: [String: [Section]]) -> [Insight] {
         let handles = handleRepository.handles
         var insights: [Insight] = []
 
-        // Collect all handleIds referenced by any section
-        var referencedHandleIds: Set<String> = []
-        for (_, sections) in sectionsByNote {
+        // Collect all handleIds referenced by any section across ALL notes
+        // (not just the current module) — loops are global, so a loop used
+        // in any project should not be flagged as inactive.
+        var activeHandleIds: Set<String> = []
+        for (_, sections) in allSectionsByNote {
             for section in sections where section.deletedAt == nil {
                 if let handleId = section.handleId {
-                    referencedHandleIds.insert(handleId)
+                    activeHandleIds.insert(handleId)
                 }
             }
         }
 
+        // Loops with active echoes are also considered active
+        for echo in echoRepository.activeEchoes {
+            activeHandleIds.insert(echo.handleId)
+        }
+
         for handle in handles {
-            guard !referencedHandleIds.contains(handle.id) else { continue }
+            guard !activeHandleIds.contains(handle.id) else { continue }
 
             insights.append(Insight(
                 insightType: .cleanup,
