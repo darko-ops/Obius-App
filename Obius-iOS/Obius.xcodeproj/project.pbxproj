@@ -10,6 +10,7 @@
 		B8A1D0200000000000000090 /* TierManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0200000000000000090 /* TierManager.swift */; };
 		B8A1D0200000000000000091 /* StoreManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0200000000000000091 /* StoreManager.swift */; };
 		B8A1D0200000000000000092 /* PaywallSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0200000000000000092 /* PaywallSheet.swift */; };
+		B8A1D0200000000000000093 /* SubscriptionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0200000000000000093 /* SubscriptionView.swift */; };
 		B8A1D0010000000000000001 /* ObiusApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000001 /* ObiusApp.swift */; };
 		B8A1D0010000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000002 /* ContentView.swift */; };
 		B8A1D0010000000000000003 /* PreviewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000003 /* PreviewApp.swift */; };
@@ -130,6 +131,7 @@
 		B8A1F0200000000000000090 /* TierManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TierManager.swift; sourceTree = "<group>"; };
 		B8A1F0200000000000000091 /* StoreManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreManager.swift; sourceTree = "<group>"; };
 		B8A1F0200000000000000092 /* PaywallSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaywallSheet.swift; sourceTree = "<group>"; };
+		B8A1F0200000000000000093 /* SubscriptionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000001 /* ObiusApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObiusApp.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000003 /* PreviewApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewApp.swift; sourceTree = "<group>"; };
@@ -560,6 +562,7 @@
 			isa = PBXGroup;
 			children = (
 				B8A1F0010000000000000053 /* SettingsView.swift */,
+				B8A1F0200000000000000093 /* SubscriptionView.swift */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
@@ -693,6 +696,7 @@
 				B8A1D0200000000000000090 /* TierManager.swift in Sources */,
 				B8A1D0200000000000000091 /* StoreManager.swift in Sources */,
 				B8A1D0200000000000000092 /* PaywallSheet.swift in Sources */,
+				B8A1D0200000000000000093 /* SubscriptionView.swift in Sources */,
 				B8A1D0010000000000000093 /* ProfileImageManager.swift in Sources */,
 				B8A1D0010000000000000095 /* AutoCommitManager.swift in Sources */,
 				B8A1D0010000000000000102 /* InterFont.swift in Sources */,

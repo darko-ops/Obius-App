@@ -87,6 +87,19 @@ struct LocalOrAuthView: View {
                 }
                 .padding(.horizontal, 32)
 
+                // Free trial nudge — shown after they've seen the app intro
+                if TierManager.shared.currentTier == .free {
+                    HStack(spacing: 6) {
+                        Image(systemName: "sparkles")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                        Text("Start a 7-day free trial of Pro anytime in Settings.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 32)
+                }
+
                 Spacer()
             }
             .sheet(isPresented: $showAuth) {

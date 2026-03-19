@@ -1,6 +1,5 @@
 import SwiftUI
 import PhotosUI
-import RevenueCatUI
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -10,7 +9,6 @@ struct SettingsView: View {
     @State private var showingSignOut = false
     @State private var showingAuth = false
     @State private var showingEditProfile = false
-    @State private var showingCustomerCenter = false
 
     var body: some View {
         List {
@@ -55,33 +53,16 @@ struct SettingsView: View {
             }
 
             // Subscription Section
-            SwiftUI.Section("Subscription") {
-                HStack {
-                    Label("Plan", systemImage: "crown")
-                    Spacer()
-                    Text(TierManager.shared.tierDisplayName)
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack {
-                    Label("AI Actions Today", systemImage: "sparkles")
-                    Spacer()
-                    Text("\(TierManager.shared.aiActionsUsedToday) / \(TierManager.shared.limits.maxAIActionsPerDay)")
-                        .foregroundStyle(.secondary)
-                }
-
-                if TierManager.shared.currentTier == .free {
-                    Button {
-                        TierManager.shared.showPaywall = true
-                    } label: {
-                        Label("Upgrade to Pro", systemImage: "arrow.up.circle")
-                            .foregroundStyle(.orange)
-                    }
-                } else {
-                    Button {
-                        showingCustomerCenter = true
-                    } label: {
-                        Label("Manage Subscription", systemImage: "gearshape")
+            SwiftUI.Section {
+                NavigationLink {
+                    SubscriptionView()
+                } label: {
+                    HStack {
+                        Label("Subscription", systemImage: "crown")
+                        Spacer()
+                        Text(TierManager.shared.tierDisplayName)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -158,9 +139,6 @@ struct SettingsView: View {
         .sheet(isPresented: $showingEditProfile) {
             EditProfileView()
                 .environmentObject(authManager)
-        }
-        .sheet(isPresented: $showingCustomerCenter) {
-            CustomerCenterView()
         }
     }
 }
