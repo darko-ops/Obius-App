@@ -60,6 +60,10 @@ const ENTITLEMENT_ID = 'Obius Pro';
 const REVENUECAT_API_KEY = Deno.env.get('REVENUECAT_API_KEY')!;
 const WEBHOOK_SECRET = Deno.env.get('REVENUECAT_WEBHOOK_SECRET');
 
+if (!WEBHOOK_SECRET) {
+  console.error('[RC Webhook] REVENUECAT_WEBHOOK_SECRET is not set — webhook is unprotected!');
+}
+
 // Events that grant or extend access
 const GRANT_EVENTS: RCEventType[] = [
   'INITIAL_PURCHASE',
@@ -89,12 +93,10 @@ serve(async (req: Request) => {
   }
 
   // Verify webhook authenticity
-  if (WEBHOOK_SECRET) {
-    const auth = req.headers.get('Authorization');
-    if (auth !== `Bearer ${WEBHOOK_SECRET}`) {
-      console.error('[RC Webhook] Invalid authorization header');
-      return errorResponse('unauthorized', 'Invalid webhook secret', 401);
-    }
+  const auth = req.headers.get('Authorization');
+  if (!WEBHOOK_SECRET || auth !== `Bearer ${WEBHOOK_SECRET}`) {
+    console.error('[RC Webhook] Invalid or missing authorization');
+    return errorResponse('unauthorized', 'Invalid webhook secret', 401);
   }
 
   let payload: RCWebhookPayload;
@@ -139,15 +141,21 @@ serve(async (req: Request) => {
     let resolvedId: string | null = null;
 
     for (const candidate of candidates) {
-      const { data } = await supabase
+      // Check by id first
+      const { data: byId } = await supabase
         .from('user_profiles')
         .select('id')
-        .or(`id.eq.${candidate},rc_app_user_id.eq.${candidate}`)
+        .eq('id', candidate)
         .maybeSingle();
-      if (data) {
-        resolvedId = data.id;
-        break;
-      }
+      if (byId) { resolvedId = byId.id; break; }
+
+      // Then check by rc_app_user_id
+      const { data: byRc } = await supabase
+        .from('user_profiles')
+        .select('id')
+        .eq('rc_app_user_id', candidate)
+        .maybeSingle();
+      if (byRc) { resolvedId = byRc.id; break; }
     }
 
     if (!resolvedId) {

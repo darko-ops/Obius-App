@@ -11,6 +11,7 @@ import {
 } from '../_shared/supabase-client.ts';
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { sendMessage, sendRaw, logUsage } from '../_shared/anthropic-client.ts';
+import { requireAIAction, requireFeature } from '../_shared/entitlements.ts';
 
 const AI_MODEL = 'claude-haiku-4-5-20251001';
 
@@ -408,6 +409,20 @@ serve(async (req: Request) => {
 
     const body: ActionRequest = await req.json();
     const { action } = body;
+
+    // Enforce AI action rate limit (skipped for anonymous users)
+    if (userId !== 'anonymous') {
+      const blocked = await requireAIAction(supabase, userId);
+      if (blocked) return blocked;
+    }
+
+    // AI workspace actions require Pro
+    if (action === 'send_with_tools' || action === 'send_chat') {
+      if (userId !== 'anonymous') {
+        const gated = await requireFeature(supabase, userId, 'aiWorkspace');
+        if (gated) return gated;
+      }
+    }
 
     switch (action) {
       case 'send_with_tools':

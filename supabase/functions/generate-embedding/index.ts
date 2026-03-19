@@ -15,6 +15,7 @@ import {
   EMBEDDING_MODEL,
 } from '../_shared/openai-client.ts';
 import type { EmbeddingRequest, EmbeddingResponse } from '../_shared/types.ts';
+import { requireFeature } from '../_shared/entitlements.ts';
 
 serve(async (req: Request) => {
   // Handle CORS preflight
@@ -26,6 +27,10 @@ serve(async (req: Request) => {
     // Verify authentication
     const { userId } = await verifyAuth(req);
     const supabase = createServiceClient();
+
+    // Embeddings power semantic search — require Pro
+    const blocked = await requireFeature(supabase, userId, 'semanticSearch');
+    if (blocked) return blocked;
 
     // Parse request
     const body = await req.json();

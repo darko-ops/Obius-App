@@ -15,6 +15,7 @@ import {
   CLAUDE_MODEL,
 } from '../_shared/anthropic-client.ts';
 import type { SummaryRequest, SummaryResponse } from '../_shared/types.ts';
+import { requireAIAction } from '../_shared/entitlements.ts';
 
 serve(async (req: Request) => {
   // Handle CORS preflight
@@ -26,6 +27,10 @@ serve(async (req: Request) => {
     // Verify authentication
     const { userId } = await verifyAuth(req);
     const supabase = createServiceClient();
+
+    // Enforce AI action rate limit
+    const blocked = await requireAIAction(supabase, userId);
+    if (blocked) return blocked;
 
     // Parse request
     const body: SummaryRequest & { refine_title?: boolean; current_title?: string } = await req.json();
