@@ -60,11 +60,18 @@ final class StoreManager: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        let result = try await Purchases.shared.purchase(package: package)
+        let result: PurchaseResultData
+        do {
+            result = try await Purchases.shared.purchase(package: package)
+        } catch {
+            SubscriptionAnalytics.shared.purchaseFailed(productId: package.storeProduct.productIdentifier, error: error.localizedDescription)
+            throw error
+        }
 
         if !result.userCancelled {
             customerInfo = result.customerInfo
             syncTier(from: result.customerInfo)
+            SubscriptionAnalytics.shared.purchaseCompleted(productId: package.storeProduct.productIdentifier)
         }
 
         return result.customerInfo
@@ -79,6 +86,9 @@ final class StoreManager: ObservableObject {
         let info = try await Purchases.shared.restorePurchases()
         customerInfo = info
         syncTier(from: info)
+        if hasProEntitlement {
+            SubscriptionAnalytics.shared.restoreCompleted()
+        }
         return info
     }
 

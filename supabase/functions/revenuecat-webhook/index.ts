@@ -196,6 +196,21 @@ async function processEvent(supabase: any, userId: string, event: RCEvent): Prom
       return errorResponse('db_error', error.message, 500);
     }
 
+    // Log conversion event
+    const analyticsEvent = event.type === 'INITIAL_PURCHASE' ? 'purchase_completed'
+      : event.type === 'UNCANCELLATION' ? 'reactivated'
+      : null;
+    if (analyticsEvent) {
+      await supabase.from('subscription_events').insert({
+        user_id: userId,
+        event: analyticsEvent,
+        product_id: event.product_id,
+        tier_before: 'free',
+        tier_after: tier,
+        metadata: { store: event.store, environment: event.environment },
+      }).then(() => {}, () => {}); // fire-and-forget
+    }
+
     console.log(`[RC Webhook] Granted ${tier} to ${userId} (expires ${expiresAt ?? 'never'})`);
     return jsonResponse({ ok: true, tier });
   }
@@ -225,6 +240,19 @@ async function processEvent(supabase: any, userId: string, event: RCEvent): Prom
       console.error(`[RC Webhook] Failed to revoke: ${error.message}`);
       return errorResponse('db_error', error.message, 500);
     }
+
+    // Log churn event
+    await supabase.from('subscription_events').insert({
+      user_id: userId,
+      event: 'churned',
+      product_id: event.product_id,
+      tier_before: 'pro',
+      tier_after: newTier,
+      metadata: {
+        reason: event.cancel_reason ?? event.expiration_reason ?? event.type,
+        store: event.store,
+      },
+    }).then(() => {}, () => {}); // fire-and-forget
 
     console.log(`[RC Webhook] Revoked → ${newTier} for ${userId} (${event.type})`);
     return jsonResponse({ ok: true, tier: newTier });

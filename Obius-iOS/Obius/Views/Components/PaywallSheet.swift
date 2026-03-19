@@ -41,6 +41,14 @@ struct PaywallSheet: View {
             .background(Color(.systemBackground))
             .presentationDetents([.medium])
             .presentationDragIndicator(.hidden)
+            .onAppear {
+                SubscriptionAnalytics.shared.paywallShown(feature: feature)
+            }
+            .onDisappear {
+                if !showFullPaywall {
+                    SubscriptionAnalytics.shared.paywallDismissed(feature: feature)
+                }
+            }
             .sheet(isPresented: $showFullPaywall) {
                 PaywallView()
                     .onPurchaseCompleted { customerInfo in
