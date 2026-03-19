@@ -144,7 +144,7 @@ struct SubscriptionView: View {
                     .frame(width: 44, height: 44)
                 Image(systemName: isFree ? "person" : "crown.fill")
                     .font(.title3)
-                    .foregroundStyle(isFree ? .secondary : .orange)
+                    .foregroundStyle(isFree ? Color.secondary : Color.orange)
             }
 
             VStack(alignment: .leading, spacing: 2) {

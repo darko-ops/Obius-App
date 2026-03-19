@@ -19,6 +19,51 @@ const AI_ACTION_LIMITS: Record<SubscriptionTier, number> = {
   founding: 100,
 };
 
+// Per-tier entity limits (null = unlimited, must match iOS TierLimits)
+interface TierLimits {
+  maxNotes: number | null;
+  maxSectionsPerNote: number | null;
+  maxModules: number | null;
+  maxHandles: number | null;
+  maxEchoes: number | null;
+  cloudSync: boolean;
+  shareLinks: boolean;
+}
+
+const TIER_LIMITS: Record<SubscriptionTier, TierLimits> = {
+  free: {
+    maxNotes: 25,
+    maxSectionsPerNote: 50,
+    maxModules: 2,
+    maxHandles: 3,
+    maxEchoes: 3,
+    cloudSync: false,
+    shareLinks: false,
+  },
+  pro: {
+    maxNotes: null,
+    maxSectionsPerNote: null,
+    maxModules: null,
+    maxHandles: null,
+    maxEchoes: null,
+    cloudSync: true,
+    shareLinks: true,
+  },
+  founding: {
+    maxNotes: null,
+    maxSectionsPerNote: null,
+    maxModules: null,
+    maxHandles: null,
+    maxEchoes: null,
+    cloudSync: true,
+    shareLinks: true,
+  },
+};
+
+export function getLimits(tier: SubscriptionTier): TierLimits {
+  return TIER_LIMITS[tier];
+}
+
 /**
  * Get the subscription tier for a user from the database.
  */
@@ -125,6 +170,59 @@ export async function requireAIAction(
       `You've used all ${limit} AI actions for today. ${tier === 'free' ? 'Upgrade to Pro for 100/day.' : 'Limit resets at midnight UTC.'}`,
       429,
     );
+  }
+
+  return null;
+}
+
+/**
+ * Check if a user can create a new entity of the given type.
+ * Returns null if allowed, or an error Response if over limit.
+ */
+export async function requireEntityCreate(
+  supabase: SupabaseClient,
+  userId: string,
+  entityType: 'note' | 'section',
+  noteId?: string,
+): Promise<Response | null> {
+  const { tier } = await getUserTier(supabase, userId);
+  const limits = getLimits(tier);
+
+  if (entityType === 'note') {
+    if (limits.maxNotes === null) return null;
+
+    const { count, error } = await supabase
+      .from('notes')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .is('deleted_at', null);
+
+    if (error) return null; // fail open
+    if ((count ?? 0) >= limits.maxNotes) {
+      return errorResponse(
+        'NOTE_LIMIT_REACHED',
+        `Free plan is limited to ${limits.maxNotes} notes. Upgrade to Pro for unlimited.`,
+        403,
+      );
+    }
+  }
+
+  if (entityType === 'section' && noteId && limits.maxSectionsPerNote !== null) {
+    const { count, error } = await supabase
+      .from('sections')
+      .select('*', { count: 'exact', head: true })
+      .eq('note_id', noteId)
+      .eq('user_id', userId)
+      .is('deleted_at', null);
+
+    if (error) return null;
+    if ((count ?? 0) >= limits.maxSectionsPerNote) {
+      return errorResponse(
+        'SECTION_LIMIT_REACHED',
+        `Free plan is limited to ${limits.maxSectionsPerNote} sections per note. Upgrade to Pro for unlimited.`,
+        403,
+      );
+    }
   }
 
   return null;

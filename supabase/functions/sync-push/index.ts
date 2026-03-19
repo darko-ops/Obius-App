@@ -17,6 +17,7 @@ import type {
   Note,
   Section,
 } from '../_shared/types.ts';
+import { requireFeature, requireEntityCreate } from '../_shared/entitlements.ts';
 
 serve(async (req: Request) => {
   // Handle CORS preflight
@@ -52,6 +53,10 @@ serve(async (req: Request) => {
     if (deviceError || !device) {
       return errorResponse('INVALID_DEVICE', 'Device not found or unauthorized', 403);
     }
+
+    // Cloud sync requires Pro
+    const syncGate = await requireFeature(supabase, userId, 'cloudSync');
+    if (syncGate) return syncGate;
 
     const accepted: string[] = [];
     const conflicts: ConflictInfo[] = [];
@@ -111,6 +116,14 @@ async function processOperation(
 
   // CREATE operation
   if (op.operation === 'create') {
+    // Enforce entity limits for free-tier users
+    const noteId = op.entity_type === 'section' ? (op.payload.note_id as string) : undefined;
+    const limitCheck = await requireEntityCreate(supabase, userId, op.entity_type, noteId);
+    if (limitCheck) {
+      // Return as a conflict with the limit error
+      return { success: false };
+    }
+
     const insertData = {
       ...op.payload,
       id: op.entity_id,

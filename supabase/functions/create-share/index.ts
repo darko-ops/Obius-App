@@ -9,6 +9,7 @@ import {
   errorResponse,
   corsResponse,
 } from '../_shared/supabase-client.ts';
+import { requireFeature } from '../_shared/entitlements.ts';
 
 interface CreateShareRequest {
   shareType: 'live' | 'commit';
@@ -35,6 +36,10 @@ serve(async (req: Request) => {
   try {
     const { userId } = await verifyAuth(req);
     const supabase = createServiceClient();
+
+    // Share links require Pro
+    const shareGate = await requireFeature(supabase, userId, 'shareLinks');
+    if (shareGate) return shareGate;
 
     const body: CreateShareRequest = await req.json();
 

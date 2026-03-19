@@ -15,6 +15,7 @@ import type {
   Note,
   Section,
 } from '../_shared/types.ts';
+import { requireFeature } from '../_shared/entitlements.ts';
 
 const MAX_ITEMS_PER_SYNC = 500;
 
@@ -48,6 +49,10 @@ serve(async (req: Request) => {
     if (deviceError || !device) {
       return errorResponse('INVALID_DEVICE', 'Device not found or unauthorized', 403);
     }
+
+    // Cloud sync requires Pro
+    const syncGate = await requireFeature(supabase, userId, 'cloudSync');
+    if (syncGate) return syncGate;
 
     // Parse timestamp
     const sinceTimestamp = last_sync_timestamp
