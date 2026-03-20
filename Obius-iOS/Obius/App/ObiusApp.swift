@@ -1,6 +1,7 @@
 import SwiftUI
 import UserNotifications
 import RevenueCat
+import BackgroundTasks
 
 @main
 struct ObiusApp: App {
