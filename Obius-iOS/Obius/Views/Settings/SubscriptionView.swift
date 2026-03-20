@@ -6,7 +6,7 @@ struct SubscriptionView: View {
     @ObservedObject private var tierManager = TierManager.shared
     @ObservedObject private var storeManager = StoreManager.shared
     @State private var showingCustomerCenter = false
-    @State private var showingFullPaywall = false
+    @State private var showingPaywall = false
     @State private var isRestoring = false
     @State private var restoreMessage: String?
 
@@ -29,31 +29,19 @@ struct SubscriptionView: View {
                          limit: tierManager.limits.maxAIActionsPerDay)
 
                 if let maxNotes = tierManager.limits.maxNotes {
-                    usageRow("Notes",
-                             icon: "note.text",
-                             used: nil,
-                             limit: maxNotes,
-                             note: "of \(maxNotes)")
+                    featureRow("Notes", icon: "note.text", detail: "of \(maxNotes)")
                 } else {
                     featureRow("Notes", icon: "note.text", detail: "Unlimited")
                 }
 
                 if let maxLoops = tierManager.limits.maxHandles {
-                    usageRow("Loops",
-                             icon: "at",
-                             used: nil,
-                             limit: maxLoops,
-                             note: "of \(maxLoops)")
+                    featureRow("Loops", icon: "at", detail: "of \(maxLoops)")
                 } else {
                     featureRow("Loops", icon: "at", detail: "Unlimited")
                 }
 
                 if let maxEchoes = tierManager.limits.maxEchoes {
-                    usageRow("Echoes",
-                             icon: "bell",
-                             used: nil,
-                             limit: maxEchoes,
-                             note: "of \(maxEchoes)")
+                    featureRow("Echoes", icon: "bell", detail: "of \(maxEchoes)")
                 } else {
                     featureRow("Echoes", icon: "bell", detail: "Unlimited")
                 }
@@ -77,17 +65,10 @@ struct SubscriptionView: View {
             SwiftUI.Section {
                 if isFree {
                     Button {
-                        showingFullPaywall = true
+                        showingPaywall = true
                     } label: {
-                        HStack {
-                            Spacer()
-                            Text("Start 7-Day Free Trial")
-                                .font(.headline)
-                                .foregroundStyle(.white)
-                            Spacer()
-                        }
-                        .padding(.vertical, 6)
-                        .listRowBackground(Color.orange)
+                        Label("View Plans & Pricing", systemImage: "crown")
+                            .foregroundStyle(.orange)
                     }
                 } else {
                     Button {
@@ -121,16 +102,8 @@ struct SubscriptionView: View {
         .sheet(isPresented: $showingCustomerCenter) {
             CustomerCenterView()
         }
-        .sheet(isPresented: $showingFullPaywall) {
-            PaywallView()
-                .onPurchaseCompleted { info in
-                    StoreManager.shared.syncTier(from: info)
-                    showingFullPaywall = false
-                }
-                .onRestoreCompleted { info in
-                    StoreManager.shared.syncTier(from: info)
-                    showingFullPaywall = false
-                }
+        .sheet(isPresented: $showingPaywall) {
+            PaywallSheet()
         }
     }
 
@@ -170,19 +143,13 @@ struct SubscriptionView: View {
 
     // MARK: - Rows
 
-    private func usageRow(_ title: String, icon: String, used: Int?, limit: Int, note: String? = nil) -> some View {
+    private func usageRow(_ title: String, icon: String, used: Int, limit: Int) -> some View {
         HStack {
             Label(title, systemImage: icon)
             Spacer()
-            if let used {
-                Text("\(used) / \(limit)")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            } else if let note {
-                Text(note)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
+            Text("\(used) / \(limit)")
+                .font(.subheadline.monospacedDigit())
+                .foregroundStyle(.secondary)
         }
     }
 

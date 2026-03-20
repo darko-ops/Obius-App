@@ -3,14 +3,13 @@ import RevenueCat
 import RevenueCatUI
 
 // MARK: - Soft Paywall (Bottom Sheet)
-// Shown inline when a user hits a limit. Not a fullscreen blocker.
-// Shows what they unlock with Pro, not what they can't do.
 
 struct PaywallSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var tierManager = TierManager.shared
     @ObservedObject private var storeManager = StoreManager.shared
-    @State private var showFullPaywall = false
+    @State private var selectedPlan: PlanChoice = .yearly
+    @State private var isPurchasing = false
     @State private var purchaseError: String?
 
     private var feature: GatedFeature? {
@@ -27,40 +26,34 @@ struct PaywallSheet: View {
                     .padding(.top, 8)
 
                 ScrollView {
-                    VStack(spacing: 24) {
+                    VStack(spacing: 20) {
                         featureHeader
-                        proUnlocks
-                        trialCTA
-                        restoreLink
+                        planPicker
+                        featureComparison
+                        purchaseButton
+                        footerLinks
                     }
                     .padding(.horizontal, 20)
-                    .padding(.top, 20)
+                    .padding(.top, 16)
                     .padding(.bottom, 32)
                 }
             }
             .background(Color(.systemBackground))
-            .presentationDetents([.medium])
+            .presentationDetents([.large, .medium])
             .presentationDragIndicator(.hidden)
+            .overlay {
+                if isPurchasing {
+                    ProgressView()
+                        .scaleEffect(1.3)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(.ultraThinMaterial)
+                }
+            }
             .onAppear {
                 SubscriptionAnalytics.shared.paywallShown(feature: feature)
             }
             .onDisappear {
-                if !showFullPaywall {
-                    SubscriptionAnalytics.shared.paywallDismissed(feature: feature)
-                }
-            }
-            .sheet(isPresented: $showFullPaywall) {
-                PaywallView()
-                    .onPurchaseCompleted { customerInfo in
-                        StoreManager.shared.syncTier(from: customerInfo)
-                        showFullPaywall = false
-                        dismiss()
-                    }
-                    .onRestoreCompleted { customerInfo in
-                        StoreManager.shared.syncTier(from: customerInfo)
-                        showFullPaywall = false
-                        dismiss()
-                    }
+                SubscriptionAnalytics.shared.paywallDismissed(feature: feature)
             }
         }
     }
@@ -69,64 +62,208 @@ struct PaywallSheet: View {
 
     @ViewBuilder
     private var featureHeader: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             if let feature {
                 Image(systemName: feature.icon)
-                    .font(.system(size: 36))
+                    .font(.system(size: 32))
                     .foregroundStyle(.orange)
-
                 Text(feature.softMessage)
                     .font(.title3.weight(.semibold))
                     .multilineTextAlignment(.center)
             } else {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 36))
+                Image(systemName: "crown.fill")
+                    .font(.system(size: 32))
                     .foregroundStyle(.orange)
-
-                Text("Do more with Obius Pro")
+                Text("Obius Pro")
                     .font(.title3.weight(.semibold))
+            }
+            Text("Unlock the full power of Obius")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Plan Picker
+
+    private var planPicker: some View {
+        VStack(spacing: 10) {
+            // Monthly / Yearly / Lifetime toggle
+            HStack(spacing: 8) {
+                planTab(.monthly, "Monthly")
+                planTab(.yearly, "Yearly")
+                if storeManager.lifetimePackage != nil {
+                    planTab(.lifetime, "Lifetime")
+                }
+            }
+
+            // Selected plan card
+            if let package = selectedPackage {
+                planCard(package)
             }
         }
     }
 
-    // MARK: - What Pro Unlocks
+    private func planTab(_ plan: PlanChoice, _ label: String) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) { selectedPlan = plan }
+        } label: {
+            VStack(spacing: 2) {
+                Text(label)
+                    .font(.subheadline.weight(selectedPlan == plan ? .semibold : .regular))
+                    .foregroundStyle(selectedPlan == plan ? .primary : .secondary)
 
-    private var proUnlocks: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            unlockRow("note.text", "Unlimited notes & projects")
-            unlockRow("sparkles", "100 AI actions per day")
-            unlockRow("brain", "AI workspace")
-            unlockRow("icloud", "Cloud sync across devices")
-            unlockRow("arrow.down.doc", "Version history")
-            unlockRow("square.and.arrow.up", "Share links")
-            unlockRow("magnifyingglass", "Semantic search")
-            unlockRow("lightbulb", "Full insights")
+                if plan == .yearly {
+                    Text("SAVE ~38%")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.orange)
+                } else if plan == .lifetime {
+                    Text("BEST VALUE")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.orange)
+                } else {
+                    Text(" ")
+                        .font(.system(size: 8))
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(selectedPlan == plan ? Color.orange.opacity(0.12) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(selectedPlan == plan ? Color.orange.opacity(0.4) : Color(.separator).opacity(0.3), lineWidth: 1)
+            )
         }
-        .padding(16)
+        .buttonStyle(.plain)
+    }
+
+    private func planCard(_ package: Package) -> some View {
+        VStack(spacing: 4) {
+            Text(package.storeProduct.localizedPriceString)
+                .font(.title2.weight(.bold))
+
+            Text(priceSubtext(for: selectedPlan, package: package))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if package.storeProduct.introductoryDiscount != nil {
+                Text("7-day free trial")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.orange)
+                    .padding(.top, 2)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .background(Color(.secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func priceSubtext(for plan: PlanChoice, package: Package) -> String {
+        switch plan {
+        case .monthly: return "per month"
+        case .yearly:
+            let monthlyEquiv = package.storeProduct.price / 12
+            let formatter = NumberFormatter()
+            formatter.numberStyle = .currency
+            formatter.locale = package.storeProduct.priceFormatter?.locale ?? .current
+            let perMonth = formatter.string(from: monthlyEquiv as NSDecimalNumber) ?? ""
+            return "\(perMonth)/mo billed yearly"
+        case .lifetime: return "one-time purchase, forever"
+        }
+    }
+
+    // MARK: - Feature Comparison
+
+    private var featureComparison: some View {
+        VStack(spacing: 0) {
+            comparisonHeader
+            Divider()
+            comparisonRow("Notes", free: "25", pro: "Unlimited")
+            comparisonRow("Projects", free: "2", pro: "Unlimited")
+            comparisonRow("Loops", free: "3", pro: "Unlimited")
+            comparisonRow("AI actions / day", free: "10", pro: "100")
+            comparisonRow("Cloud Sync", free: nil, pro: "checkmark")
+            comparisonRow("Version History", free: nil, pro: "checkmark")
+            comparisonRow("AI Workspace", free: nil, pro: "checkmark")
+            comparisonRow("Share Links", free: nil, pro: "checkmark")
+            comparisonRow("Semantic Search", free: nil, pro: "checkmark")
+        }
         .background(Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
-    private func unlockRow(_ icon: String, _ text: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.caption)
+    private var comparisonHeader: some View {
+        HStack {
+            Text("")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text("Free")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 60)
+            Text("Pro")
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(.orange)
-                .frame(width: 20)
-            Text(text)
-                .font(.subheadline)
-                .foregroundStyle(.primary)
+                .frame(width: 60)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    private func comparisonRow(_ label: String, free: String?, pro: String) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(label)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                // Free column
+                Group {
+                    if let free {
+                        Text(free)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary.opacity(0.5))
+                    }
+                }
+                .frame(width: 60)
+
+                // Pro column
+                Group {
+                    if pro == "checkmark" {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.orange)
+                    } else {
+                        Text(pro)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .frame(width: 60)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+
+            Divider().padding(.leading, 14)
         }
     }
 
-    // MARK: - Trial CTA
+    // MARK: - Purchase Button
 
-    private var trialCTA: some View {
-        VStack(spacing: 12) {
+    private var purchaseButton: some View {
+        VStack(spacing: 8) {
             Button {
-                showFullPaywall = true
+                guard let package = selectedPackage else { return }
+                purchasePackage(package)
             } label: {
-                Text("Start 7-Day Free Trial")
+                Text(purchaseButtonLabel)
                     .font(.headline)
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
@@ -134,46 +271,88 @@ struct PaywallSheet: View {
                     .background(Color.orange)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
             }
-
-            Text("Try everything free for 7 days, then choose a plan.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+            .disabled(isPurchasing || selectedPackage == nil)
 
             if let error = purchaseError {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
             }
         }
     }
 
-    // MARK: - Restore
+    private var purchaseButtonLabel: String {
+        guard let package = selectedPackage else { return "Subscribe" }
+        if package.storeProduct.introductoryDiscount != nil {
+            return "Start Free Trial"
+        }
+        return selectedPlan == .lifetime ? "Buy Lifetime" : "Subscribe"
+    }
 
-    private var restoreLink: some View {
-        Button {
-            Task {
-                do {
-                    let info = try await storeManager.restorePurchases()
-                    if StoreManager.shared.hasProEntitlement {
-                        dismiss()
+    // MARK: - Footer
+
+    private var footerLinks: some View {
+        VStack(spacing: 10) {
+            Button {
+                Task {
+                    purchaseError = nil
+                    do {
+                        _ = try await storeManager.restorePurchases()
+                        if storeManager.hasProEntitlement { dismiss() }
+                    } catch {
+                        purchaseError = error.localizedDescription
                     }
-                } catch {
-                    purchaseError = error.localizedDescription
                 }
+            } label: {
+                Text("Restore Purchases")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-        } label: {
-            Text("Restore Purchases")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+
+            HStack(spacing: 16) {
+                Link("Terms", destination: URL(string: "https://obius.io/terms")!)
+                    .font(.caption2).foregroundStyle(.tertiary)
+                Link("Privacy", destination: URL(string: "https://obius.io/privacy")!)
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
         }
     }
+
+    // MARK: - Helpers
+
+    private var selectedPackage: Package? {
+        switch selectedPlan {
+        case .monthly: return storeManager.monthlyPackage
+        case .yearly: return storeManager.yearlyPackage
+        case .lifetime: return storeManager.lifetimePackage
+        }
+    }
+
+    private func purchasePackage(_ package: Package) {
+        isPurchasing = true
+        purchaseError = nil
+        Task {
+            do {
+                _ = try await storeManager.purchase(package)
+                dismiss()
+            } catch {
+                purchaseError = error.localizedDescription
+            }
+            isPurchasing = false
+        }
+    }
+}
+
+// MARK: - Plan Choice
+
+enum PlanChoice {
+    case monthly, yearly, lifetime
 }
 
 // MARK: - Soft Message Extension
 
 extension GatedFeature {
-    /// Positive framing — what they unlock, not what they can't do.
     var softMessage: String {
         switch self {
         case .notes: return "Unlock unlimited notes"
