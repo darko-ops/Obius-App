@@ -14,6 +14,7 @@ struct ObiusApp: App {
     init() {
         UNUserNotificationCenter.current().delegate = notificationDelegate
         InterFontRegistration.registerAsDefault()
+        AutoCommitManager.registerBackgroundTask()
 
         let rcKey = AppConfiguration.revenueCatAPIKey
         if !rcKey.isEmpty {
@@ -238,6 +239,18 @@ class AppState: ObservableObject {
     func triggerSync() async {
         guard TierManager.shared.limits.cloudSync else { return }
         await syncEngine.sync()
+    }
+
+    // MARK: - Background Auto-Commit
+
+    /// Called from BGProcessingTask handler at midnight.
+    /// Creates a minimal AppState just to run auto-commits.
+    static func backgroundAutoCommit(task: BGProcessingTask) async {
+        do {
+            let appState = AppState()
+            await appState.autoCommitManager.checkAndAutoCommit()
+            task.setTaskCompleted(success: true)
+        }
     }
 }
 

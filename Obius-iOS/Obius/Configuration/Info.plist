@@ -106,6 +106,7 @@
     <array>
         <string>app.obius.ios.sync</string>
         <string>app.obius.ios.cleanup</string>
+        <string>app.obius.ios.autocommit</string>
     </array>
 
     <!-- App Transport Security -->
