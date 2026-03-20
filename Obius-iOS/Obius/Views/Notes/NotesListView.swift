@@ -49,6 +49,8 @@ private struct NotesListContent: View {
     @State private var selectedBlockName: String?
     @State private var longPressedBlockName: String?
     @State private var blockToDelete: String?
+    @State private var blockToRename: String?
+    @State private var renameBlockText: String = ""
     @AppStorage("trackedBlockNames") private var trackedBlockNamesData: String = "[]"
 
     private var trackedBlockNames: [String] {
@@ -536,6 +538,16 @@ private struct NotesListContent: View {
                         setTrackedBlockNames(names)
                     }
                 }
+
+                Button("Rename") {
+                    renameBlockText = name
+                    blockToRename = name
+                }
+
+                Button("Unblock") {
+                    Task { await unblockNotes(blockName: name) }
+                }
+
                 Button("Delete Block", role: .destructive) {
                     blockToDelete = name
                 }
@@ -558,6 +570,18 @@ private struct NotesListContent: View {
         } message: {
             let count = groupedNotes[blockToDelete ?? ""]?.count ?? 0
             Text("This will permanently delete the block and all \(count) page\(count == 1 ? "" : "s") inside it.")
+        }
+        .alert("Rename Block", isPresented: Binding(
+            get: { blockToRename != nil },
+            set: { if !$0 { blockToRename = nil } }
+        )) {
+            TextField("Block name", text: $renameBlockText)
+            Button("Rename") {
+                if let oldName = blockToRename {
+                    Task { await renameBlock(from: oldName, to: renameBlockText) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
         }
     }
 
@@ -871,6 +895,48 @@ private struct NotesListContent: View {
             } catch {
                 print("Failed to delete note \(note.id): \(error)")
             }
+        }
+    }
+
+    private func unblockNotes(blockName: String) async {
+        // Remove from tracked list if tracked
+        if trackedBlockNames.contains(blockName) {
+            var names = trackedBlockNames
+            names.removeAll { $0 == blockName }
+            setTrackedBlockNames(names)
+        }
+        // Clear group name from all notes — they return to the main list
+        let notes = groupedNotes[blockName] ?? []
+        for note in notes {
+            do {
+                try await noteRepository.setGroupName(noteId: note.id, groupName: nil)
+            } catch {
+                print("Failed to unblock note \(note.id): \(error)")
+            }
+        }
+    }
+
+    private func renameBlock(from oldName: String, to newName: String) async {
+        let trimmed = newName.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, trimmed != oldName else { return }
+
+        // Update group name on all notes in the block
+        let notes = groupedNotes[oldName] ?? []
+        for note in notes {
+            do {
+                try await noteRepository.setGroupName(noteId: note.id, groupName: trimmed)
+            } catch {
+                print("Failed to rename note \(note.id) block: \(error)")
+            }
+        }
+
+        // Update tracked list if tracked
+        if trackedBlockNames.contains(oldName) {
+            var names = trackedBlockNames
+            if let index = names.firstIndex(of: oldName) {
+                names[index] = trimmed
+            }
+            setTrackedBlockNames(names)
         }
     }
 
