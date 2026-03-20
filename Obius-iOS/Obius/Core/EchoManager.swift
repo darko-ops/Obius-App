@@ -92,11 +92,10 @@ final class EchoManager: ObservableObject {
     func scheduleEcho(_ echo: Echo) {
         let center = UNUserNotificationCenter.current()
         let handleName = getHandleName(for: echo)
-
-        let startDate = echo.fireDateAsDate
+        let now = Date()
 
         // Non-recurring echo that already fired is complete — don't schedule anything
-        if !echo.isRecurring && startDate <= Date() {
+        if !echo.isRecurring && echo.fireDateAsDate <= now {
             cancelEcho(echo.id)
             return
         }
@@ -107,60 +106,43 @@ final class EchoManager: ObservableObject {
         baseContent.sound = .default
         baseContent.userInfo = ["echoId": echo.id, "handleId": echo.handleId]
 
-        // Always schedule a one-time notification for the start date (if in future)
-        if startDate > Date() {
-            let components = Calendar.current.dateComponents(
-                [.year, .month, .day, .hour, .minute, .second],
-                from: startDate
-            )
-            let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+        // Determine the target fire date
+        let targetDate: Date
+        if echo.isRecurring, let nextFire = echo.computedNextFireDate, nextFire > now {
+            targetDate = nextFire
+        } else {
+            targetDate = echo.fireDateAsDate
+        }
 
-            let startContent = baseContent.mutableCopy() as! UNMutableNotificationContent
-            startContent.body = echo.isRecurring ? "Recurring echo started" : echo.cadenceDescription
+        // Only schedule if target is in the future
+        guard targetDate > now else { return }
 
-            let request = UNNotificationRequest(
-                identifier: "echo_\(echo.id)_start",
-                content: startContent,
-                trigger: trigger
-            )
-            center.add(request) { error in
-                if let error {
-                    print("EchoManager: Failed to schedule start notification: \(error)")
-                }
+        // Schedule a one-time notification at the exact fire time
+        let components = Calendar.current.dateComponents(
+            [.year, .month, .day, .hour, .minute, .second],
+            from: targetDate
+        )
+        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+
+        let fireContent = baseContent.mutableCopy() as! UNMutableNotificationContent
+        fireContent.body = echo.isRecurring ? echo.cadenceDescription : echo.cadenceDescription
+
+        let request = UNNotificationRequest(
+            identifier: "echo_\(echo.id)_start",
+            content: fireContent,
+            trigger: trigger
+        )
+        center.add(request) { error in
+            if let error {
+                print("EchoManager: Failed to schedule notification: \(error)")
             }
         }
 
-        // If recurring, schedule a repeating trigger for each interval
-        if echo.isRecurring {
-            for (index, interval) in echo.intervals.enumerated() {
-                let seconds = max(interval.timeIntervalSeconds, 60) // iOS minimum: 60s
-
-                let intervalContent = baseContent.mutableCopy() as! UNMutableNotificationContent
-                intervalContent.body = interval.description.capitalized
-
-                // If startDate is in the future, we need to delay the recurring trigger.
-                // iOS doesn't support "start at X then repeat every Y", so we schedule
-                // the repeating trigger immediately — the start notification covers the first alert.
-                let trigger = UNTimeIntervalNotificationTrigger(timeInterval: seconds, repeats: true)
-
-                let request = UNNotificationRequest(
-                    identifier: "echo_\(echo.id)_interval_\(index)",
-                    content: intervalContent,
-                    trigger: trigger
-                )
-                center.add(request) { error in
-                    if let error {
-                        print("EchoManager: Failed to schedule interval \(index) notification: \(error)")
-                    }
-                }
-            }
-        }
-
-        // Schedule hourly reminder notifications for unaddressed echoes
-        let reminderOffsets: [TimeInterval] = [3600, 7200, 10800, 21600, 43200, 86400] // 1h, 2h, 3h, 6h, 12h, 24h
+        // Schedule reminder notifications (only after the fire date)
+        let reminderOffsets: [TimeInterval] = [3600, 7200, 10800, 21600, 43200, 86400]
         for (index, offset) in reminderOffsets.enumerated() {
-            let reminderDate = startDate.addingTimeInterval(offset)
-            guard reminderDate > Date() else { continue }
+            let reminderDate = targetDate.addingTimeInterval(offset)
+            guard reminderDate > now else { continue }
 
             let reminderContent = UNMutableNotificationContent()
             reminderContent.title = "Echo reminder"
@@ -168,20 +150,20 @@ final class EchoManager: ObservableObject {
             reminderContent.sound = .default
             reminderContent.userInfo = ["echoId": echo.id, "handleId": echo.handleId]
 
-            let components = Calendar.current.dateComponents(
+            let reminderComponents = Calendar.current.dateComponents(
                 [.year, .month, .day, .hour, .minute, .second],
                 from: reminderDate
             )
-            let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+            let reminderTrigger = UNCalendarNotificationTrigger(dateMatching: reminderComponents, repeats: false)
 
-            let request = UNNotificationRequest(
+            let reminderRequest = UNNotificationRequest(
                 identifier: "echo_\(echo.id)_reminder_\(index)",
                 content: reminderContent,
-                trigger: trigger
+                trigger: reminderTrigger
             )
-            center.add(request) { error in
+            center.add(reminderRequest) { error in
                 if let error {
-                    print("EchoManager: Failed to schedule reminder \(index) notification: \(error)")
+                    print("EchoManager: Failed to schedule reminder \(index): \(error)")
                 }
             }
         }
@@ -309,12 +291,16 @@ final class EchoManager: ObservableObject {
 
         try await repository.acknowledgeEcho(id: id)
 
-        // Cancel all current notifications
+        // Cancel all current notifications immediately
         cancelEcho(id)
 
-        // For recurring echoes, reschedule so the next cycle fires normally
+        // For recurring echoes, update next fire date and reschedule
         if let echo = activeEchoes.first(where: { $0.id == id }), echo.isRecurring {
-            scheduleEcho(echo)
+            // Refresh from DB to get updated lastAcknowledgedAt and recomputed nextFireDate
+            try await repository.updateNextFireDate(id: id)
+            if let refreshed = try await repository.getEcho(id: id) {
+                scheduleEcho(refreshed)
+            }
         }
     }
 
