@@ -233,18 +233,29 @@ struct LoopsListView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            // Header with add button
-            HStack {
-                Spacer()
+            // Create loop pill (matches commit filter bar style)
+            HStack(spacing: 4) {
                 Button {
                     showingCreateSheet = true
                 } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(.gray)
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("New Loop")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule()
+                            .fill(Color.orange.opacity(0.12))
+                    )
                 }
+                .buttonStyle(.plain)
+
+                Spacer()
             }
-            .padding(.horizontal)
 
             if handleManager.handles.isEmpty {
                 emptyState
