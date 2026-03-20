@@ -132,12 +132,22 @@ final class StoreManager: ObservableObject {
     // MARK: - Tier Sync
 
     func syncTier(from info: CustomerInfo) {
-        let hasPro = info.entitlements[Self.entitlementID]?.isActive == true
+        guard let entitlement = info.entitlements[Self.entitlementID],
+              entitlement.isActive else {
+            if !TierManager.shared.isFoundingMember {
+                TierManager.shared.updateTier(.free)
+            }
+            return
+        }
 
-        if hasPro {
+        // Detect Founders plan — matches the rc_lifetime package
+        let productId = entitlement.productIdentifier.lowercased()
+        if productId.contains("founding") || productId.contains("founder") || productId.contains("lifetime") {
+            TierManager.shared.isFoundingMember = true
+            UserDefaults.standard.set(true, forKey: "obius_is_founding_member")
+            TierManager.shared.updateTier(.founding)
+        } else {
             TierManager.shared.updateTier(.pro)
-        } else if !TierManager.shared.isFoundingMember {
-            TierManager.shared.updateTier(.free)
         }
     }
 }

@@ -128,7 +128,7 @@ final class TierManager: ObservableObject {
     @Published var showPaywall = false
     @Published var paywallFeature: GatedFeature?
     @Published private(set) var aiActionsUsedToday: Int = 0
-    @Published private(set) var isFoundingMember: Bool = false
+    @Published var isFoundingMember: Bool = false
     @Published private(set) var foundersSpotsTaken: Int = 0
 
     var foundersSpotsRemaining: Int {
