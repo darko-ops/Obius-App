@@ -2,13 +2,13 @@ import SwiftUI
 import RevenueCat
 import RevenueCatUI
 
-// MARK: - Soft Paywall (Bottom Sheet)
+// MARK: - Paywall Sheet
 
 struct PaywallSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var tierManager = TierManager.shared
     @ObservedObject private var storeManager = StoreManager.shared
-    @State private var selectedPlan: PlanChoice = .yearly
+    @State private var selectedPlan: PlanChoice = .annual
     @State private var isPurchasing = false
     @State private var purchaseError: String?
 
@@ -18,29 +18,21 @@ struct PaywallSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                // Drag indicator
-                Capsule()
-                    .fill(Color(.tertiaryLabel))
-                    .frame(width: 36, height: 5)
-                    .padding(.top, 8)
-
-                ScrollView {
-                    VStack(spacing: 20) {
-                        featureHeader
-                        planPicker
-                        featureComparison
-                        purchaseButton
-                        footerLinks
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 16)
-                    .padding(.bottom, 32)
+            ScrollView {
+                VStack(spacing: 24) {
+                    header
+                    planCards
+                    featureComparison
+                    purchaseButton
+                    footerLinks
                 }
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+                .padding(.bottom, 32)
             }
             .background(Color(.systemBackground))
             .presentationDetents([.large, .medium])
-            .presentationDragIndicator(.hidden)
+            .presentationDragIndicator(.visible)
             .overlay {
                 if isPurchasing {
                     ProgressView()
@@ -58,10 +50,9 @@ struct PaywallSheet: View {
         }
     }
 
-    // MARK: - Feature Header
+    // MARK: - Header
 
-    @ViewBuilder
-    private var featureHeader: some View {
+    private var header: some View {
         VStack(spacing: 8) {
             if let feature {
                 Image(systemName: feature.icon)
@@ -74,105 +65,135 @@ struct PaywallSheet: View {
                 Image(systemName: "crown.fill")
                     .font(.system(size: 32))
                     .foregroundStyle(.orange)
-                Text("Obius Pro")
+                Text("Choose your plan")
                     .font(.title3.weight(.semibold))
             }
-            Text("Unlock the full power of Obius")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
         }
     }
 
-    // MARK: - Plan Picker
+    // MARK: - Plan Cards
 
-    private var planPicker: some View {
+    private var planCards: some View {
         VStack(spacing: 10) {
-            // Monthly / Yearly / Lifetime toggle
-            HStack(spacing: 8) {
-                planTab(.monthly, "Monthly")
-                planTab(.yearly, "Yearly")
-                if storeManager.lifetimePackage != nil {
-                    planTab(.lifetime, "Lifetime")
-                }
+            // Monthly
+            if let monthly = storeManager.monthlyPackage {
+                planCard(
+                    plan: .monthly,
+                    title: "Monthly",
+                    price: monthly.storeProduct.localizedPriceString,
+                    detail: "per month",
+                    badge: nil,
+                    subtitle: "Full access, cancel anytime"
+                )
             }
 
-            // Selected plan card
-            if let package = selectedPackage {
-                planCard(package)
+            // Annual
+            if let annual = storeManager.yearlyPackage {
+                let monthlyEquiv = formattedMonthlyPrice(from: annual)
+                planCard(
+                    plan: .annual,
+                    title: "Annual",
+                    price: annual.storeProduct.localizedPriceString,
+                    detail: "\(monthlyEquiv)/mo · billed yearly",
+                    badge: "SAVE 33%",
+                    subtitle: "Best value for most people"
+                )
+            }
+
+            // Founders
+            if let founders = storeManager.lifetimePackage {
+                let spotsLeft = tierManager.foundersSpotsRemaining
+                planCard(
+                    plan: .founders,
+                    title: "Founders Plan",
+                    price: founders.storeProduct.localizedPriceString,
+                    detail: "per month · locked forever",
+                    badge: spotsLeft > 0 ? "\(spotsLeft) SPOTS LEFT" : "SOLD OUT",
+                    subtitle: "14-day free trial · Early access · Founders badge",
+                    isFounders: true,
+                    isSoldOut: spotsLeft <= 0
+                )
             }
         }
     }
 
-    private func planTab(_ plan: PlanChoice, _ label: String) -> some View {
+    private func planCard(
+        plan: PlanChoice,
+        title: String,
+        price: String,
+        detail: String,
+        badge: String?,
+        subtitle: String,
+        isFounders: Bool = false,
+        isSoldOut: Bool = false
+    ) -> some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.2)) { selectedPlan = plan }
-        } label: {
-            VStack(spacing: 2) {
-                Text(label)
-                    .font(.subheadline.weight(selectedPlan == plan ? .semibold : .regular))
-                    .foregroundStyle(selectedPlan == plan ? .primary : .secondary)
-
-                if plan == .yearly {
-                    Text("SAVE ~38%")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.orange)
-                } else if plan == .lifetime {
-                    Text("BEST VALUE")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.orange)
-                } else {
-                    Text(" ")
-                        .font(.system(size: 8))
-                }
+            if !isSoldOut {
+                withAnimation(.easeInOut(duration: 0.2)) { selectedPlan = plan }
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
+        } label: {
+            HStack(spacing: 14) {
+                // Radio indicator
+                ZStack {
+                    Circle()
+                        .stroke(selectedPlan == plan ? Color.orange : Color(.separator), lineWidth: 2)
+                        .frame(width: 22, height: 22)
+                    if selectedPlan == plan {
+                        Circle()
+                            .fill(Color.orange)
+                            .frame(width: 12, height: 12)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(isSoldOut ? .secondary : .primary)
+
+                        if let badge {
+                            Text(badge)
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    Capsule().fill(
+                                        isFounders ? (isSoldOut ? Color.gray : Color.purple) : Color.orange
+                                    )
+                                )
+                        }
+                    }
+
+                    HStack(spacing: 4) {
+                        Text(price)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(isSoldOut ? .secondary : .primary)
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(isFounders && !isSoldOut ? .purple : .secondary)
+                }
+
+                Spacer()
+            }
+            .padding(14)
             .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(selectedPlan == plan ? Color.orange.opacity(0.12) : Color.clear)
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(selectedPlan == plan ? Color.orange.opacity(0.06) : Color(.secondarySystemBackground))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(selectedPlan == plan ? Color.orange.opacity(0.4) : Color(.separator).opacity(0.3), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(selectedPlan == plan ? Color.orange.opacity(0.4) : Color.clear, lineWidth: 1.5)
             )
         }
         .buttonStyle(.plain)
-    }
-
-    private func planCard(_ package: Package) -> some View {
-        VStack(spacing: 4) {
-            Text(package.storeProduct.localizedPriceString)
-                .font(.title2.weight(.bold))
-
-            Text(priceSubtext(for: selectedPlan, package: package))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if package.storeProduct.introductoryDiscount != nil {
-                Text("7-day free trial")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.orange)
-                    .padding(.top, 2)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 14)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-    }
-
-    private func priceSubtext(for plan: PlanChoice, package: Package) -> String {
-        switch plan {
-        case .monthly: return "per month"
-        case .yearly:
-            let monthlyEquiv = package.storeProduct.price / 12
-            let formatter = NumberFormatter()
-            formatter.numberStyle = .currency
-            formatter.locale = package.storeProduct.priceFormatter?.locale ?? .current
-            let perMonth = formatter.string(from: monthlyEquiv as NSDecimalNumber) ?? ""
-            return "\(perMonth)/mo billed yearly"
-        case .lifetime: return "one-time purchase, forever"
-        }
+        .disabled(isSoldOut)
+        .opacity(isSoldOut ? 0.6 : 1)
     }
 
     // MARK: - Feature Comparison
@@ -181,15 +202,14 @@ struct PaywallSheet: View {
         VStack(spacing: 0) {
             comparisonHeader
             Divider()
-            comparisonRow("Notes", free: "25", pro: "Unlimited")
-            comparisonRow("Projects", free: "2", pro: "Unlimited")
-            comparisonRow("Loops", free: "3", pro: "Unlimited")
-            comparisonRow("AI actions / day", free: "10", pro: "100")
-            comparisonRow("Cloud Sync", free: nil, pro: "checkmark")
-            comparisonRow("Version History", free: nil, pro: "checkmark")
-            comparisonRow("AI Workspace", free: nil, pro: "checkmark")
-            comparisonRow("Share Links", free: nil, pro: "checkmark")
-            comparisonRow("Semantic Search", free: nil, pro: "checkmark")
+            comparisonRow("Notes", free: "50", paid: "Unlimited")
+            comparisonRow("Search & capture", free: "checkmark", paid: "checkmark")
+            comparisonRow("Multi-device sync", free: nil, paid: "checkmark")
+            comparisonRow("AI resurfacing", free: nil, paid: "checkmark")
+            comparisonRow("AI actions / day", free: "10", paid: "100")
+            comparisonRow("Version history", free: nil, paid: "checkmark")
+            comparisonRow("Share links", free: nil, paid: "checkmark")
+            comparisonRow("AI workspace", free: nil, paid: "checkmark")
         }
         .background(Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 14))
@@ -203,7 +223,7 @@ struct PaywallSheet: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 60)
-            Text("Pro")
+            Text("Paid")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.orange)
                 .frame(width: 60)
@@ -212,46 +232,41 @@ struct PaywallSheet: View {
         .padding(.vertical, 8)
     }
 
-    private func comparisonRow(_ label: String, free: String?, pro: String) -> some View {
+    private func comparisonRow(_ label: String, free: String?, paid: String) -> some View {
         VStack(spacing: 0) {
             HStack {
                 Text(label)
                     .font(.caption)
-                    .foregroundStyle(.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Free column
-                Group {
-                    if let free {
-                        Text(free)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.secondary.opacity(0.5))
-                    }
-                }
-                .frame(width: 60)
-
-                // Pro column
-                Group {
-                    if pro == "checkmark" {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.orange)
-                    } else {
-                        Text(pro)
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.orange)
-                    }
-                }
-                .frame(width: 60)
+                cellView(free)
+                    .frame(width: 60)
+                cellView(paid, accent: true)
+                    .frame(width: 60)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
 
             Divider().padding(.leading, 14)
+        }
+    }
+
+    @ViewBuilder
+    private func cellView(_ value: String?, accent: Bool = false) -> some View {
+        if let value {
+            if value == "checkmark" {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(accent ? .orange : .primary)
+            } else {
+                Text(value)
+                    .font(.caption.weight(accent ? .medium : .regular))
+                    .foregroundStyle(accent ? .orange : .secondary)
+            }
+        } else {
+            Image(systemName: "xmark")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary.opacity(0.4))
         }
     }
 
@@ -284,10 +299,13 @@ struct PaywallSheet: View {
 
     private var purchaseButtonLabel: String {
         guard let package = selectedPackage else { return "Subscribe" }
+        if selectedPlan == .founders {
+            return "Start 14-Day Free Trial"
+        }
         if package.storeProduct.introductoryDiscount != nil {
             return "Start Free Trial"
         }
-        return selectedPlan == .lifetime ? "Buy Lifetime" : "Subscribe"
+        return "Subscribe"
     }
 
     // MARK: - Footer
@@ -324,8 +342,8 @@ struct PaywallSheet: View {
     private var selectedPackage: Package? {
         switch selectedPlan {
         case .monthly: return storeManager.monthlyPackage
-        case .yearly: return storeManager.yearlyPackage
-        case .lifetime: return storeManager.lifetimePackage
+        case .annual: return storeManager.yearlyPackage
+        case .founders: return storeManager.lifetimePackage
         }
     }
 
@@ -342,12 +360,20 @@ struct PaywallSheet: View {
             isPurchasing = false
         }
     }
+
+    private func formattedMonthlyPrice(from package: Package) -> String {
+        let monthly = package.storeProduct.price / 12
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.locale = package.storeProduct.priceFormatter?.locale ?? .current
+        return formatter.string(from: monthly as NSDecimalNumber) ?? ""
+    }
 }
 
 // MARK: - Plan Choice
 
 enum PlanChoice {
-    case monthly, yearly, lifetime
+    case monthly, annual, founders
 }
 
 // MARK: - Soft Message Extension
@@ -356,9 +382,6 @@ extension GatedFeature {
     var softMessage: String {
         switch self {
         case .notes: return "Unlock unlimited notes"
-        case .modules: return "Unlock unlimited projects"
-        case .handles: return "Unlock unlimited loops"
-        case .echoes: return "Unlock unlimited echoes"
         case .aiActions: return "Get more AI actions"
         case .aiWorkspace: return "Unlock the AI workspace"
         case .cloudSync: return "Sync across all your devices"

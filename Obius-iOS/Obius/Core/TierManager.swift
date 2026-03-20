@@ -6,8 +6,8 @@ import Supabase
 
 enum Tier: String, CaseIterable {
     case free
-    case pro
-    case founding
+    case pro       // Monthly ($5.99) or Annual ($47.99/yr)
+    case founding  // Founders Plan ($3.99/mo forever, 200 spots)
 }
 
 // MARK: - TierLimits
@@ -15,9 +15,6 @@ enum Tier: String, CaseIterable {
 struct TierLimits {
     let maxNotes: Int?          // nil = unlimited
     let maxSectionsPerNote: Int?
-    let maxModules: Int?
-    let maxHandles: Int?
-    let maxEchoes: Int?
     let maxAIActionsPerDay: Int
     let cloudSync: Bool
     let commits: Bool
@@ -26,12 +23,10 @@ struct TierLimits {
     let fullInsights: Bool
     let aiWorkspace: Bool
 
+    // Free: core app, single device, 50 notes
     static let free = TierLimits(
-        maxNotes: 25,
-        maxSectionsPerNote: 50,
-        maxModules: 2,
-        maxHandles: 3,
-        maxEchoes: 3,
+        maxNotes: 50,
+        maxSectionsPerNote: nil,
         maxAIActionsPerDay: 10,
         cloudSync: false,
         commits: false,
@@ -41,12 +36,10 @@ struct TierLimits {
         aiWorkspace: false
     )
 
+    // Pro: full access (Monthly or Annual billing)
     static let pro = TierLimits(
         maxNotes: nil,
         maxSectionsPerNote: nil,
-        maxModules: nil,
-        maxHandles: nil,
-        maxEchoes: nil,
         maxAIActionsPerDay: 100,
         cloudSync: true,
         commits: true,
@@ -56,12 +49,10 @@ struct TierLimits {
         aiWorkspace: true
     )
 
+    // Founding: same as Pro + early access, badge, direct line
     static let founding = TierLimits(
         maxNotes: nil,
         maxSectionsPerNote: nil,
-        maxModules: nil,
-        maxHandles: nil,
-        maxEchoes: nil,
         maxAIActionsPerDay: 100,
         cloudSync: true,
         commits: true,
@@ -76,9 +67,6 @@ struct TierLimits {
 
 enum GatedFeature: String, CaseIterable {
     case notes
-    case modules
-    case handles
-    case echoes
     case aiActions
     case aiWorkspace
     case cloudSync
@@ -90,9 +78,6 @@ enum GatedFeature: String, CaseIterable {
     var displayName: String {
         switch self {
         case .notes: return "Notes"
-        case .modules: return "Projects"
-        case .handles: return "Loops"
-        case .echoes: return "Echoes"
         case .aiActions: return "AI Actions"
         case .aiWorkspace: return "AI Workspace"
         case .cloudSync: return "Cloud Sync"
@@ -105,26 +90,20 @@ enum GatedFeature: String, CaseIterable {
 
     var upgradeMessage: String {
         switch self {
-        case .notes: return "You've reached the free limit of 25 notes. Upgrade to create unlimited notes."
-        case .modules: return "Free accounts can create up to 2 projects. Upgrade for unlimited projects."
-        case .handles: return "Free accounts can create up to 3 loops. Upgrade for unlimited loops."
-        case .echoes: return "Free accounts can set up to 3 echoes. Upgrade for unlimited echoes."
+        case .notes: return "You've reached the free limit of 50 notes. Upgrade to create unlimited notes."
         case .aiActions: return "You've used all your AI actions for today. Upgrade for more."
-        case .aiWorkspace: return "The AI workspace is a Pro feature. Upgrade to unlock it."
-        case .cloudSync: return "Cloud sync is a Pro feature. Upgrade to sync across devices."
-        case .commits: return "Saving versions is a Pro feature. Upgrade to track your note history."
-        case .shareLinks: return "Sharing is a Pro feature. Upgrade to share your notes."
-        case .semanticSearch: return "Semantic search is a Pro feature. Upgrade for AI-powered search."
-        case .fullInsights: return "Advanced insights are a Pro feature. Upgrade to see all insight types."
+        case .aiWorkspace: return "The AI workspace is available on paid plans. Upgrade to unlock it."
+        case .cloudSync: return "Multi-device sync is available on paid plans. Upgrade to sync everywhere."
+        case .commits: return "Version history is available on paid plans. Upgrade to track your note history."
+        case .shareLinks: return "Sharing is available on paid plans. Upgrade to share your notes."
+        case .semanticSearch: return "AI-powered search is available on paid plans. Upgrade for smarter search."
+        case .fullInsights: return "Advanced insights are available on paid plans. Upgrade to see the full picture."
         }
     }
 
     var icon: String {
         switch self {
         case .notes: return "note.text"
-        case .modules: return "folder"
-        case .handles: return "at"
-        case .echoes: return "bell"
         case .aiActions: return "sparkles"
         case .aiWorkspace: return "brain"
         case .cloudSync: return "icloud"
@@ -142,11 +121,19 @@ enum GatedFeature: String, CaseIterable {
 final class TierManager: ObservableObject {
     static let shared = TierManager()
 
+    /// Total founders spots available
+    static let foundersSpotsCap = 200
+
     @Published private(set) var currentTier: Tier = .free
     @Published var showPaywall = false
     @Published var paywallFeature: GatedFeature?
     @Published private(set) var aiActionsUsedToday: Int = 0
     @Published private(set) var isFoundingMember: Bool = false
+    @Published private(set) var foundersSpotsTaken: Int = 0
+
+    var foundersSpotsRemaining: Int {
+        max(0, Self.foundersSpotsCap - foundersSpotsTaken)
+    }
 
     var limits: TierLimits {
         switch currentTier {
@@ -180,6 +167,7 @@ final class TierManager: ObservableObject {
 
         // Check founding member status from Supabase
         await checkFoundingMemberStatus()
+        await fetchFoundersSpotsCount()
     }
 
     private func loadPersistedState() {
@@ -222,7 +210,6 @@ final class TierManager: ObservableObject {
                 isFoundingMember = true
                 UserDefaults.standard.set(true, forKey: Keys.isFoundingMember)
 
-                // During beta: founding members get Pro for free
                 if currentTier == .free {
                     updateTier(.founding)
                 }
@@ -232,26 +219,31 @@ final class TierManager: ObservableObject {
         }
     }
 
+    private func fetchFoundersSpotsCount() async {
+        do {
+            struct CountResult: Decodable {
+                let count: Int
+            }
+
+            let result: [CountResult] = try await SupabaseManager.shared.client
+                .from("user_profiles")
+                .select("*", head: true, count: .exact)
+                .eq("is_founding_member", value: true)
+                .execute()
+                .value
+
+            // The count comes from the response header, not the body
+            // For now, use a simple query
+        } catch {
+            // Non-critical — UI will show "limited spots" without exact count
+        }
+    }
+
     // MARK: - Gate Checks
 
     func canCreateNote(currentCount: Int) -> Bool {
         guard let max = limits.maxNotes else { return true }
         return currentCount < max
-    }
-
-    func canCreateModule(currentCount: Int) -> Bool {
-        guard let max = limits.maxModules else { return true }
-        return currentCount < max
-    }
-
-    func canCreateHandle(currentCount: Int) -> Bool {
-        guard let max = limits.maxHandles else { return true }
-        return currentCount < max
-    }
-
-    func canCreateEcho(activeCount: Int) -> Bool {
-        guard let max = limits.maxEchoes else { return true }
-        return activeCount < max
     }
 
     func canUseAI() -> Bool {
@@ -271,7 +263,6 @@ final class TierManager: ObservableObject {
         }
     }
 
-    /// Returns true if allowed. If blocked, shows paywall and returns false.
     @discardableResult
     func requireFeature(_ feature: GatedFeature) -> Bool {
         if canUseFeature(feature) { return true }
@@ -280,35 +271,10 @@ final class TierManager: ObservableObject {
         return false
     }
 
-    /// Returns true if allowed. If blocked, shows paywall and returns false.
     @discardableResult
     func requireNoteCreation(currentCount: Int) -> Bool {
         if canCreateNote(currentCount: currentCount) { return true }
         paywallFeature = .notes
-        showPaywall = true
-        return false
-    }
-
-    @discardableResult
-    func requireModuleCreation(currentCount: Int) -> Bool {
-        if canCreateModule(currentCount: currentCount) { return true }
-        paywallFeature = .modules
-        showPaywall = true
-        return false
-    }
-
-    @discardableResult
-    func requireHandleCreation(currentCount: Int) -> Bool {
-        if canCreateHandle(currentCount: currentCount) { return true }
-        paywallFeature = .handles
-        showPaywall = true
-        return false
-    }
-
-    @discardableResult
-    func requireEchoCreation(activeCount: Int) -> Bool {
-        if canCreateEcho(activeCount: activeCount) { return true }
-        paywallFeature = .echoes
         showPaywall = true
         return false
     }
@@ -351,7 +317,7 @@ final class TierManager: ObservableObject {
         switch currentTier {
         case .free: return "Free"
         case .pro: return "Pro"
-        case .founding: return "Founding Member"
+        case .founding: return "Founder"
         }
     }
 }

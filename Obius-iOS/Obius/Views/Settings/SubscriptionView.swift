@@ -21,29 +21,36 @@ struct SubscriptionView: View {
                 Text("Current Plan")
             }
 
+            // Founders badge (if applicable)
+            if tierManager.isFoundingMember {
+                SwiftUI.Section {
+                    HStack(spacing: 12) {
+                        Image(systemName: "star.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.purple)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Founders Badge")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Early access · Direct line to the team · Rate locked forever")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+
             // Usage
             SwiftUI.Section {
                 usageRow("AI Actions Today",
                          icon: "sparkles",
-                         used: tierManager.aiActionsUsedToday,
-                         limit: tierManager.limits.maxAIActionsPerDay)
+                         value: "\(tierManager.aiActionsUsedToday) / \(tierManager.limits.maxAIActionsPerDay)")
 
                 if let maxNotes = tierManager.limits.maxNotes {
-                    featureRow("Notes", icon: "note.text", detail: "of \(maxNotes)")
+                    usageRow("Notes", icon: "note.text", value: "\(maxNotes) limit")
                 } else {
-                    featureRow("Notes", icon: "note.text", detail: "Unlimited")
-                }
-
-                if let maxLoops = tierManager.limits.maxHandles {
-                    featureRow("Loops", icon: "at", detail: "of \(maxLoops)")
-                } else {
-                    featureRow("Loops", icon: "at", detail: "Unlimited")
-                }
-
-                if let maxEchoes = tierManager.limits.maxEchoes {
-                    featureRow("Echoes", icon: "bell", detail: "of \(maxEchoes)")
-                } else {
-                    featureRow("Echoes", icon: "bell", detail: "Unlimited")
+                    usageRow("Notes", icon: "note.text", value: "Unlimited")
                 }
             } header: {
                 Text("Usage")
@@ -51,12 +58,11 @@ struct SubscriptionView: View {
 
             // Features
             SwiftUI.Section {
-                featureToggle("Cloud Sync", icon: "icloud", enabled: tierManager.limits.cloudSync)
+                featureToggle("Multi-device Sync", icon: "icloud", enabled: tierManager.limits.cloudSync)
+                featureToggle("AI Resurfacing", icon: "brain", enabled: tierManager.limits.aiWorkspace)
                 featureToggle("Version History", icon: "arrow.down.doc", enabled: tierManager.limits.commits)
                 featureToggle("Share Links", icon: "square.and.arrow.up", enabled: tierManager.limits.shareLinks)
-                featureToggle("AI Workspace", icon: "brain", enabled: tierManager.limits.aiWorkspace)
                 featureToggle("Semantic Search", icon: "magnifyingglass", enabled: tierManager.limits.semanticSearch)
-                featureToggle("Full Insights", icon: "lightbulb", enabled: tierManager.limits.fullInsights)
             } header: {
                 Text("Features")
             }
@@ -113,51 +119,55 @@ struct SubscriptionView: View {
         HStack(spacing: 14) {
             ZStack {
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(isFree ? Color.gray.opacity(0.15) : Color.orange.opacity(0.15))
+                    .fill(planColor.opacity(0.15))
                     .frame(width: 44, height: 44)
-                Image(systemName: isFree ? "person" : "crown.fill")
+                Image(systemName: planIcon)
                     .font(.title3)
-                    .foregroundStyle(isFree ? Color.secondary : Color.orange)
+                    .foregroundStyle(planColor)
             }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(tierManager.tierDisplayName)
                     .font(.headline)
-                if isFree {
-                    Text("Upgrade to unlock all features")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if tierManager.isFoundingMember {
-                    Text("Thank you for being an early supporter")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                } else {
-                    Text("All features unlocked")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text(planSubtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 4)
     }
 
-    // MARK: - Rows
-
-    private func usageRow(_ title: String, icon: String, used: Int, limit: Int) -> some View {
-        HStack {
-            Label(title, systemImage: icon)
-            Spacer()
-            Text("\(used) / \(limit)")
-                .font(.subheadline.monospacedDigit())
-                .foregroundStyle(.secondary)
+    private var planIcon: String {
+        switch tierManager.currentTier {
+        case .free: return "person"
+        case .pro: return "crown.fill"
+        case .founding: return "star.fill"
         }
     }
 
-    private func featureRow(_ title: String, icon: String, detail: String) -> some View {
+    private var planColor: Color {
+        switch tierManager.currentTier {
+        case .free: return .secondary
+        case .pro: return .orange
+        case .founding: return .purple
+        }
+    }
+
+    private var planSubtitle: String {
+        switch tierManager.currentTier {
+        case .free: return "Core app · Single device · 50 notes"
+        case .pro: return "Unlimited · Multi-device · Full AI"
+        case .founding: return "All Pro features · Locked rate · Early access"
+        }
+    }
+
+    // MARK: - Rows
+
+    private func usageRow(_ title: String, icon: String, value: String) -> some View {
         HStack {
             Label(title, systemImage: icon)
             Spacer()
-            Text(detail)
+            Text(value)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }

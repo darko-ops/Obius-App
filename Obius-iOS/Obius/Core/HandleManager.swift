@@ -138,9 +138,6 @@ final class HandleManager: ObservableObject {
         guard let repository = handleRepository else {
             throw HandleError.notFound("HandleManager not initialized")
         }
-        guard TierManager.shared.requireHandleCreation(currentCount: handles.count) else {
-            throw HandleError.notFound("Upgrade required to create more loops")
-        }
         return try await repository.createHandle(name: name, content: content, intent: intent)
     }
 

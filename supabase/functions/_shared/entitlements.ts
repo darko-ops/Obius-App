@@ -23,38 +23,26 @@ const AI_ACTION_LIMITS: Record<SubscriptionTier, number> = {
 interface TierLimits {
   maxNotes: number | null;
   maxSectionsPerNote: number | null;
-  maxModules: number | null;
-  maxHandles: number | null;
-  maxEchoes: number | null;
   cloudSync: boolean;
   shareLinks: boolean;
 }
 
 const TIER_LIMITS: Record<SubscriptionTier, TierLimits> = {
   free: {
-    maxNotes: 25,
-    maxSectionsPerNote: 50,
-    maxModules: 2,
-    maxHandles: 3,
-    maxEchoes: 3,
+    maxNotes: 50,
+    maxSectionsPerNote: null,
     cloudSync: false,
     shareLinks: false,
   },
   pro: {
     maxNotes: null,
     maxSectionsPerNote: null,
-    maxModules: null,
-    maxHandles: null,
-    maxEchoes: null,
     cloudSync: true,
     shareLinks: true,
   },
   founding: {
     maxNotes: null,
     maxSectionsPerNote: null,
-    maxModules: null,
-    maxHandles: null,
-    maxEchoes: null,
     cloudSync: true,
     shareLinks: true,
   },

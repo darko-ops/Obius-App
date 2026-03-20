@@ -1,5 +1,5 @@
 -- Tier-aware RLS: enforce entity creation limits at the database level.
--- Free-tier users are capped at 25 notes. Pro/founding are unlimited.
+-- Free-tier users are capped at 50 notes. Pro/founding are unlimited.
 -- This is a defense-in-depth layer — Edge Functions also check limits.
 
 -- Helper function: returns the subscription tier for the current user
@@ -36,7 +36,7 @@ CREATE POLICY "Users can create own notes"
     auth.uid() = user_id
     AND (
       public.get_user_tier() IN ('pro', 'founding')
-      OR public.user_note_count() < 25
+      OR public.user_note_count() < 50
     )
   );
 
