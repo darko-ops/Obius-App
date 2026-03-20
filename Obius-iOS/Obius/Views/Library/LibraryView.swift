@@ -338,15 +338,15 @@ struct LoopRowView: View {
 
                     if hasEcho {
                         HStack(spacing: 2) {
-                            Image(systemName: "bell.fill")
+                            Image(systemName: "dot.radiowaves.left.and.right")
                                 .font(.system(size: 7))
                             Text("echo")
                                 .font(.system(size: 8, weight: .medium))
                         }
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.yellow)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.orange.opacity(0.12)))
+                        .background(Capsule().fill(Color.yellow.opacity(0.12)))
                     }
 
                     Spacer()
