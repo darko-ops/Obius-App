@@ -111,6 +111,19 @@ struct SubscriptionView: View {
         .sheet(isPresented: $showingPaywall) {
             PaywallSheet()
         }
+        .task {
+            await storeManager.refreshCustomerInfo()
+        }
+        .onChange(of: showingPaywall) { isShowing in
+            if !isShowing {
+                Task { await storeManager.refreshCustomerInfo() }
+            }
+        }
+        .onChange(of: showingCustomerCenter) { isShowing in
+            if !isShowing {
+                Task { await storeManager.refreshCustomerInfo() }
+            }
+        }
     }
 
     // MARK: - Plan Row
