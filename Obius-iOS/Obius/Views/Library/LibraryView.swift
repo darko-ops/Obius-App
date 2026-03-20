@@ -318,6 +318,10 @@ struct LoopRowView: View {
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 
+    private var hasEcho: Bool {
+        EchoManager.shared.activeEchoes.contains { $0.handleId == handle.id && $0.isActive }
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             // Spine: 4px wide, intent-colored
@@ -326,11 +330,24 @@ struct LoopRowView: View {
                 .frame(width: 4)
 
             VStack(alignment: .leading, spacing: 3) {
-                // Row 1: Name + time
+                // Row 1: Name + echo tag + time
                 HStack(spacing: 6) {
                     Text(handle.formattedName)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
+
+                    if hasEcho {
+                        HStack(spacing: 2) {
+                            Image(systemName: "bell.fill")
+                                .font(.system(size: 7))
+                            Text("echo")
+                                .font(.system(size: 8, weight: .medium))
+                        }
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.orange.opacity(0.12)))
+                    }
 
                     Spacer()
 
