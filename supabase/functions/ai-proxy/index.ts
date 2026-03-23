@@ -11,6 +11,7 @@ import {
 } from '../_shared/supabase-client.ts';
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { sendMessage, sendRaw, logUsage } from '../_shared/anthropic-client.ts';
+import { routedSendMessage, resolveProvider } from '../_shared/ai-router.ts';
 
 const AI_MODEL = 'claude-haiku-4-5-20251001';
 
@@ -261,9 +262,10 @@ async function handleGenerateTitle(body: ActionRequest, userId: string, supabase
     return errorResponse('INVALID_REQUEST', 'content is required');
   }
 
-  const response = await sendMessage(
-    [{ role: 'user', content: `Generate a short title for this note:\n\n${content}` }],
-    { maxTokens: 30, system: GENERATE_TITLE_SYSTEM, model: AI_MODEL }
+  const response = await routedSendMessage(
+    'generate_title',
+    `Generate a short title for this note:\n\n${content}`,
+    { maxTokens: 30, system: GENERATE_TITLE_SYSTEM, claudeModel: AI_MODEL }
   );
 
   logUsage({ supabase, userId, action: 'title_gen', inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, model: response.model }).catch(() => {});
@@ -277,9 +279,10 @@ async function handleGenerateTags(body: ActionRequest, userId: string, supabase:
     return errorResponse('INVALID_REQUEST', 'content is required');
   }
 
-  const response = await sendMessage(
-    [{ role: 'user', content: `Extract keyword tags from this note:\n\n${content}` }],
-    { maxTokens: 50, system: GENERATE_TAGS_SYSTEM, model: AI_MODEL }
+  const response = await routedSendMessage(
+    'generate_tags',
+    `Extract keyword tags from this note:\n\n${content}`,
+    { maxTokens: 50, system: GENERATE_TAGS_SYSTEM, claudeModel: AI_MODEL }
   );
 
   logUsage({ supabase, userId, action: 'tag_gen', inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, model: response.model }).catch(() => {});
@@ -296,9 +299,10 @@ async function handleExtractTemporalEchoes(body: ActionRequest, userId: string, 
   }
 
   const todayISO = new Date().toISOString();
-  const response = await sendMessage(
-    [{ role: 'user', content: `Notes:\n${noteSummaries}\n\nHandles:\n${handles || ''}` }],
-    { maxTokens: 512, system: systemPromptForTemporalEchoes(todayISO), model: AI_MODEL }
+  const response = await routedSendMessage(
+    'extract_temporal_echoes',
+    `Notes:\n${noteSummaries}\n\nHandles:\n${handles || ''}`,
+    { maxTokens: 512, system: systemPromptForTemporalEchoes(todayISO), claudeModel: AI_MODEL }
   );
 
   logUsage({ supabase, userId, action: 'temporal_echo', inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, model: response.model }).catch(() => {});
@@ -312,9 +316,10 @@ async function handleExtractEntities(body: ActionRequest, userId: string, supaba
     return errorResponse('INVALID_REQUEST', 'sectionsText is required');
   }
 
-  const response = await sendMessage(
-    [{ role: 'user', content: sectionsText }],
-    { maxTokens: 256, system: EXTRACT_ENTITIES_SYSTEM, model: AI_MODEL }
+  const response = await routedSendMessage(
+    'extract_entities',
+    sectionsText,
+    { maxTokens: 256, system: EXTRACT_ENTITIES_SYSTEM, claudeModel: AI_MODEL }
   );
 
   logUsage({ supabase, userId, action: 'entity_extract', inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, model: response.model }).catch(() => {});

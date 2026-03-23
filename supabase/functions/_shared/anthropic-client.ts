@@ -1,6 +1,7 @@
 // Anthropic Claude Client for Edge Functions
 
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
+import { routedSendMessage } from './ai-router.ts';
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')!;
 const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
@@ -136,16 +137,15 @@ export async function sendRaw(
 }
 
 /**
- * Generate a note title and summary from content
+ * Generate a note title and summary from content.
+ * Routes to cheapest capable provider via ai-router (Gemini Flash when available).
  */
 export async function generateNoteSummary(
   content: string
 ): Promise<{ title: string; summary: string }> {
-  const response = await sendMessage(
-    [
-      {
-        role: 'user',
-        content: `Based on this note content, generate:
+  const response = await routedSendMessage(
+    'generate_summary',
+    `Based on this note content, generate:
 1. A concise title (max 50 characters, no quotes)
 2. A brief summary (max 200 characters)
 
@@ -154,8 +154,6 @@ ${content.slice(0, 10000)}
 
 Respond ONLY with valid JSON in this exact format:
 {"title": "Your title here", "summary": "Your summary here"}`,
-      },
-    ],
     {
       maxTokens: 200,
       temperature: 0.3,
@@ -180,17 +178,16 @@ Respond ONLY with valid JSON in this exact format:
 }
 
 /**
- * Refine/improve a user-provided title
+ * Refine/improve a user-provided title.
+ * Routes to cheapest capable provider via ai-router (Gemini Flash when available).
  */
 export async function refineTitle(
   currentTitle: string,
   content: string
 ): Promise<string> {
-  const response = await sendMessage(
-    [
-      {
-        role: 'user',
-        content: `Current title: "${currentTitle}"
+  const response = await routedSendMessage(
+    'refine_title',
+    `Current title: "${currentTitle}"
 
 Note content:
 ${content.slice(0, 5000)}
@@ -198,8 +195,6 @@ ${content.slice(0, 5000)}
 Suggest a slightly improved or refined version of this title. Keep it concise (max 50 chars) and preserve the user's intent. If the current title is already good, return it unchanged.
 
 Respond with ONLY the title, no quotes or explanation.`,
-      },
-    ],
     {
       maxTokens: 60,
       temperature: 0.3,
@@ -208,6 +203,15 @@ Respond with ONLY the title, no quotes or explanation.`,
   );
 
   return response.content.trim().slice(0, 50) || currentTitle;
+}
+
+/**
+ * Derive the provider name from a model string.
+ */
+function deriveProvider(model: string): string {
+  if (model.startsWith('gemini')) return 'gemini';
+  if (model.startsWith('text-embedding')) return 'openai';
+  return 'claude';
 }
 
 /**
@@ -220,6 +224,7 @@ export async function logUsage(params: {
   inputTokens: number;
   outputTokens: number;
   model: string;
+  provider?: string;
 }): Promise<void> {
   try {
     const { error } = await params.supabase.from('usage_log').insert({
@@ -228,6 +233,7 @@ export async function logUsage(params: {
       input_tokens: params.inputTokens,
       output_tokens: params.outputTokens,
       model: params.model,
+      provider: params.provider || deriveProvider(params.model),
     });
     if (error) {
       console.error('logUsage insert error:', error.message);
