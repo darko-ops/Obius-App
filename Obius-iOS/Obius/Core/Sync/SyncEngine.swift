@@ -126,6 +126,9 @@ actor SyncEngine {
 
                 for note in unsyncedNotes {
                     let noteId = note["id"] as? String ?? ""
+                    let noteTitle = note["title"] as? String ?? "(untitled)"
+                    let noteBody = note["body"] as? String ?? ""
+                    print("[Sync] Enqueuing unsynced note: \(noteId.prefix(8)) title='\(noteTitle)' body=\(noteBody.count) chars")
                     let timestamp = note["updatedAt"] as? Int64 ?? Int64(Date().timeIntervalSince1970 * 1000)
 
                     let isPinned: Bool = {
