@@ -1,7 +1,8 @@
 import SwiftUI
-import PhotosUI
 
 #if os(iOS)
+import PhotosUI
+
 /// A UIViewControllerRepresentable wrapping PHPickerViewController for multi-image selection.
 /// Supports pre-selecting assets that are already in the node.
 struct ImagePickerView: UIViewControllerRepresentable {
@@ -65,6 +66,51 @@ struct ImagePickerView: UIViewControllerRepresentable {
                 self?.parent.onImagesPicked(loadedResults.compactMap { $0 })
                 self?.parent.dismiss()
             }
+        }
+    }
+}
+
+#elseif os(macOS)
+import AppKit
+import UniformTypeIdentifiers
+
+/// macOS image picker using NSOpenPanel for multi-image selection.
+/// Not used as a SwiftUI view — call `MacImagePicker.pick()` directly instead.
+struct ImagePickerView: View {
+    let preselectedAssetIdentifiers: [String]  // Not used on macOS
+    let onImagesPicked: ([(NSImage, String?)]) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear {
+                let images = MacImagePicker.pick()
+                if !images.isEmpty {
+                    onImagesPicked(images)
+                }
+                dismiss()
+            }
+    }
+}
+
+/// Standalone macOS image picker that runs an NSOpenPanel synchronously.
+enum MacImagePicker {
+    @MainActor
+    static func pick() -> [(NSImage, String?)] {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.image, .png, .jpeg, .gif, .heic, .heif, .tiff, .bmp]
+        panel.message = "Select images to add"
+        panel.prompt = "Add"
+
+        guard panel.runModal() == .OK else { return [] }
+
+        return panel.urls.compactMap { url in
+            guard let image = NSImage(contentsOf: url) else { return nil }
+            return (image, url.lastPathComponent)
         }
     }
 }

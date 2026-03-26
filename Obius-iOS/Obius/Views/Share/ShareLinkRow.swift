@@ -43,7 +43,7 @@ struct ShareLinkRow: View {
             // Actions
             Menu {
                 Button {
-                    UIPasteboard.general.string = shareLink.url
+                    ClipboardHelper.copy(shareLink.url)
                 } label: {
                     Label("Copy Link", systemImage: "doc.on.doc")
                 }

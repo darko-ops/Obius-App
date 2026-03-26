@@ -38,12 +38,7 @@ struct HandleBadge: View {
 
             Button {
                 // Copy handle name to clipboard
-                #if os(iOS)
-                UIPasteboard.general.string = handle.formattedName
-                #elseif os(macOS)
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(handle.formattedName, forType: .string)
-                #endif
+                ClipboardHelper.copy(handle.formattedName)
             } label: {
                 Label("Copy Loop Name", systemImage: "doc.on.doc")
             }

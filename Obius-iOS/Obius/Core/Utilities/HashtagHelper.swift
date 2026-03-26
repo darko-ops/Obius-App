@@ -1,8 +1,11 @@
 import Foundation
 #if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
-/// Extracts hashtags from text and applies yellow highlighting to hashtag ranges in UITextViews.
+/// Extracts hashtags from text and applies yellow highlighting to text views.
 enum HashtagHelper {
 
     /// Regex matching `#word` — must not be preceded by a word character (used for highlighting).
@@ -21,6 +24,7 @@ enum HashtagHelper {
         }
     }
 
+    #if os(iOS)
     /// Walk the text view's attributed text, reset foreground color to `.label`,
     /// then apply `.systemYellow` to every hashtag match.  Saves / restores
     /// `selectedRange` so the cursor does not jump.
@@ -52,5 +56,32 @@ enum HashtagHelper {
         textView.attributedText = mutable
         textView.selectedRange = savedRange
     }
+    #elseif os(macOS)
+    /// Walk the text view's attributed text, reset foreground color to `.labelColor`,
+    /// then apply `.systemYellow` to every hashtag match.
+    static func applyHighlighting(to textView: NSTextView) {
+        guard let textStorage = textView.textStorage, textStorage.length > 0 else { return }
+
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+
+        textStorage.beginEditing()
+
+        // Reset any previous hashtag coloring back to label
+        textStorage.enumerateAttribute(.foregroundColor, in: fullRange, options: []) { value, range, _ in
+            if let color = value as? NSColor, color == .systemYellow {
+                textStorage.addAttribute(.foregroundColor, value: NSColor.labelColor, range: range)
+            }
+        }
+
+        // Apply yellow to each hashtag match (including the `#`)
+        let text = textStorage.string
+        let matches = pattern.matches(in: text, range: NSRange(location: 0, length: (text as NSString).length))
+
+        for match in matches {
+            textStorage.addAttribute(.foregroundColor, value: NSColor.systemYellow, range: match.range)
+        }
+
+        textStorage.endEditing()
+    }
+    #endif
 }
-#endif

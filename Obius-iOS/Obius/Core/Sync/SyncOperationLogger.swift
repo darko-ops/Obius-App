@@ -5,6 +5,9 @@ import GRDB
 final class SyncOperationLogger {
     private let database: DatabaseManager
 
+    /// Called after an operation is logged — use to trigger a debounced sync push
+    var onOperationLogged: (() -> Void)?
+
     init(database: DatabaseManager) {
         self.database = database
     }
@@ -12,6 +15,7 @@ final class SyncOperationLogger {
     // MARK: - Note Operations
 
     func logNoteCreate(_ note: Note) {
+        print("[SyncLogger] logNoteCreate called for \(note.id)")
         logOperation(
             entityType: "note",
             entityId: note.id,
@@ -21,7 +25,18 @@ final class SyncOperationLogger {
     }
 
     func logNoteUpdate(_ note: Note) {
+        print("[SyncLogger] logNoteUpdate called for \(note.id)")
         logOperation(
+            entityType: "note",
+            entityId: note.id,
+            operationType: "update",
+            payload: noteToPayload(note)
+        )
+    }
+
+    /// Synchronous version — awaitable, ensures the operation is written before returning
+    func logNoteUpdateSync(_ note: Note) async {
+        await logOperationSync(
             entityType: "note",
             entityId: note.id,
             operationType: "update",
@@ -105,41 +120,80 @@ final class SyncOperationLogger {
         payload: [String: Any]
     ) {
         Task {
-            do {
-                let payloadJson = try JSONSerialization.data(withJSONObject: payload)
-                let payloadString = String(data: payloadJson, encoding: .utf8) ?? "{}"
+            await logOperationSync(entityType: entityType, entityId: entityId, operationType: operationType, payload: payload)
+            onOperationLogged?()
+        }
+    }
 
-                try await database.write { db in
-                    try db.execute(sql: """
-                        INSERT INTO syncOperations (operationId, entityType, entityId, operationType, payload, timestamp, synced)
-                        VALUES (?, ?, ?, ?, ?, ?, 0)
-                    """, arguments: [
-                        UUID().uuidString,
-                        entityType,
-                        entityId,
-                        operationType,
-                        payloadString,
-                        Int64(Date().timeIntervalSince1970 * 1000)
-                    ])
-                }
-            } catch {
-                print("Failed to log sync operation: \(error)")
+    private func logOperationSync(
+        entityType: String,
+        entityId: String,
+        operationType: String,
+        payload: [String: Any]
+    ) async {
+        do {
+            let payloadJson = try JSONSerialization.data(withJSONObject: payload)
+            let payloadString = String(data: payloadJson, encoding: .utf8) ?? "{}"
+
+            try await database.write { db in
+                // Delete any existing unsynced op for this entity to avoid duplicates
+                try db.execute(sql: """
+                    DELETE FROM syncOperations WHERE entityId = ? AND synced = 0
+                """, arguments: [entityId])
+
+                try db.execute(sql: """
+                    INSERT INTO syncOperations (operationId, entityType, entityId, operationType, payload, timestamp, synced)
+                    VALUES (?, ?, ?, ?, ?, ?, 0)
+                """, arguments: [
+                    UUID().uuidString,
+                    entityType,
+                    entityId,
+                    operationType,
+                    payloadString,
+                    Int64(Date().timeIntervalSince1970 * 1000)
+                ])
             }
+            print("[SyncLogger] Wrote \(operationType) op for \(entityType)/\(entityId.prefix(8))")
+        } catch {
+            print("[SyncLogger] FAILED to log \(operationType) for \(entityType)/\(entityId.prefix(8)): \(error)")
         }
     }
 
     private func noteToPayload(_ note: Note) -> [String: Any] {
         var payload: [String: Any] = [
             "title": note.title as Any,
+            "body": note.body,
             "is_pinned": note.isPinned,
             "color_intent": note.intent.legacyValue,  // Use legacy value for server compatibility
             "created_at": formatTimestamp(note.createdAt),
             "updated_at": formatTimestamp(note.updatedAt)
         ]
 
+        if let groupName = note.groupName {
+            payload["group_name"] = groupName
+        }
+
+        if let moduleId = note.moduleId {
+            payload["module_id"] = moduleId
+            // Look up module name/icon for cross-device sync
+            if let moduleInfo = try? database.read({ db in
+                try Row.fetchOne(db, sql: "SELECT name, icon FROM modules WHERE id = ?", arguments: [moduleId])
+            }) {
+                if let name = moduleInfo["name"] as? String { payload["module_name"] = name }
+                if let icon = moduleInfo["icon"] as? String { payload["module_icon"] = icon }
+            }
+        }
+
         if let aiTitle = note.aiTitle {
             payload["ai_title"] = aiTitle
         }
+
+        if let bodyRichText = note.bodyRichText {
+            payload["body_rich_text"] = bodyRichText
+        }
+
+        payload["interstitial_content"] = note.interstitialContent
+        payload["interstitial_rich_content"] = note.interstitialRichContent
 
         if let deletedAt = note.deletedAt {
             payload["deleted_at"] = formatTimestamp(deletedAt)

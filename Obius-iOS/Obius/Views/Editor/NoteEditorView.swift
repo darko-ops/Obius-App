@@ -107,11 +107,8 @@ private struct NoteEditorContent: View {
     var body: some View {
         mainContent
             .navigationTitle("")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbarBackground(Color.black, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .inlineNavigationTitle()
+            .platformToolbarBackground(.black)
             .toolbar { toolbarContent }
             .onChange(of: viewModel.focusedSectionId) { _, newValue in
                 focusedSectionId = newValue
@@ -133,6 +130,22 @@ private struct NoteEditorContent: View {
                 }
             }
             .onDisappear {
+                // Sync all current content when leaving the editor
+                if let note = viewModel.note {
+                    // Use create if the note hasn't been synced yet, update otherwise
+                    if note.syncStatus == .pending || note.serverVersion == nil {
+                        appState.syncLogger.logNoteCreate(note)
+                    } else {
+                        appState.syncLogger.logNoteUpdate(note)
+                    }
+                    for section in viewModel.sections {
+                        if section.serverVersion == nil {
+                            appState.syncLogger.logSectionCreate(section)
+                        } else {
+                            appState.syncLogger.logSectionUpdate(section)
+                        }
+                    }
+                }
                 viewModel.generateAITitleIfNeeded()
                 viewModel.generateAITagsIfNeeded()
                 Task {
@@ -212,12 +225,14 @@ private struct NoteEditorContent: View {
                     NodeShareSheet(url: url, title: shareTitle, preview: sharePreview)
                 }
             }
+            #if os(iOS)
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
                 if pendingShare {
                     pendingShare = false
                     showingNativeShare = true
                 }
             }
+            #endif
             .alert("Unable to Share", isPresented: Binding(
                 get: { shareError != nil },
                 set: { if !$0 { shareError = nil } }
@@ -256,7 +271,6 @@ private struct NoteEditorContent: View {
                     }
                 )
             }
-            #if os(iOS)
             .sheet(isPresented: $showingAudioRecorder) {
                 AudioRecorderView(
                     onSave: { data, duration in
@@ -283,6 +297,7 @@ private struct NoteEditorContent: View {
                     audioRecorderTargetSectionId = nil
                 }
             }
+            #if os(iOS)
             .sheet(isPresented: $showingImagePicker) {
                 ImagePickerView(
                     preselectedAssetIdentifiers: imagePickerPreselectedAssetIds,
@@ -296,7 +311,8 @@ private struct NoteEditorContent: View {
                 )
                 .id(imagePickerID)
             }
-            .fullScreenCover(item: $fullscreenImageItem) { item in
+            #endif
+            .platformFullScreenCover(item: $fullscreenImageItem) { item in
                 let entries = parseImageEntries(from: viewModel.getSection(item.sectionId)?.content ?? "")
                 FullscreenImageViewer(
                     imageEntries: entries,
@@ -308,7 +324,6 @@ private struct NoteEditorContent: View {
                     }
                 )
             }
-            #endif
             .overlay {
                 WorkspaceFAB { showWorkspaceSheet = true }
             }
@@ -591,9 +606,19 @@ private struct NoteEditorContent: View {
             Task {
                 let lastSection = visibleSections.last
                 if let section = try? await viewModel.addImageSection(after: lastSection?.id) {
+                    #if os(iOS)
                     imagePickerTargetSectionId = section.id
                     imagePickerPreselectedAssetIds = []
                     showingImagePicker = true
+                    #else
+                    let results = MacImagePicker.pick()
+                    if !results.isEmpty {
+                        await savePickedImages(results, toSectionId: section.id)
+                    } else {
+                        // User cancelled — delete the empty image section
+                        try? await viewModel.deleteSection(section.id)
+                    }
+                    #endif
                 }
             }
         })
@@ -620,9 +645,11 @@ private struct NoteEditorContent: View {
             primaryToolbarItems
         }
 
+        #if os(iOS)
         ToolbarItemGroup(placement: .keyboard) {
             keyboardToolbarItems
         }
+        #endif
     }
 
     @ViewBuilder
@@ -798,7 +825,7 @@ private struct NoteEditorContent: View {
         }
 
         pendingShare = true
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        KeyboardHelper.dismiss()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             if pendingShare {
                 pendingShare = false
@@ -820,10 +847,10 @@ private struct NoteEditorContent: View {
                 }
                 .filter { !$0.isEmpty }
 
-            var images: [UIImage] = []
+            var images: [PlatformImage] = []
             for hash in hashes {
                 if let data = try? appState.mediaRepository.getMediaData(hash: hash),
-                   let image = UIImage(data: data) {
+                   let image = PlatformImage(data: data) {
                     images.append(image)
                 }
             }
@@ -836,7 +863,7 @@ private struct NoteEditorContent: View {
             shareItems = images
 
             pendingShare = true
-            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            KeyboardHelper.dismiss()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 if pendingShare {
                     pendingShare = false
@@ -870,7 +897,7 @@ private struct NoteEditorContent: View {
             shareItems = [tempURL]
 
             pendingShare = true
-            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            KeyboardHelper.dismiss()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 if pendingShare {
                     pendingShare = false
@@ -916,7 +943,7 @@ private struct NoteEditorContent: View {
 
         // Dismiss keyboard first, then present share sheet
         pendingShare = true
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        KeyboardHelper.dismiss()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             if pendingShare {
                 pendingShare = false
@@ -976,11 +1003,9 @@ private struct NoteEditorContent: View {
         }
     }
 
-    #if os(iOS)
-    /// Compute preselected asset IDs and show the picker.
-    /// PHPicker runs out-of-process and handles its own photo library access,
-    /// so no app-level authorization is needed for preselection.
+    /// Show the image picker (PHPicker on iOS, NSOpenPanel on macOS).
     private func prepareAndShowImagePicker(for sectionId: String) {
+        #if os(iOS)
         if let section = viewModel.getSection(sectionId) {
             let ids = parseImageEntries(from: section.content)
                 .compactMap { $0.assetId.isEmpty ? nil : $0.assetId }
@@ -989,10 +1014,16 @@ private struct NoteEditorContent: View {
         } else {
             imagePickerPreselectedAssetIds = []
         }
-
-        // Force a fresh PHPickerViewController so makeUIViewController runs with new config
         imagePickerID = UUID()
         showingImagePicker = true
+        #else
+        // macOS: run NSOpenPanel synchronously, no sheet needed
+        let results = MacImagePicker.pick()
+        guard !results.isEmpty else { return }
+        Task {
+            await savePickedImages(results, toSectionId: sectionId)
+        }
+        #endif
     }
 
     /// Extract just the image hashes for a section (for fullscreen viewer).
@@ -1019,7 +1050,7 @@ private struct NoteEditorContent: View {
             .filter { !$0.hash.isEmpty }
     }
 
-    private func savePickedImages(_ results: [(UIImage, String?)], toSectionId sectionId: String) async {
+    private func savePickedImages(_ results: [(PlatformImage, String?)], toSectionId sectionId: String) async {
         // Keep all existing entries, then append genuinely new picks
         let existingEntries = parseImageEntries(
             from: viewModel.getSection(sectionId)?.content ?? ""
@@ -1077,7 +1108,7 @@ private struct NoteEditorContent: View {
     }
 
     /// Save after edit sheet — keeps selected existing entries and stores new picks.
-    private func saveEditedImages(keptEntries: [(hash: String, assetId: String)], newPicks: [(UIImage, String?)], sectionId: String) async {
+    private func saveEditedImages(keptEntries: [(hash: String, assetId: String)], newPicks: [(PlatformImage, String?)], sectionId: String) async {
         var allEntries = keptEntries
 
         for (image, assetId) in newPicks {
@@ -1103,6 +1134,7 @@ private struct NoteEditorContent: View {
             .joined(separator: ",")
         try? await viewModel.updateSectionContent(sectionId, content: content)
     }
+
     private func saveRecordedAudio(_ data: Data, duration: TimeInterval, toSectionId sectionId: String) async {
         do {
             let media = try await appState.mediaRepository.addMedia(
@@ -1121,7 +1153,6 @@ private struct NoteEditorContent: View {
             print("Failed to save audio: \(error)")
         }
     }
-    #endif
 
     @ViewBuilder
     private var titleView: some View {
@@ -1947,7 +1978,7 @@ struct AddContentBar: View {
                     } label: {
                         Image(systemName: "waveform")
                             .font(.title3)
-                            .foregroundStyle(Color(.systemBackground))
+                            .foregroundStyle(Color.systemBackground)
                             .frame(width: 44, height: 44)
                             .background(Color.gray.opacity(0.5))
                             .clipShape(Circle())
@@ -1959,7 +1990,7 @@ struct AddContentBar: View {
                     } label: {
                         Image(systemName: "character.textbox")
                             .font(.title3)
-                            .foregroundStyle(Color(.systemBackground))
+                            .foregroundStyle(Color.systemBackground)
                             .frame(width: 44, height: 44)
                             .background(Color.gray.opacity(0.5))
                             .clipShape(Circle())
@@ -1971,7 +2002,7 @@ struct AddContentBar: View {
                     } label: {
                         Image(systemName: "photo")
                             .font(.title3)
-                            .foregroundStyle(Color(.systemBackground))
+                            .foregroundStyle(Color.systemBackground)
                             .frame(width: 44, height: 44)
                             .background(Color.gray.opacity(0.5))
                             .clipShape(Circle())
@@ -1984,7 +2015,7 @@ struct AddContentBar: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color(.systemBackground))
+                        .foregroundStyle(Color.systemBackground)
                         .frame(width: 28, height: 28)
                         .background(Color.gray.opacity(0.5))
                         .clipShape(Circle())
@@ -1994,11 +2025,13 @@ struct AddContentBar: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 4)
+        #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
             if isExpanded {
                 withAnimation(.easeOut(duration: 0.2)) { isExpanded = false }
             }
         }
+        #endif
     }
 }
 
@@ -2050,13 +2083,13 @@ struct PageHistorySheet: View {
                                     }
                                     .contextMenu {
                                         Button {
-                                            UIPasteboard.general.string = commit.shortId
+                                            ClipboardHelper.copy(commit.shortId)
                                         } label: {
                                             Label("Copy ID", systemImage: "doc.on.doc")
                                         }
 
                                         Button {
-                                            UIPasteboard.general.string = commit.hash
+                                            ClipboardHelper.copy(commit.hash)
                                         } label: {
                                             Label("Copy Hash", systemImage: "number")
                                         }
@@ -2078,11 +2111,11 @@ struct PageHistorySheet: View {
             }
             .background(Color.black)
             .navigationTitle("History")
+            .inlineNavigationTitle()
             #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
             .toolbarBackground(Color.black, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }

@@ -106,7 +106,13 @@ struct SubscriptionView: View {
         }
         .navigationTitle("Subscription")
         .sheet(isPresented: $showingCustomerCenter) {
+            #if os(iOS)
             CustomerCenterView()
+            #else
+            Text("Manage your subscription at https://apps.apple.com/account/subscriptions")
+                .padding()
+                .frame(width: 400, height: 200)
+            #endif
         }
         .sheet(isPresented: $showingPaywall) {
             PaywallSheet()

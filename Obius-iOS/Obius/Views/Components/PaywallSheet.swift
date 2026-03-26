@@ -30,7 +30,7 @@ struct PaywallSheet: View {
                 .padding(.top, 20)
                 .padding(.bottom, 32)
             }
-            .background(Color(.systemBackground))
+            .background(Color.systemBackground)
             .presentationDetents([.large, .medium])
             .presentationDragIndicator(.visible)
             .overlay {
@@ -136,7 +136,7 @@ struct PaywallSheet: View {
                 // Radio indicator
                 ZStack {
                     Circle()
-                        .stroke(selectedPlan == plan ? Color.orange : Color(.separator), lineWidth: 2)
+                        .stroke(selectedPlan == plan ? Color.orange : Color.gray.opacity(0.4), lineWidth: 2)
                         .frame(width: 22, height: 22)
                     if selectedPlan == plan {
                         Circle()
@@ -184,7 +184,7 @@ struct PaywallSheet: View {
             .padding(14)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(selectedPlan == plan ? Color.orange.opacity(0.06) : Color(.secondarySystemBackground))
+                    .fill(selectedPlan == plan ? Color.orange.opacity(0.06) : Color.secondarySystemBackground)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
@@ -211,7 +211,7 @@ struct PaywallSheet: View {
             comparisonRow("Share links", free: nil, paid: "checkmark")
             comparisonRow("AI workspace", free: nil, paid: "checkmark")
         }
-        .background(Color(.secondarySystemBackground))
+        .background(Color.secondarySystemBackground)
         .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 

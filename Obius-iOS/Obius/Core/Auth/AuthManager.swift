@@ -29,18 +29,37 @@ final class AuthManager: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        if let session = supabase.currentSession {
-            currentUser = session.user
-            isAuthenticated = true
-        } else {
-            // Try to restore session
-            do {
-                let session = try await supabase.refreshSession()
+        // Always try to get a valid session — refreshSession() will use the
+        // refresh token to obtain a fresh access token if the current one is expired.
+        do {
+            let session = try await supabase.refreshSession()
+
+            // Verify the token is actually valid (not a stale cached return)
+            if session.expiresAt > Date().timeIntervalSince1970 {
                 currentUser = session.user
                 isAuthenticated = true
-            } catch {
+                await StoreManager.shared.identify(userId: session.user.id.uuidString.lowercased())
+                print("[AuthManager] Session valid, expires: \(Date(timeIntervalSince1970: session.expiresAt))")
+            } else {
+                // Token is expired even after refresh — verify with server
+                print("[AuthManager] Refreshed token already expired, verifying with server...")
+                let user = try await supabase.client.auth.user()
+                currentUser = user
+                isAuthenticated = true
+                await StoreManager.shared.identify(userId: user.id.uuidString.lowercased())
+                print("[AuthManager] Server verification succeeded")
+            }
+        } catch {
+            // Check if there's a cached session we can use (user might be offline)
+            if let session = supabase.currentSession {
+                currentUser = session.user
+                isAuthenticated = true
+                await StoreManager.shared.identify(userId: session.user.id.uuidString.lowercased())
+                print("[AuthManager] Using cached session (refresh failed: \(error.localizedDescription))")
+            } else {
                 currentUser = nil
                 isAuthenticated = false
+                print("[AuthManager] No valid session — user needs to sign in")
             }
         }
     }
@@ -52,9 +71,13 @@ final class AuthManager: ObservableObject {
                 case .signedIn:
                     currentUser = session?.user
                     isAuthenticated = true
+                    if let userId = session?.user.id.uuidString.lowercased() {
+                        await StoreManager.shared.identify(userId: userId)
+                    }
                 case .signedOut:
                     currentUser = nil
                     isAuthenticated = false
+                    await StoreManager.shared.logout()
                 case .tokenRefreshed:
                     currentUser = session?.user
                 case .userUpdated:

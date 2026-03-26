@@ -1,5 +1,6 @@
 import SwiftUI
 
+#if os(iOS)
 struct WorkspaceFAB: View {
     let action: () -> Void
     @AppStorage("workspaceFABOnRight") private var isOnRight = true
@@ -62,3 +63,13 @@ struct WorkspaceFAB: View {
         .animation(.easeInOut(duration: 0.15), value: isDragging)
     }
 }
+#else
+/// On macOS, the FAB is replaced by toolbar buttons. This is a no-op placeholder.
+struct WorkspaceFAB: View {
+    let action: () -> Void
+
+    var body: some View {
+        EmptyView()
+    }
+}
+#endif

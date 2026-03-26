@@ -1,7 +1,9 @@
 import SwiftUI
 import UserNotifications
 import RevenueCat
+#if os(iOS)
 import BackgroundTasks
+#endif
 
 @main
 struct ObiusApp: App {
@@ -15,7 +17,9 @@ struct ObiusApp: App {
     init() {
         UNUserNotificationCenter.current().delegate = notificationDelegate
         InterFontRegistration.registerAsDefault()
+        #if os(iOS)
         AutoCommitManager.registerBackgroundTask()
+        #endif
 
         let rcKey = AppConfiguration.revenueCatAPIKey
         if !rcKey.isEmpty {
@@ -49,16 +53,46 @@ struct ObiusApp: App {
                         Task {
                             await EchoManager.shared.checkForFiredEchoes()
                             await appState.autoCommitManager.checkAndAutoCommit()
+                            // Sync on every foreground (only if already initialized)
+                            if appState.isInitialized && AuthManager.shared.isAuthenticated && TierManager.shared.limits.cloudSync {
+                                await appState.triggerSync()
+                                await appState.syncEngine.subscribeRealtime()
+                            }
                         }
                         EchoManager.shared.scheduleNextCheck()
                     } else if phase == .background {
                         EchoManager.shared.stopPeriodicCheck()
+                        Task { await appState.syncEngine.unsubscribeRealtime() }
                     }
                 }
                 .onOpenURL { url in
                     deepLinkRouter.handleURL(url)
                 }
+                #if os(macOS)
+                .frame(minWidth: 800, minHeight: 500)
+                #endif
         }
+        #if os(macOS)
+        .defaultSize(width: 1100, height: 750)
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("New Note") {
+                    NotificationCenter.default.post(name: .createNewNote, object: nil)
+                }
+                .keyboardShortcut("n")
+            }
+        }
+        #endif
+
+        #if os(macOS)
+        Settings {
+            SettingsView()
+                .environmentObject(appState)
+                .environmentObject(authManager)
+                .environmentObject(tierManager)
+                .environmentObject(appearanceManager)
+        }
+        #endif
     }
 }
 
@@ -174,6 +208,12 @@ class AppState: ObservableObject {
         await syncEngine.initialize()
         isInitialized = true
 
+        // Wire up sync logger to auto-push changes after operations are logged
+        syncLogger.onOperationLogged = { [weak self] in
+            guard let self else { return }
+            Task { await self.syncEngine.schedulePush() }
+        }
+
         // Initialize Echo notifications
         await EchoManager.shared.requestNotificationPermission()
         EchoManager.shared.rescheduleAllEchoes()
@@ -184,8 +224,17 @@ class AppState: ObservableObject {
         await autoCommitManager.checkAndAutoCommit()
 
         // Auto-sync if authenticated and tier allows it
-        if AuthManager.shared.isAuthenticated && TierManager.shared.limits.cloudSync {
+        let isAuthed = AuthManager.shared.isAuthenticated
+        let canSync = TierManager.shared.limits.cloudSync
+        print("[AppState] Sync gate: authenticated=\(isAuthed), cloudSync=\(canSync), tier=\(TierManager.shared.currentTier.rawValue)")
+        if isAuthed && canSync {
             await syncEngine.sync()
+            await syncEngine.subscribeRealtime()
+        }
+
+        // Sync profile images from cloud (downloads if they exist remotely but not locally)
+        if AuthManager.shared.isAuthenticated {
+            await ProfileImageManager.shared.syncFromCloud()
         }
 
         // Seed first-run demo note
@@ -242,6 +291,7 @@ class AppState: ObservableObject {
         await syncEngine.sync()
     }
 
+    #if os(iOS)
     // MARK: - Background Auto-Commit
 
     /// Called from BGProcessingTask handler at midnight.
@@ -253,10 +303,12 @@ class AppState: ObservableObject {
             task.setTaskCompleted(success: true)
         }
     }
+    #endif
 }
 
 // MARK: - Notification Names
 
 extension Notification.Name {
     static let echoNotificationTapped = Notification.Name("echoNotificationTapped")
+    static let createNewNote = Notification.Name("createNewNote")
 }

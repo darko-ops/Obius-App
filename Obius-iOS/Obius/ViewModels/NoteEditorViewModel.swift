@@ -13,6 +13,20 @@ final class NoteEditorViewModel: ObservableObject {
     // Handle Manager for real-time handle content
     private let handleManager = HandleManager.shared
 
+    // Debounced sync logging — fires after edits stop for 3 seconds
+    private var syncDebounceTask: Task<Void, Never>?
+    /// Call after any note/section mutation to schedule a debounced sync
+    var onContentChanged: (() -> Void)?
+
+    private func scheduleSyncLog() {
+        syncDebounceTask?.cancel()
+        syncDebounceTask = Task {
+            try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 second debounce
+            guard !Task.isCancelled else { return }
+            onContentChanged?()
+        }
+    }
+
     @Published var note: Note?
     @Published var sections: [Section] = []
     @Published var isLoading: Bool = true

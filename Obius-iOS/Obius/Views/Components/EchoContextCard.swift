@@ -70,7 +70,7 @@ struct EchoContextCard: View {
             }
         }
         .padding(12)
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(Color.secondarySystemBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)

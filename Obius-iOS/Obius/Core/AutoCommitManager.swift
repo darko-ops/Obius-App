@@ -1,5 +1,7 @@
 import Foundation
+#if os(iOS)
 import BackgroundTasks
+#endif
 
 /// Automatically creates daily commits for notes modified since the last check.
 /// Schedules a BGProcessingTask to run at midnight so versions are created
@@ -31,6 +33,7 @@ class AutoCommitManager {
 
     // MARK: - Background Task Registration
 
+    #if os(iOS)
     /// Call once during app launch (in ObiusApp.init) to register the handler.
     static func registerBackgroundTask() {
         BGTaskScheduler.shared.register(
@@ -42,19 +45,19 @@ class AutoCommitManager {
                 return
             }
             Task { @MainActor in
-                // AppState may not be alive in background — create minimal commit path
                 await AppState.backgroundAutoCommit(task: processingTask)
             }
         }
     }
+    #endif
 
     /// Schedule the next midnight auto-commit background task.
     func scheduleMidnightTask() {
+        #if os(iOS)
         let request = BGProcessingTaskRequest(identifier: Self.backgroundTaskId)
         request.requiresNetworkConnectivity = false
         request.requiresExternalPower = false
 
-        // Schedule for next midnight
         let calendar = Calendar.current
         let tomorrow = calendar.startOfDay(for: calendar.date(byAdding: .day, value: 1, to: Date())!)
         request.earliestBeginDate = tomorrow
@@ -64,6 +67,8 @@ class AutoCommitManager {
         } catch {
             print("[AutoCommit] Failed to schedule midnight task: \(error)")
         }
+        #endif
+        // On macOS, auto-commit runs via scenePhase .active check — no background task needed
     }
 
     // MARK: - Auto Commit Logic

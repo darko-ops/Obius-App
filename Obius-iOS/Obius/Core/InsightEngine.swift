@@ -133,6 +133,10 @@ final class InsightEngine {
             if let sectionTitle = section.title, !sectionTitle.isEmpty {
                 parts.append(sectionTitle)
             }
+            // Skip image and audio sections — their content is SHA256 hashes, not user text
+            if section.contentType == .image || section.contentType == .audio {
+                continue
+            }
             if !section.content.isEmpty {
                 parts.append(section.content)
             }

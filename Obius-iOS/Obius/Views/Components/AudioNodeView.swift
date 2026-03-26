@@ -1,8 +1,6 @@
 import SwiftUI
 import AVFoundation
 
-#if os(iOS)
-
 // MARK: - Audio Player Model
 
 @MainActor
@@ -27,8 +25,10 @@ final class AudioPlayerModel: ObservableObject {
 
         do {
             if player == nil {
+                #if os(iOS)
                 try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
                 try AVAudioSession.sharedInstance().setActive(true)
+                #endif
                 player = try AVAudioPlayer(data: data)
                 player?.prepareToPlay()
             }
@@ -67,7 +67,6 @@ final class AudioPlayerModel: ObservableObject {
         guard let player = player else { return }
 
         if !player.isPlaying {
-            // Playback finished
             stop()
             return
         }
@@ -157,7 +156,6 @@ struct WaveformBarsView: View {
     private var barHeights: [CGFloat] {
         var heights: [CGFloat] = []
         for i in 0..<barCount {
-            // Create a natural-looking waveform pattern
             let base = 0.3 + 0.7 * abs(sin(Double(i) * 0.4))
             let variation = abs(sin(Double(i) * 1.7 + 0.5)) * 0.4
             heights.append(CGFloat(min(1.0, base * (0.6 + variation))))
@@ -182,5 +180,3 @@ struct WaveformBarsView: View {
         }
     }
 }
-
-#endif

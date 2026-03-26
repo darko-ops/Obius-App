@@ -135,9 +135,9 @@ struct CategoryDetailSheet: View {
                 .padding(.vertical)
             }
             .navigationTitle(insightType.label)
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }
@@ -189,7 +189,9 @@ struct TrackedInsightChip: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(insight.displayTint.color.opacity(0.3), lineWidth: 1)
         )
+        #if os(iOS)
         .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12))
+        #endif
         .contextMenu {
             Button {
                 onUntrack()
@@ -363,7 +365,7 @@ struct InsightDetailSheet: View {
                                     }
                                     .padding(.vertical, 10)
                                     .padding(.horizontal, 12)
-                                    .background(Color(UIColor.tertiarySystemGroupedBackground))
+                                    .background(Color.tertiarySystemGroupedBackground)
                                     .clipShape(RoundedRectangle(cornerRadius: 8))
                                 }
                             }
@@ -504,9 +506,9 @@ struct InsightDetailSheet: View {
                 .padding()
             }
             .navigationTitle("Insight")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }
@@ -572,12 +574,12 @@ struct CreateInsightSheet: View {
                 }
             }
             .navigationTitle("New Insight")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
                         onCreate(title, details)
                         dismiss()
@@ -643,9 +645,9 @@ struct BlockPickerSheet: View {
                 }
             }
             .navigationTitle("Move to Block")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Cancel") { dismiss() }
                 }
             }

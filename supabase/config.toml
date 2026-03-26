@@ -311,6 +311,17 @@ inspector_port = 8083
 # The Deno major version to use.
 deno_version = 1
 
+# Disable JWT verification at the relay level for all edge functions.
+# Functions handle their own auth via verifyAuth().
+[functions.sync-push]
+verify_jwt = false
+
+[functions.sync-pull]
+verify_jwt = false
+
+[functions.ai-proxy]
+verify_jwt = false
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

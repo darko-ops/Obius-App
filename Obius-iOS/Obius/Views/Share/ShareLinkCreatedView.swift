@@ -43,7 +43,7 @@ struct ShareLinkCreatedView: View {
                 HStack(spacing: 16) {
                     // Copy button
                     Button {
-                        UIPasteboard.general.string = shareLink.url
+                        ClipboardHelper.copy(shareLink.url)
                         withAnimation { copied = true }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                             withAnimation { copied = false }

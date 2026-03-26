@@ -34,7 +34,7 @@ struct CommitPickerForShare: View {
                 }
             }
             .navigationTitle("Pick a Version")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }

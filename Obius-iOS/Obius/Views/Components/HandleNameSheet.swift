@@ -134,9 +134,7 @@ struct HandleNameSheet: View {
                 Spacer()
             }
             .navigationTitle("Create Loop")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

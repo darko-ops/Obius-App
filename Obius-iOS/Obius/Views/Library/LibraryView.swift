@@ -72,22 +72,26 @@ struct LibraryView: View {
             }
             .padding(.bottom)
         }
-        .background(Color(.systemBackground))
+        .background(Color.systemBackground)
         .ignoresSafeArea(.container, edges: .top)
+        #if os(iOS)
         .navigationBarHidden(true)
+        #endif
         .onChange(of: selectedSection) { _, _ in
             searchQuery = ""
         }
+        #if os(iOS)
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
                 Button {
-                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    KeyboardHelper.dismiss()
                 } label: {
                     Image(systemName: "keyboard.chevron.compact.down")
                 }
             }
         }
+        #endif
         .sheet(isPresented: $showingEditProfile) {
             EditProfileView()
                 .environmentObject(authManager)
@@ -117,7 +121,7 @@ struct LibraryView: View {
                     let extraHeight = max(minY, 0)
 
                     if let banner = profileImages.bannerImage {
-                        Image(uiImage: banner)
+                        platformImage(banner)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
                             .frame(width: geo.size.width, height: 160 + extraHeight)
@@ -174,17 +178,17 @@ struct LibraryView: View {
     private var profileAvatar: some View {
         ZStack {
             if let avatar = profileImages.profileImage {
-                Image(uiImage: avatar)
+                platformImage(avatar)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(width: 80, height: 80)
                     .clipShape(Circle())
-                    .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 3))
+                    .overlay(Circle().stroke(Color.systemBackground, lineWidth: 3))
             } else {
                 Circle()
                     .fill(Color.accentColor.opacity(0.15))
                     .frame(width: 80, height: 80)
-                    .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 3))
+                    .overlay(Circle().stroke(Color.systemBackground, lineWidth: 3))
                     .overlay {
                         if authManager.isAuthenticated {
                             Text(userInitials)
@@ -294,7 +298,7 @@ struct LoopsListView: View {
                 LoopRowView(handle: handle)
                     .padding(.horizontal)
                     .padding(.vertical, 6)
-                    .background(Color(.systemBackground))
+                    .background(Color.systemBackground)
                     .cornerRadius(12)
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -425,9 +429,7 @@ struct CreateLoopSheet: View {
                 }
             }
             .navigationTitle("Create Loop")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -524,9 +526,7 @@ struct LoopDetailSheet: View {
                 }
             }
             .navigationTitle("Edit Loop")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -790,7 +790,7 @@ struct CommitsListView: View {
                 CommitRowView(commit: item.commit, noteName: item.noteName, viewCount: commitViewCounts[item.commit.hash] ?? 0, isFirst: index == 0, isLast: index == filteredItems.count - 1)
                     .padding(.horizontal)
                     .padding(.vertical, 6)
-                    .background(Color(.systemBackground))
+                    .background(Color.systemBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -804,13 +804,13 @@ struct CommitsListView: View {
                         }
 
                         Button {
-                            UIPasteboard.general.string = item.commit.shortId
+                            ClipboardHelper.copy(item.commit.shortId)
                         } label: {
                             Label("Copy ID", systemImage: "doc.on.doc")
                         }
 
                         Button {
-                            UIPasteboard.general.string = item.commit.hash
+                            ClipboardHelper.copy(item.commit.hash)
                         } label: {
                             Label("Copy Hash", systemImage: "number")
                         }
@@ -1053,11 +1053,9 @@ struct CommitDetailSheet: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .background(Color(.systemBackground))
+            .background(Color.systemBackground)
             .navigationTitle("")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
@@ -1080,7 +1078,7 @@ struct CommitDetailSheet: View {
                 await loadContent()
                 await loadComments()
             }
-            .fullScreenCover(isPresented: $showingShareSheet) {
+            .platformFullScreenCover(isPresented: $showingShareSheet) {
                 if let url = shareURL {
                     NodeShareSheet(
                         url: url,
@@ -1099,7 +1097,7 @@ struct CommitDetailSheet: View {
                 // Title
                 if let title = content.note.title, !title.isEmpty {
                     Button {
-                        UIPasteboard.general.string = title
+                        ClipboardHelper.copy(title)
                         copiedField = "badge_title"
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                             if copiedField == "badge_title" { copiedField = nil }
@@ -1131,7 +1129,7 @@ struct CommitDetailSheet: View {
                     }
 
                     Button {
-                        UIPasteboard.general.string = commit.shortId
+                        ClipboardHelper.copy(commit.shortId)
                         copiedField = "nav_title"
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                             if copiedField == "nav_title" { copiedField = nil }
@@ -1187,7 +1185,7 @@ struct CommitDetailSheet: View {
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(UIColor.secondarySystemBackground))
+                .background(Color.secondarySystemBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
 
                 // Dot divider
@@ -1243,7 +1241,7 @@ struct CommitDetailSheet: View {
                     Spacer()
                     Button {
                         let allText = buildFullContentText(content)
-                        UIPasteboard.general.string = allText
+                        ClipboardHelper.copy(allText)
                         copiedField = "copy_all"
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                             if copiedField == "copy_all" { copiedField = nil }
@@ -1284,7 +1282,7 @@ struct CommitDetailSheet: View {
 
     private func copyableRow<S: ShapeStyle>(label: String, value: String, field: String, valueFont: Font, valueColor: S) -> some View {
         Button {
-            UIPasteboard.general.string = value
+            ClipboardHelper.copy(value)
             copiedField = field
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 if copiedField == field { copiedField = nil }
@@ -1361,7 +1359,7 @@ struct CommitDetailSheet: View {
     private func addComment(body: String) async {
         do {
             // Find or create share link for this commit
-            var links = try await ShareManager.shared.getShareLinks(commitHash: commit.hash)
+            let links = try await ShareManager.shared.getShareLinks(commitHash: commit.hash)
             let link: ShareLink
             if let existing = links.first {
                 link = existing
@@ -1463,7 +1461,7 @@ struct CommitNodePreview: View {
     let sectionType: String
     let mediaRepository: MediaRepository?
 
-    @State private var loadedImages: [String: UIImage] = [:]
+    @State private var loadedImages: [String: PlatformImage] = [:]
 
     /// Parse image hashes from "hash|assetId,hash|assetId,..." format
     private var imageHashes: [String] {
@@ -1493,13 +1491,13 @@ struct CommitNodePreview: View {
             VStack(spacing: 8) {
                 ForEach(imageHashes, id: \.self) { hash in
                     if let image = loadedImages[hash] {
-                        Image(uiImage: image)
+                        platformImage(image)
                             .resizable()
                             .scaledToFit()
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                     } else {
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(Color(.systemGray5))
+                            .fill(Color.systemGray5)
                             .frame(height: 160)
                             .overlay {
                                 Image(systemName: "photo")
@@ -1541,7 +1539,7 @@ struct CommitNodePreview: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
-                .background(Color(UIColor.secondarySystemBackground))
+                .background(Color.secondarySystemBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .padding(.leading, CGFloat(indentLevel) * 20)
         }
@@ -1551,7 +1549,7 @@ struct CommitNodePreview: View {
         guard let mediaRepository else { return }
         for hash in imageHashes where loadedImages[hash] == nil {
             if let data = try? mediaRepository.getMediaData(hash: hash),
-               let image = UIImage(data: data) {
+               let image = PlatformImage(data: data) {
                 loadedImages[hash] = image
             }
         }

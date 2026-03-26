@@ -80,8 +80,8 @@ struct IntelligenceView: View {
     var body: some View {
         mainContent
         .navigationTitle("")
+        .inlineNavigationTitle()
         #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(Color(.systemBackground), for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         #endif
@@ -646,12 +646,12 @@ struct IntelligenceView: View {
 
     // MARK: - Haptics
 
-    private func haptic(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
-        UIImpactFeedbackGenerator(style: style).impactOccurred()
+    private func haptic(_ style: HapticFeedback.FeedbackStyle) {
+        HapticFeedback.impact(style)
     }
 
-    private func haptic(_ type: UINotificationFeedbackGenerator.FeedbackType) {
-        UINotificationFeedbackGenerator().notificationOccurred(type)
+    private func haptic(_ type: HapticFeedback.FeedbackType) {
+        HapticFeedback.notification(type)
     }
 }
 
@@ -784,11 +784,11 @@ struct LoopsSheetView: View {
             }
             .background(Color.black)
             .navigationTitle("Loops")
+            .inlineNavigationTitle()
             #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
             .toolbarBackground(Color.black, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
@@ -805,6 +805,7 @@ struct LoopsSheetView: View {
 
 // MARK: - Body Text Editor with Selection + Create Node
 
+#if os(iOS)
 /// A UITextView wrapper that supports text selection tracking.
 struct BodyTextEditor: UIViewRepresentable {
     @Binding var text: String
@@ -874,6 +875,24 @@ struct BodyTextEditor: UIViewRepresentable {
         }
     }
 }
+#else
+/// macOS body text editor using TextEditor
+struct BodyTextEditor: View {
+    @Binding var text: String
+    @Binding var selectedRange: NSRange?
+    var onCreateNode: () -> Void
+    var onTextChange: () -> Void
+
+    var body: some View {
+        TextEditor(text: $text)
+            .font(.caption)
+            .scrollContentBackground(.hidden)
+            .onChange(of: text) { _, _ in
+                onTextChange()
+            }
+    }
+}
+#endif
 
 struct WorkspaceSheet: View {
     @Environment(\.dismiss) private var dismiss
@@ -966,11 +985,31 @@ struct WorkspaceSheet: View {
         focusMode == nil && preselectedPageId == nil
     }
 
+    private static let editPlaceholders = [
+        "Lets build something...",
+        "Drop an idea here...",
+        "Give this a shape...",
+        "Initialize a concept...",
+        "Unfold the vision...",
+        "Refine the core...",
+        "Architect the thought...",
+        "Draft the intent...",
+    ]
+
+    private static let chatPlaceholders = [
+        "Give this a shape...",
+        "Initialize a concept...",
+        "Unfold the vision...",
+        "Refine the core...",
+        "Architect the thought...",
+        "Draft the intent...",
+    ]
+
+    @State private var currentEditPlaceholder = editPlaceholders.randomElement()!
+    @State private var currentChatPlaceholder = chatPlaceholders.randomElement()!
+
     private var inputPlaceholder: String {
-        if isProjectWideMode {
-            return interactionMode == .edit ? "Describe what to build..." : "Ask about your project..."
-        }
-        return interactionMode == .edit ? "Describe your changes..." : "Ask about this content..."
+        interactionMode == .edit ? currentEditPlaceholder : currentChatPlaceholder
     }
 
     private var canSend: Bool {
@@ -1041,11 +1080,11 @@ struct WorkspaceSheet: View {
             }
             .background(Color.black)
             .navigationTitle("Workspace")
+            .inlineNavigationTitle()
             #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
             .toolbarBackground(Color.black, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
@@ -1239,6 +1278,29 @@ struct WorkspaceSheet: View {
                                 .foregroundStyle(.primary)
                         }
                     }
+                } else if section.contentType == .image {
+                    #if os(iOS)
+                    let hashes = content.split(separator: ",").map { entry in
+                        String(entry.split(separator: "|").first ?? "")
+                    }
+                    ImageNodeView(
+                        imageHashes: hashes,
+                        mediaRepository: appState.mediaRepository,
+                        onTap: {}
+                    )
+                    .frame(height: 160)
+                    #endif
+                } else if section.contentType == .audio {
+                    #if os(iOS)
+                    let parts = content.split(separator: "|")
+                    let hash = String(parts.first ?? "")
+                    let duration = TimeInterval(parts.count > 1 ? String(parts[1]) : "0") ?? 0
+                    AudioNodeView(
+                        audioHash: hash,
+                        duration: duration,
+                        mediaRepository: appState.mediaRepository
+                    )
+                    #endif
                 } else if !content.isEmpty {
                     Text(content)
                         .font(.caption)
@@ -1260,7 +1322,30 @@ struct WorkspaceSheet: View {
                     .frame(width: 2, height: 14)
                     .padding(.top, 2)
 
-                if !content.isEmpty {
+                if section.contentType == .image {
+                    #if os(iOS)
+                    let hashes = content.split(separator: ",").map { entry in
+                        String(entry.split(separator: "|").first ?? "")
+                    }
+                    ImageNodeView(
+                        imageHashes: hashes,
+                        mediaRepository: appState.mediaRepository,
+                        onTap: {}
+                    )
+                    .frame(height: 160)
+                    #endif
+                } else if section.contentType == .audio {
+                    #if os(iOS)
+                    let parts = content.split(separator: "|")
+                    let hash = String(parts.first ?? "")
+                    let duration = TimeInterval(parts.count > 1 ? String(parts[1]) : "0") ?? 0
+                    AudioNodeView(
+                        audioHash: hash,
+                        duration: duration,
+                        mediaRepository: appState.mediaRepository
+                    )
+                    #endif
+                } else if !content.isEmpty {
                     Text(content)
                         .font(.caption)
                         .foregroundStyle(.primary)
@@ -1273,57 +1358,62 @@ struct WorkspaceSheet: View {
 
     @ViewBuilder
     private func editableSectionRow(for section: Section) -> some View {
-        let handleName = section.handleId
-            .flatMap { HandleManager.shared.getHandle(id: $0) }
-            .map { "@\($0.displayName)" }
-
-        let binding = Binding<String>(
-            get: { editableSectionContents[section.id] ?? section.content },
-            set: { editableSectionContents[section.id] = $0 }
-        )
-
-        if section.sectionType == .fold {
-            // Node / bubble style — editable
-            VStack(alignment: .leading, spacing: 4) {
-                if let handleName {
-                    Text(handleName)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(section.intent.color)
-                }
-
-                TextField("Content", text: binding, axis: .vertical)
-                    .font(.caption)
-                    .foregroundStyle(.primary)
-                    .textFieldStyle(.plain)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .onChange(of: binding.wrappedValue) { _ in
-                        saveSectionContent(sectionId: section.id)
-                    }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8).fill(section.intent.backgroundTint))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .padding(.vertical, 2)
+        // Image and audio sections are not text-editable — render them visually
+        if section.contentType == .image || section.contentType == .audio {
+            sectionRow(for: section)
         } else {
-            // Line style — editable
-            HStack(alignment: .top, spacing: 6) {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(section.intent.color.opacity(0.5))
-                    .frame(width: 2, height: 14)
-                    .padding(.top, 2)
+            let handleName = section.handleId
+                .flatMap { HandleManager.shared.getHandle(id: $0) }
+                .map { "@\($0.displayName)" }
 
-                TextField("Content", text: binding, axis: .vertical)
-                    .font(.caption)
-                    .foregroundStyle(.primary)
-                    .textFieldStyle(.plain)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .onChange(of: binding.wrappedValue) { _ in
-                        saveSectionContent(sectionId: section.id)
+            let binding = Binding<String>(
+                get: { editableSectionContents[section.id] ?? section.content },
+                set: { editableSectionContents[section.id] = $0 }
+            )
+
+            if section.sectionType == .fold {
+                // Node / bubble style — editable
+                VStack(alignment: .leading, spacing: 4) {
+                    if let handleName {
+                        Text(handleName)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(section.intent.color)
                     }
+
+                    TextField("Content", text: binding, axis: .vertical)
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                        .textFieldStyle(.plain)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .onChange(of: binding.wrappedValue) { _ in
+                            saveSectionContent(sectionId: section.id)
+                        }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(section.intent.backgroundTint))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .padding(.vertical, 2)
+            } else {
+                // Line style — editable
+                HStack(alignment: .top, spacing: 6) {
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(section.intent.color.opacity(0.5))
+                        .frame(width: 2, height: 14)
+                        .padding(.top, 2)
+
+                    TextField("Content", text: binding, axis: .vertical)
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                        .textFieldStyle(.plain)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .onChange(of: binding.wrappedValue) { _ in
+                            saveSectionContent(sectionId: section.id)
+                        }
+                }
+                .padding(.vertical, 2)
             }
-            .padding(.vertical, 2)
         }
     }
 
@@ -1555,7 +1645,34 @@ struct WorkspaceSheet: View {
         let text = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
         let sectionIntent = IntentType(rawValue: section.intent) ?? .idea
 
-        if !text.isEmpty {
+        if section.contentType == "image" {
+            #if os(iOS)
+            let hashes = text.split(separator: ",").map { entry in
+                String(entry.split(separator: "|").first ?? "")
+            }
+            ImageNodeView(
+                imageHashes: hashes,
+                mediaRepository: appState.mediaRepository,
+                onTap: {}
+            )
+            .frame(height: 120)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            #endif
+        } else if section.contentType == "audio" {
+            #if os(iOS)
+            let parts = text.split(separator: "|")
+            let hash = String(parts.first ?? "")
+            let duration = TimeInterval(parts.count > 1 ? String(parts[1]) : "0") ?? 0
+            AudioNodeView(
+                audioHash: hash,
+                duration: duration,
+                mediaRepository: appState.mediaRepository
+            )
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 6).fill(sectionIntent.backgroundTint))
+            #endif
+        } else if !text.isEmpty {
             if section.sectionType == "fold" {
                 VStack(alignment: .leading, spacing: 2) {
                     if let handleId = section.handleId,
@@ -1729,55 +1846,36 @@ struct WorkspaceSheet: View {
 
     private var focusSelector: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("FOCUS")
+            Text("NARROW FOCUS")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 8) {
-                // Project-wide button
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        focusMode = nil
-                        selectedHandleIds.removeAll()
-                        selectedPageId = nil
-                        cachedPageSections = []
-                        editableContent = ""
-                        editingHandleId = nil
-                        contentHasUnsavedChanges = false
-                        interactionMode = nil
-                        messages.removeAll()
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "square.grid.2x2")
-                            .font(.caption)
-                        Text("Project")
-                            .font(.subheadline.weight(.medium))
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .foregroundColor(focusMode == nil ? .black : Color(.lightGray))
-                    .background(focusMode == nil ? Color.white : Color(red: 0.06, green: 0.06, blue: 0.06))
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(focusMode == nil ? Color.clear : Color.gray.opacity(0.3), lineWidth: 1)
-                    )
-                    .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
-
                 ForEach(FocusMode.allCases, id: \.self) { mode in
                     Button {
                         withAnimation(.easeInOut(duration: 0.15)) {
-                            focusMode = mode
-                            selectedHandleIds.removeAll()
-                            selectedPageId = nil
-                            cachedPageSections = []
-                            editableContent = ""
-                            editingHandleId = nil
-                            contentHasUnsavedChanges = false
-                            interactionMode = nil
-                            messages.removeAll()
+                            if focusMode == mode {
+                                // Deselect — go back to project-wide
+                                focusMode = nil
+                                selectedHandleIds.removeAll()
+                                selectedPageId = nil
+                                cachedPageSections = []
+                                editableContent = ""
+                                editingHandleId = nil
+                                contentHasUnsavedChanges = false
+                                interactionMode = nil
+                                messages.removeAll()
+                            } else {
+                                focusMode = mode
+                                selectedHandleIds.removeAll()
+                                selectedPageId = nil
+                                cachedPageSections = []
+                                editableContent = ""
+                                editingHandleId = nil
+                                contentHasUnsavedChanges = false
+                                interactionMode = nil
+                                messages.removeAll()
+                            }
                         }
                     } label: {
                         HStack(spacing: 6) {
@@ -2007,7 +2105,9 @@ struct WorkspaceSheet: View {
                         ActionCardView(
                             action: action,
                             onAccept: { acceptAction(messageIndex: messageIndex, actionIndex: actionIndex) },
-                            onDismiss: { dismissAction(messageIndex: messageIndex, actionIndex: actionIndex) }
+                            onDismiss: { dismissAction(messageIndex: messageIndex, actionIndex: actionIndex) },
+                            previewSections: cachedPageSections,
+                            mediaRepository: appState.mediaRepository
                         )
                     }
                 }
@@ -2031,7 +2131,7 @@ struct WorkspaceSheet: View {
     private var inputBar: some View {
         HStack(spacing: 10) {
             TextField(
-                inputPlaceholder,
+                "",
                 text: $inputText,
                 axis: .vertical
             )
@@ -2042,6 +2142,14 @@ struct WorkspaceSheet: View {
                 RoundedRectangle(cornerRadius: 20)
                     .stroke(Color.gray.opacity(0.3), lineWidth: 1)
             )
+            .overlay(alignment: .leading) {
+                if inputText.isEmpty {
+                    Text(inputPlaceholder)
+                        .foregroundStyle(Color.gray)
+                        .padding(.leading, 14)
+                        .allowsHitTesting(false)
+                }
+            }
             .focused($isInputFocused)
             .lineLimit(1...4)
 
@@ -2135,10 +2243,13 @@ struct WorkspaceSheet: View {
                         noteContext: context
                     )
 
+                    // Coalesce multiple micro-actions into a single rewrite_page
+                    let finalActions = coalesceMicroActions(response.actions)
+
                     let content: String
                     if !response.text.isEmpty {
                         content = response.text
-                    } else if !response.actions.isEmpty {
+                    } else if !finalActions.isEmpty {
                         content = "Here's what I suggest:"
                     } else {
                         content = "I wasn't able to generate a response. Try rephrasing your request."
@@ -2146,7 +2257,7 @@ struct WorkspaceSheet: View {
                     messages.append(ChatMessage(
                         role: .assistant,
                         content: content,
-                        actions: response.actions
+                        actions: finalActions
                     ))
 
                 case .chat:
@@ -2186,6 +2297,120 @@ struct WorkspaceSheet: View {
         Task {
             try? await HandleManager.shared.updateContent(handleId: handleId, content: content)
         }
+    }
+
+    // MARK: - Action Coalescing
+
+    /// If the AI returns 2+ delete_section / update_section_content calls for the same page,
+    /// merge them into a single rewrite_page action so the user sees one preview card.
+    private func coalesceMicroActions(_ actions: [SuggestedAction]) -> [SuggestedAction] {
+        // Count section-level micro-actions (deletes + updates targeting sections)
+        var deleteIds: Set<String> = []
+        var sectionUpdates: [String: String] = [:] // sectionId -> newContent
+        var otherActions: [SuggestedAction] = []
+
+        for action in actions {
+            switch action.actionType {
+            case .deleteSection(let p):
+                deleteIds.insert(p.sectionId)
+            case .updateSectionContent(let p):
+                sectionUpdates[p.sectionId] = p.newContent
+            default:
+                otherActions.append(action)
+            }
+        }
+
+        // Only coalesce if there are 2+ micro-actions
+        let microCount = deleteIds.count + sectionUpdates.count
+        guard microCount >= 2, let pageId = selectedPageId else {
+            return actions
+        }
+
+        // Build keep_sections: all current sections that are NOT being deleted
+        let activeSections = cachedPageSections.filter { $0.deletedAt == nil }
+        var keepSections: [SuggestedAction.KeepSection] = []
+        for section in activeSections {
+            if deleteIds.contains(section.id) { continue }
+            let newContent = sectionUpdates[section.id]
+            keepSections.append(SuggestedAction.KeepSection(
+                sectionId: section.id,
+                newContent: newContent
+            ))
+        }
+
+        // Get current page info
+        let page = pages.first(where: { $0.id == pageId })
+        let noteTitle = page?.displayTitle ?? ""
+
+        // Check if there's an update_page_body in otherActions — pull its body out
+        var newBody = page?.body ?? ""
+        otherActions = otherActions.filter { action in
+            if case .updatePageBody(let p) = action.actionType, p.noteId == pageId {
+                newBody = p.newBody
+                return false // remove from otherActions, folded into rewrite
+            }
+            return true
+        }
+
+        // Build summary
+        var summaryParts: [String] = []
+        if deleteIds.count > 0 {
+            summaryParts.append("Removed \(deleteIds.count) section\(deleteIds.count == 1 ? "" : "s")")
+        }
+        if sectionUpdates.count > 0 {
+            summaryParts.append("Updated \(sectionUpdates.count) section\(sectionUpdates.count == 1 ? "" : "s")")
+        }
+        let summary = summaryParts.joined(separator: ", ")
+
+        // Build page preview showing what the page will look like after the edit
+        var previewParts: [String] = []
+        let trimmedBody = newBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedBody.isEmpty { previewParts.append(trimmedBody) }
+        for section in activeSections {
+            if deleteIds.contains(section.id) { continue }
+            // Use updated content if available, otherwise existing content
+            let content: String
+            if let updated = sectionUpdates[section.id] {
+                content = updated
+            } else {
+                content = section.content
+            }
+            if section.contentType == .image {
+                let count = content.split(separator: ",").count
+                let label = count > 1 ? "[\(count) Photos]" : "[Photo]"
+                let prefix = section.sectionType == .fold ? "▪ " : "│ "
+                previewParts.append("\(prefix)\(label)")
+            } else if section.contentType == .audio {
+                let parts = content.split(separator: "|")
+                let duration = TimeInterval(parts.count > 1 ? String(parts[1]) : "0") ?? 0
+                let mins = Int(duration) / 60
+                let secs = Int(duration) % 60
+                let label = "[Audio Recording \(String(format: "%d:%02d", mins, secs))]"
+                let prefix = section.sectionType == .fold ? "▪ " : "│ "
+                previewParts.append("\(prefix)\(label)")
+            } else {
+                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    let prefix = section.sectionType == .fold ? "▪ " : "│ "
+                    previewParts.append("\(prefix)\(trimmed)")
+                }
+            }
+        }
+        let pagePreview = previewParts.joined(separator: "\n\n")
+
+        let rewriteAction = SuggestedAction(
+            id: UUID().uuidString,
+            actionType: .rewritePage(SuggestedAction.RewritePageParams(
+                noteId: pageId,
+                noteTitle: noteTitle,
+                newBody: newBody,
+                keepSections: keepSections,
+                summary: summary,
+                pagePreview: pagePreview
+            ))
+        )
+
+        return [rewriteAction] + otherActions
     }
 
     // MARK: - Context Builder
@@ -2388,6 +2613,9 @@ struct WorkspaceSheet: View {
                         loadSectionsForPage(pageId)
                     case .updatePageBody(let p) where p.noteId == pageId:
                         await MainActor.run { editableBody = p.newBody }
+                    case .rewritePage(let p) where p.noteId == pageId:
+                        loadSectionsForPage(pageId)
+                        await MainActor.run { editableBody = p.newBody }
                     default:
                         break
                     }
@@ -2426,12 +2654,12 @@ struct WorkspaceSheet: View {
 
     // MARK: - Haptics
 
-    private func haptic(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
-        UIImpactFeedbackGenerator(style: style).impactOccurred()
+    private func haptic(_ style: HapticFeedback.FeedbackStyle) {
+        HapticFeedback.impact(style)
     }
 
-    private func haptic(_ type: UINotificationFeedbackGenerator.FeedbackType) {
-        UINotificationFeedbackGenerator().notificationOccurred(type)
+    private func haptic(_ type: HapticFeedback.FeedbackType) {
+        HapticFeedback.notification(type)
     }
 }
 

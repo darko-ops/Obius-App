@@ -29,6 +29,7 @@ struct SuggestedAction: Identifiable {
         case addSection(AddSectionParams)
         case moveSection(MoveSectionParams)
         case setSectionIntent(SetSectionIntentParams)
+        case rewritePage(RewritePageParams)
     }
 
     struct ScheduleEchoParams {
@@ -97,6 +98,21 @@ struct SuggestedAction: Identifiable {
         let intent: String
     }
 
+    struct RewritePageParams {
+        let noteId: String
+        let noteTitle: String
+        let newBody: String
+        let keepSections: [KeepSection]
+        let summary: String
+        /// Pre-built preview showing what the page will look like after the edit.
+        let pagePreview: String
+    }
+
+    struct KeepSection {
+        let sectionId: String
+        let newContent: String? // nil = keep existing content
+    }
+
     // MARK: - Display Properties
 
     var icon: String {
@@ -111,6 +127,7 @@ struct SuggestedAction: Identifiable {
         case .addSection:           return "plus.rectangle"
         case .moveSection:          return "arrow.up.arrow.down"
         case .setSectionIntent:     return "paintbrush"
+        case .rewritePage:          return "doc.text.fill"
         }
     }
 
@@ -139,6 +156,9 @@ struct SuggestedAction: Identifiable {
             return "Move: \(p.sectionPreview.prefix(40))"
         case .setSectionIntent(let p):
             return "Set intent to \(p.intent)"
+        case .rewritePage(let p):
+            let display = p.noteTitle.isEmpty ? "Untitled" : p.noteTitle
+            return "Rewrite \(display)"
         }
     }
 
@@ -167,6 +187,9 @@ struct SuggestedAction: Identifiable {
             return "Reorder: \(p.sectionPreview.prefix(60))"
         case .setSectionIntent(let p):
             return "Change \(p.sectionPreview.prefix(30)) to \(p.intent)"
+        case .rewritePage(let p):
+            let display = p.noteTitle.isEmpty ? "Untitled" : p.noteTitle
+            return "Rewrite \(display)"
         }
     }
 
@@ -177,6 +200,7 @@ struct SuggestedAction: Identifiable {
         case .updatePageBody(let p):       return p.newBody
         case .updateSectionContent(let p): return p.newContent
         case .addSection(let p):           return p.content
+        case .rewritePage(let p):          return p.pagePreview
         default:                           return nil
         }
     }
@@ -193,6 +217,7 @@ struct SuggestedAction: Identifiable {
         case .addSection:           return "create_section"
         case .moveSection:          return "move_section"
         case .setSectionIntent:     return "set_section_intent"
+        case .rewritePage:          return "rewrite_page"
         }
     }
 
@@ -208,6 +233,7 @@ struct SuggestedAction: Identifiable {
         case .addSection:           return .mint
         case .moveSection:          return .indigo
         case .setSectionIntent:     return .blue
+        case .rewritePage:          return .cyan
         }
     }
 
@@ -354,6 +380,38 @@ struct SuggestedAction: Identifiable {
                 intent: intent
             ))
 
+        case "rewrite_page":
+            guard let noteId = input["note_id"] as? String,
+                  let noteTitle = input["note_title"] as? String,
+                  let newBody = input["new_body"] as? String,
+                  let keepSectionsRaw = input["keep_sections"] as? [[String: Any]],
+                  let summary = input["summary"] as? String else {
+                return nil
+            }
+            let keepSections = keepSectionsRaw.compactMap { dict -> KeepSection? in
+                guard let sId = dict["section_id"] as? String else { return nil }
+                return KeepSection(sectionId: sId, newContent: dict["new_content"] as? String)
+            }
+            // Build preview from body + any sections that have new_content
+            var previewParts: [String] = []
+            let trimmedBody = newBody.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedBody.isEmpty { previewParts.append(trimmedBody) }
+            for ks in keepSections {
+                if let content = ks.newContent?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !content.isEmpty {
+                    previewParts.append("• \(content)")
+                }
+            }
+            let preview = previewParts.isEmpty ? summary : previewParts.joined(separator: "\n\n")
+            actionType = .rewritePage(RewritePageParams(
+                noteId: noteId,
+                noteTitle: noteTitle,
+                newBody: newBody,
+                keepSections: keepSections,
+                summary: summary,
+                pagePreview: preview
+            ))
+
         default:
             return nil
         }
@@ -497,6 +555,62 @@ struct SuggestedAction: Identifiable {
                 throw ActionError.invalidParameters("Unknown intent: \(p.intent)")
             }
             try await appState.sectionRepository.setIntent(p.sectionId, intent: intent)
+
+        case .rewritePage(let p):
+            // 1. Update body
+            #if os(iOS)
+            let hasMarkdown = p.newBody.contains("# ") || p.newBody.contains("**") || p.newBody.contains("*")
+            let richText: String?
+            if hasMarkdown {
+                let attributed = RichTextHelper.fromMarkdown(p.newBody)
+                richText = RichTextHelper.serialize(attributed)
+            } else {
+                richText = nil
+            }
+            let plainBody = p.newBody
+                .replacingOccurrences(of: "### ", with: "")
+                .replacingOccurrences(of: "## ", with: "")
+                .replacingOccurrences(of: "# ", with: "")
+                .replacingOccurrences(of: "**", with: "")
+            try await appState.noteRepository.updateNoteBody(p.noteId, body: plainBody, richText: richText)
+            #else
+            try await appState.noteRepository.updateNoteBody(p.noteId, body: p.newBody)
+            #endif
+
+            // 2. Build set of section IDs to keep
+            let keepIds = Set(p.keepSections.map(\.sectionId))
+
+            // 3. Get all current sections for this note and delete ones not in keepIds
+            let allSections = try await appState.sectionRepository.getSections(noteId: p.noteId)
+            for section in allSections {
+                guard section.deletedAt == nil else { continue }
+                if !keepIds.contains(section.id) {
+                    try await appState.sectionRepository.deleteSection(section.id)
+                }
+            }
+
+            // 4. Update content for kept sections that have new_content
+            for keep in p.keepSections {
+                guard let newContent = keep.newContent else { continue }
+                #if os(iOS)
+                let hasMd = newContent.contains("# ") || newContent.contains("**") || newContent.contains("*")
+                let rt: String?
+                if hasMd {
+                    let attr = RichTextHelper.fromMarkdown(newContent)
+                    rt = RichTextHelper.serialize(attr)
+                } else {
+                    rt = nil
+                }
+                let plain = newContent
+                    .replacingOccurrences(of: "### ", with: "")
+                    .replacingOccurrences(of: "## ", with: "")
+                    .replacingOccurrences(of: "# ", with: "")
+                    .replacingOccurrences(of: "**", with: "")
+                try await appState.sectionRepository.updateContent(keep.sectionId, content: plain, richText: rt)
+                #else
+                try await appState.sectionRepository.updateContent(keep.sectionId, content: newContent)
+                #endif
+            }
         }
     }
 

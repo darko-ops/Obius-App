@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import GRDB
+import Supabase
 #if os(iOS)
 import UIKit
 #endif
@@ -15,6 +16,12 @@ actor SyncEngine {
     private var pendingSync = false
     private var lastSyncTimestamp: Date?
     private var deviceId: String?
+
+    // Realtime subscription
+    private var realtimeChannel: RealtimeChannelV2?
+    private var realtimeTask: Task<Void, Never>?
+    private var debouncedSyncTask: Task<Void, Never>?
+    private var lastPushTime: Date = .distantPast
 
     // Published state (use MainActor for UI updates)
     @MainActor @Published private(set) var syncState: SyncState = .idle
@@ -44,8 +51,179 @@ actor SyncEngine {
         // Load last sync timestamp
         lastSyncTimestamp = await getLastSyncTimestamp()
 
+        // One-time: enqueue all local notes/sections that have never been synced
+        await enqueueUnsyncedEntities()
+
         // Update pending changes count
         await updatePendingCount()
+    }
+
+    /// Enqueue sync operations for any local entities that were created before
+    /// sync was working. Runs once — subsequent launches skip already-queued items.
+    private func enqueueUnsyncedEntities() async {
+        guard let deviceId = deviceId else { return }
+
+        do {
+            // Clean up any leftover ghost modules
+            try? await database.write { db in
+                try db.execute(sql: "DELETE FROM modules WHERE name = 'Synced Project'")
+            }
+
+            // Debug: show database state
+            let dbStats = try? await database.read { db -> (Int, Int, Int, Int) in
+                let totalNotes = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM notes WHERE deletedAt IS NULL") ?? 0
+                let totalSections = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sections WHERE deletedAt IS NULL") ?? 0
+                let existingOps = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM syncOperations") ?? 0
+                let cloudNotes = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM notes WHERE syncStatus = 'synced' AND deletedAt IS NULL") ?? 0
+                return (totalNotes, totalSections, existingOps, cloudNotes)
+            }
+            if let (notes, sections, ops, synced) = dbStats {
+                print("[Sync] Database state: \(notes) notes (\(synced) marked synced), \(sections) sections, \(ops) existing syncOperations")
+            }
+
+            // Nuclear reset: delete all old syncOperations and re-enqueue everything.
+            let resetKey = "hasResetSyncOps_v16"
+            if !UserDefaults.standard.bool(forKey: resetKey) {
+                // Delete sync operations in its own transaction
+                try? await database.write { db in
+                    let deleteCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM syncOperations") ?? 0
+                    if deleteCount > 0 {
+                        try db.execute(sql: "DELETE FROM syncOperations")
+                        print("[Sync] Deleted \(deleteCount) old syncOperations — will re-enqueue all entities")
+                    }
+                }
+                // Reset sync timestamp separately (column may not exist in older DBs)
+                try? await database.write { db in
+                    // Add column if missing, then clear it
+                    try? db.execute(sql: "ALTER TABLE syncMetadata ADD COLUMN lastSyncTimestamp TEXT")
+                    try db.execute(sql: "UPDATE syncMetadata SET lastSyncTimestamp = NULL")
+                }
+                lastSyncTimestamp = nil
+                UserDefaults.standard.set(true, forKey: resetKey)
+            }
+
+            try await database.write { db in
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+                // Find ALL notes that don't have a pending or completed syncOperation
+                // Join with modules to include project name/icon for cross-device sync
+                // Skip notes created in the last 60 seconds (user may still be editing)
+                let sixtySecondsAgo = Int64(Date().timeIntervalSince1970 * 1000) - 60_000
+                let unsyncedNotes = try Row.fetchAll(db, sql: """
+                    SELECT n.id, n.title, n.body, n.bodyRichText, n.interstitialContent, n.interstitialRichContent,
+                           n.isPinned, n.intent, n.createdAt, n.updatedAt, n.moduleId, n.groupName,
+                           m.name AS moduleName, m.icon AS moduleIcon
+                    FROM notes n
+                    LEFT JOIN modules m ON m.id = n.moduleId
+                    WHERE n.deletedAt IS NULL
+                    AND n.createdAt < ?
+                    AND NOT EXISTS (
+                        SELECT 1 FROM syncOperations so
+                        WHERE so.entityId = n.id
+                    )
+                """, arguments: [sixtySecondsAgo])
+
+                for note in unsyncedNotes {
+                    let noteId = note["id"] as? String ?? ""
+                    let timestamp = note["updatedAt"] as? Int64 ?? Int64(Date().timeIntervalSince1970 * 1000)
+
+                    let isPinned: Bool = {
+                        if let b = note["isPinned"] as? Bool { return b }
+                        if let i = note["isPinned"] as? Int64 { return i != 0 }
+                        if let i = note["isPinned"] as? Int { return i != 0 }
+                        return false
+                    }()
+
+                    var payload: [String: Any] = [
+                        "title": note["title"] as? String ?? NSNull(),
+                        "body": note["body"] as? String ?? "",
+                        "is_pinned": isPinned,
+                        "color_intent": (note["intent"] as? String) ?? "idea",
+                        "module_id": note["moduleId"] as? String ?? NSNull(),
+                        "interstitial_content": note["interstitialContent"] as? String ?? "{}",
+                        "interstitial_rich_content": note["interstitialRichContent"] as? String ?? "{}",
+                        "created_at": formatter.string(from: Date(timeIntervalSince1970: Double(note["createdAt"] as? Int64 ?? 0) / 1000)),
+                        "updated_at": formatter.string(from: Date(timeIntervalSince1970: Double(timestamp) / 1000)),
+                    ]
+                    if let bodyRichText = note["bodyRichText"] as? String {
+                        payload["body_rich_text"] = bodyRichText
+                    }
+                    if let groupName = note["groupName"] as? String {
+                        payload["group_name"] = groupName
+                    }
+                    if let moduleName = note["moduleName"] as? String {
+                        payload["module_name"] = moduleName
+                    }
+                    if let moduleIcon = note["moduleIcon"] as? String {
+                        payload["module_icon"] = moduleIcon
+                    }
+
+                    let payloadData = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
+                    let payloadString = String(data: payloadData, encoding: .utf8) ?? "{}"
+
+                    try db.execute(sql: """
+                        INSERT OR IGNORE INTO syncOperations (operationId, entityType, entityId, operationType, payload, timestamp, synced)
+                        VALUES (?, 'note', ?, 'create', ?, ?, 0)
+                    """, arguments: [UUID().uuidString, noteId, payloadString, timestamp])
+                }
+
+                // Find ALL sections that don't have a pending or completed syncOperation
+                let unsyncedSections = try Row.fetchAll(db, sql: """
+                    SELECT s.id, s.noteId, s.content, s.contentType, s.parentSectionId,
+                           s.orderKey, s.indentLevel, s.isCollapsed, s.intent, s.handleId,
+                           s.createdAt, s.updatedAt
+                    FROM sections s
+                    WHERE s.deletedAt IS NULL
+                    AND NOT EXISTS (
+                        SELECT 1 FROM syncOperations so
+                        WHERE so.entityId = s.id
+                    )
+                """)
+
+                for section in unsyncedSections {
+                    let sectionId = section["id"] as? String ?? ""
+                    let timestamp = section["updatedAt"] as? Int64 ?? Int64(Date().timeIntervalSince1970 * 1000)
+
+                    let isCollapsed: Bool = {
+                        if let b = section["isCollapsed"] as? Bool { return b }
+                        if let i = section["isCollapsed"] as? Int64 { return i != 0 }
+                        if let i = section["isCollapsed"] as? Int { return i != 0 }
+                        return false
+                    }()
+
+                    let payload: [String: Any] = [
+                        "note_id": section["noteId"] as? String ?? "",
+                        "content": section["content"] as? String ?? "",
+                        "content_type": section["contentType"] as? String ?? "text",
+                        "parent_section_id": section["parentSectionId"] as? String ?? NSNull(),
+                        "order_key": section["orderKey"] as? String ?? "a",
+                        "indent_level": Int(truncating: section["indentLevel"] as? NSNumber ?? 0),
+                        "is_collapsed": isCollapsed,
+                        "color_intent": section["intent"] as? String ?? NSNull(),
+                        "handle_id": section["handleId"] as? String ?? NSNull(),
+                        "created_at": formatter.string(from: Date(timeIntervalSince1970: Double(section["createdAt"] as? Int64 ?? 0) / 1000)),
+                        "updated_at": formatter.string(from: Date(timeIntervalSince1970: Double(timestamp) / 1000)),
+                    ]
+
+                    let payloadData = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
+                    let payloadString = String(data: payloadData, encoding: .utf8) ?? "{}"
+
+                    try db.execute(sql: """
+                        INSERT OR IGNORE INTO syncOperations (operationId, entityType, entityId, operationType, payload, timestamp, synced)
+                        VALUES (?, 'section', ?, 'create', ?, ?, 0)
+                    """, arguments: [UUID().uuidString, sectionId, payloadString, timestamp])
+                }
+
+                let noteCount = unsyncedNotes.count
+                let sectionCount = unsyncedSections.count
+                if noteCount > 0 || sectionCount > 0 {
+                    print("[Sync] Enqueued \(noteCount) notes and \(sectionCount) sections for initial sync")
+                }
+            }
+        } catch {
+            print("[Sync] Error enqueuing unsynced entities: \(error)")
+        }
     }
 
     /// Trigger a sync cycle
@@ -77,13 +255,29 @@ actor SyncEngine {
         }
 
         do {
-            // 1. Pull remote changes
-            try await pullChanges()
+            // 0. Verify we have a valid session before syncing
+            if let session = supabase.currentSession {
+                print("[Sync] Current session expires: \(Date(timeIntervalSince1970: session.expiresAt))")
+            } else {
+                print("[Sync] No current session — aborting sync")
+                await MainActor.run { syncState = .error("Not authenticated") }
+                return
+            }
+
+            // 1. Pull remote changes (don't let pull failures block push)
+            do {
+                try await pullChanges()
+            } catch {
+                print("[Sync] Pull failed (will still attempt push): \(error)")
+            }
 
             // 2. Push local changes
             try await pushChanges()
 
-            // 3. Update sync state
+            // 3. Post-sync: fix orphaned notes and clean up empty modules
+            await cleanupOrphanedModules()
+
+            // 4. Update sync state
             await MainActor.run {
                 syncState = .idle
                 lastSyncDate = Date()
@@ -92,7 +286,13 @@ actor SyncEngine {
             await updatePendingCount()
 
         } catch {
-            print("Sync error: \(error)")
+            // Decode the response body for HTTP errors
+            if case let FunctionsError.httpError(code, data) = error {
+                let body = String(data: data, encoding: .utf8) ?? "(undecodable)"
+                print("[Sync] HTTP \(code) error body: \(body)")
+            } else {
+                print("[Sync] Error: \(error)")
+            }
             await MainActor.run {
                 syncState = .error(error.localizedDescription)
             }
@@ -188,14 +388,57 @@ actor SyncEngine {
 
     private func applyPulledChanges(_ response: SyncPullResponse) async throws {
         try await database.write { db in
-            // Apply note updates/creates
+            // Temporarily disable FK checks so sections can arrive before/without their parent notes
+            try db.execute(sql: "PRAGMA foreign_keys = OFF")
+            defer { try? db.execute(sql: "PRAGMA foreign_keys = ON") }
+
+            // Clean up any leftover "Synced Project" ghost modules
+            try db.execute(sql: "DELETE FROM modules WHERE name = 'Synced Project'")
+
+            // Apply note updates/creates — create missing modules from synced metadata
             for remoteNote in response.notes {
                 let localNote = remoteNote.toLocal()
+
+                // If the moduleId doesn't exist locally, create it using synced name/icon
+                if let moduleId = localNote.moduleId, !moduleId.isEmpty {
+                    let exists = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM modules WHERE id = ?", arguments: [moduleId]) ?? 0
+                    if exists == 0 {
+                        let moduleName = remoteNote.moduleName ?? "Synced"
+                        let moduleIcon = remoteNote.moduleIcon ?? "cloud"
+                        let now = Int64(Date().timeIntervalSince1970 * 1000)
+
+                        // Check if a module with the same name already exists
+                        let existingByName = try String.fetchOne(db, sql: """
+                            SELECT id FROM modules WHERE name = ? AND deletedAt IS NULL
+                        """, arguments: [moduleName])
+
+                        if let existingId = existingByName {
+                            // Module with same name exists — remap note to use the existing module
+                            var remappedNote = localNote
+                            remappedNote.moduleId = existingId
+                            if let existing = try Note.fetchOne(db, key: remappedNote.id) {
+                                if (existing.serverVersion ?? 0) < remappedNote.localVersion {
+                                    try remappedNote.update(db)
+                                }
+                            } else {
+                                try remappedNote.insert(db)
+                            }
+                            continue
+                        } else {
+                            // Create the module with the same ID so all devices share the same moduleId
+                            try db.execute(sql: """
+                                INSERT OR IGNORE INTO modules (id, name, icon, isDefault, storageType, orderIndex, createdAt, updatedAt)
+                                VALUES (?, ?, ?, 0, 'cloud', 0, ?, ?)
+                            """, arguments: [moduleId, moduleName, moduleIcon, now, now])
+                            print("[Sync] Created module '\(moduleName)' (\(moduleId)) from synced note")
+                        }
+                    }
+                }
 
                 // Check if exists locally
                 if let existing = try Note.fetchOne(db, key: localNote.id) {
                     // Only update if server version is newer
-                    if (existing.serverVersion ?? 0) < localNote.localVersion {
+                    if (existing.serverVersion ?? 0) <= localNote.localVersion {
                         try localNote.update(db)
                     }
                 } else {
@@ -218,16 +461,20 @@ actor SyncEngine {
                 }
             }
 
-            // Apply section updates/creates
+            // Apply section updates/creates (skip individual failures)
             for remoteSection in response.sections {
                 let localSection = remoteSection.toLocal()
 
-                if let existing = try Section.fetchOne(db, key: localSection.id) {
-                    if (existing.serverVersion ?? 0) < localSection.localVersion {
-                        try localSection.update(db)
+                do {
+                    if let existing = try Section.fetchOne(db, key: localSection.id) {
+                        if (existing.serverVersion ?? 0) <= localSection.localVersion {
+                            try localSection.update(db)
+                        }
+                    } else {
+                        try localSection.insert(db)
                     }
-                } else {
-                    try localSection.insert(db)
+                } catch {
+                    print("[Sync] Skipping section \(localSection.id): \(error.localizedDescription)")
                 }
             }
 
@@ -261,6 +508,14 @@ actor SyncEngine {
                     """, arguments: [handleId])
                 }
             }
+
+            // Clean up empty modules — when notes get reassigned on another device,
+            // the old module becomes empty and should be removed.
+            // Only clean modules older than 5 minutes to avoid deleting newly created empty ones.
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            let fiveMinAgo = now - 300_000
+
+            // Module cleanup is handled by cleanupOrphanedModules() after sync completes
         }
     }
 
@@ -271,17 +526,33 @@ actor SyncEngine {
             throw SyncError.notInitialized
         }
 
-        // Get pending operations using raw SQL for compatibility
+        // Get pending operations — notes first, then sections, so FK constraints are satisfied
         let operations = try await database.read { db in
             try SyncOperationRecord.fetchAll(db, sql: """
-                SELECT * FROM syncOperations 
-                WHERE synced = 0 
-                ORDER BY timestamp 
-                LIMIT 100
+                SELECT * FROM syncOperations
+                WHERE synced = 0
+                ORDER BY CASE entityType WHEN 'note' THEN 0 WHEN 'handle' THEN 1 ELSE 2 END, timestamp
+                LIMIT 10
             """)
         }
 
-        guard !operations.isEmpty else { return }
+        guard !operations.isEmpty else {
+            print("[Sync] No pending operations to push")
+            return
+        }
+        print("[Sync] Found \(operations.count) pending operations to push (types: \(operations.map { $0.entityType }))")
+
+        // Look up actual server versions for entities being pushed
+        let entityVersions = try await database.read { db -> [String: Int] in
+            var versions: [String: Int] = [:]
+            for op in operations {
+                let table = op.entityType == "note" ? "notes" : (op.entityType == "handle" ? "handles" : "sections")
+                if let version = try Int.fetchOne(db, sql: "SELECT COALESCE(serverVersion, localVersion, 1) FROM \(table) WHERE id = ?", arguments: [op.entityId]) {
+                    versions[op.entityId] = version
+                }
+            }
+            return versions
+        }
 
         // Convert to DTOs
         let operationDTOs = operations.map { op -> SyncOperationDTO in
@@ -295,12 +566,32 @@ actor SyncEngine {
                 operation: op.operationType,
                 payload: parsePayload(op.payload),
                 clientTimestamp: formatter.string(from: Date(timeIntervalSince1970: Double(op.timestamp) / 1000)),
-                clientVersion: 1 // TODO: Track actual version
+                clientVersion: entityVersions[op.entityId] ?? 1
             )
         }
 
         let request = SyncPushRequest(deviceId: deviceId, operations: operationDTOs)
+        // Pre-flight: verify encoding succeeds (SDK silently drops body on encode failure)
+        do {
+            let encoded = try JSONEncoder().encode(request)
+            print("[Sync] Pushing \(operationDTOs.count) operations (\(encoded.count) bytes)...")
+        } catch {
+            print("[Sync] ENCODING FAILURE — push body cannot be serialized: \(error)")
+            // Find and log which operation is problematic
+            for (i, dto) in operationDTOs.enumerated() {
+                do {
+                    _ = try JSONEncoder().encode(dto)
+                } catch {
+                    print("[Sync]   Operation \(i) (\(dto.entityType)/\(dto.entityId)) fails: \(error)")
+                }
+            }
+            return
+        }
         let response: SyncPushResponse = try await supabase.invokeFunction("sync-push", body: request)
+        print("[Sync] Push result: \(response.accepted.count) accepted, \(response.conflicts.count) conflicts")
+        if !response.accepted.isEmpty {
+            lastPushTime = Date()
+        }
 
         // Mark accepted operations as synced
         try await database.write { db in
@@ -327,9 +618,20 @@ actor SyncEngine {
             }
         }
 
-        // Handle conflicts
-        for conflict in response.conflicts {
-            try await handleConflict(conflict)
+        // Handle conflicts — mark their operations as synced so they don't retry forever
+        if !response.conflicts.isEmpty {
+            try await database.write { db in
+                for conflict in response.conflicts {
+                    // Mark the sync operation as done (conflict resolved by server)
+                    try db.execute(sql: """
+                        UPDATE syncOperations SET synced = 1
+                        WHERE entityId = ? AND synced = 0
+                    """, arguments: [conflict.entityId])
+                }
+            }
+            for conflict in response.conflicts {
+                try await handleConflict(conflict)
+            }
         }
 
         // If there are more pending operations, push again
@@ -360,6 +662,122 @@ actor SyncEngine {
         // If server wins and we have merged entity, apply it
         if conflict.resolution == "server_wins", let merged = conflict.mergedEntity {
             // TODO: Apply merged entity to local database
+        }
+    }
+
+    // MARK: - Module Cleanup
+
+    /// Create missing modules for orphaned notes instead of reassigning them.
+    /// This preserves the server's moduleId so both devices converge.
+    private func cleanupOrphanedModules() async {
+        try? await database.write { db in
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+
+            // 1. Find orphaned moduleIds (notes point to modules that don't exist locally)
+            let orphanedModuleIds = try String.fetchAll(db, sql: """
+                SELECT DISTINCT moduleId FROM notes
+                WHERE deletedAt IS NULL AND moduleId IS NOT NULL
+                AND NOT EXISTS (SELECT 1 FROM modules WHERE id = notes.moduleId AND deletedAt IS NULL)
+            """)
+
+            // 2. Create missing modules instead of reassigning notes
+            for moduleId in orphanedModuleIds {
+                try db.execute(sql: """
+                    INSERT OR IGNORE INTO modules (id, name, icon, isDefault, storageType, orderIndex, createdAt, updatedAt)
+                    VALUES (?, 'Synced', 'folder', 0, 'cloud', 0, ?, ?)
+                """, arguments: [moduleId, now, now])
+                print("[Sync] Created missing module for orphaned notes (moduleId: \(moduleId.prefix(8))...)")
+            }
+
+            // 3. Ensure at least one module exists
+            let remaining = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM modules WHERE deletedAt IS NULL") ?? 0
+            if remaining == 0 {
+                try db.execute(sql: """
+                    INSERT INTO modules (id, name, icon, isDefault, storageType, orderIndex, createdAt, updatedAt)
+                    VALUES (?, 'Artifacts', 'folder', 0, 'local', 0, ?, ?)
+                """, arguments: [UUID().uuidString, now, now])
+                print("[Sync] Created fallback 'Artifacts' module")
+            }
+        }
+    }
+
+    // MARK: - Realtime Subscription
+
+    /// Subscribe to Supabase Realtime for live sync when app is in foreground
+    func subscribeRealtime() async {
+        guard realtimeChannel == nil,
+              deviceId != nil,
+              supabase.isAuthenticated else { return }
+
+        let channel = supabase.client.realtimeV2.channel("sync_changes")
+
+        let noteChanges = channel.postgresChange(
+            AnyAction.self, schema: "public", table: "notes"
+        )
+        let sectionChanges = channel.postgresChange(
+            AnyAction.self, schema: "public", table: "sections"
+        )
+
+        realtimeTask = Task {
+            async let noteLoop: Void = {
+                for await _ in noteChanges {
+                    await self.scheduleRealtimeSync()
+                }
+            }()
+            async let sectionLoop: Void = {
+                for await _ in sectionChanges {
+                    await self.scheduleRealtimeSync()
+                }
+            }()
+            _ = await (noteLoop, sectionLoop)
+        }
+
+        await channel.subscribe()
+        self.realtimeChannel = channel
+        print("[Sync] Realtime subscribed")
+    }
+
+    /// Unsubscribe from Realtime when app enters background
+    func unsubscribeRealtime() async {
+        debouncedSyncTask?.cancel()
+        debouncedSyncTask = nil
+        realtimeTask?.cancel()
+        realtimeTask = nil
+        if let channel = realtimeChannel {
+            await supabase.client.realtimeV2.removeChannel(channel)
+            self.realtimeChannel = nil
+            print("[Sync] Realtime unsubscribed")
+        }
+    }
+
+    /// Debounced sync trigger — waits for quiet before syncing
+    /// Skips if we just pushed (self-echo) or if already syncing
+    private func scheduleRealtimeSync() {
+        // Ignore Realtime events within 5 seconds of our own push (self-echo)
+        if Date().timeIntervalSince(lastPushTime) < 5.0 { return }
+        // Don't queue if already syncing
+        guard !isSyncing else { return }
+        debouncedSyncTask?.cancel()
+        debouncedSyncTask = Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 second debounce
+            guard !Task.isCancelled, !isSyncing else { return }
+            print("[Sync] Realtime trigger — syncing")
+            await sync()
+        }
+    }
+
+    /// Debounced push trigger — called when new sync operations are created locally
+    private var debouncedPushTask: Task<Void, Never>?
+
+    func schedulePush() {
+        // Don't schedule if already syncing — it'll pick up pending ops
+        guard !isSyncing else { return }
+        debouncedPushTask?.cancel()
+        debouncedPushTask = Task {
+            try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 second debounce
+            guard !Task.isCancelled else { return }
+            guard !isSyncing else { return } // double-check before firing
+            await sync()
         }
     }
 
@@ -399,19 +817,21 @@ actor SyncEngine {
 
         #if os(iOS)
         let deviceName = UIDevice.current.name
+        let platform = "ios"
         #else
         let deviceName = Host.current().localizedName ?? "Mac"
+        let platform = "macos"
         #endif
-        
+
         let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
-        
+
         do {
             try await supabase.client.from("devices")
                 .upsert([
                     "id": deviceId,
                     "user_id": userId.uuidString,
                     "device_name": deviceName,
-                    "platform": "ios",
+                    "platform": platform,
                     "app_version": appVersion
                 ])
                 .execute()
@@ -452,7 +872,18 @@ actor SyncEngine {
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return [:]
         }
-        return dict.mapValues { AnyCodable($0) }
+        var result: [String: AnyCodable] = [:]
+        for (key, value) in dict {
+            let codable = AnyCodable(value)
+            // Verify this value can actually encode (the SDK uses try? which silently drops the body)
+            if (try? JSONEncoder().encode(codable)) != nil {
+                result[key] = codable
+            } else {
+                print("[Sync] WARNING: payload key '\(key)' (type: \(type(of: value))) cannot encode, converting to string")
+                result[key] = AnyCodable(String(describing: value))
+            }
+        }
+        return result
     }
 }
 

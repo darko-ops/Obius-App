@@ -52,9 +52,23 @@ final class BiometricManager: ObservableObject {
                 self?.revokeAllAuthentications()
             }
             .store(in: &cancellables)
-        
+
         // Re-check biometric availability when app becomes active
         NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in
+                self?.checkBiometricAvailability()
+            }
+            .store(in: &cancellables)
+        #elseif os(macOS)
+        // Revoke all authentications when app resigns active
+        NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)
+            .sink { [weak self] _ in
+                self?.revokeAllAuthentications()
+            }
+            .store(in: &cancellables)
+
+        // Re-check biometric availability when app becomes active
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
                 self?.checkBiometricAvailability()
             }

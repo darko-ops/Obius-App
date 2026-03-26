@@ -110,15 +110,20 @@ private struct NotesListContent: View {
             RoundedSearchBar(text: $searchQuery, placeholder: "Search")
                 .padding(.horizontal)
                 .padding(.vertical, 8)
-                .background(Color(.systemBackground))
+                .background(Color.systemBackground)
 
             notesList
         }
-        .background(Color(.systemBackground))
+        .background(Color.systemBackground)
         .navigationTitle("")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(Color(.systemBackground), for: .navigationBar)
+        .inlineNavigationTitle()
+        #if os(iOS)
+        .toolbarBackground(Color.systemBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
+        #else
+        .toolbarBackground(Color.systemBackground, for: .windowToolbar)
+        .toolbarBackground(.visible, for: .windowToolbar)
+        #endif
         .toolbar { toolbarContent }
         .confirmationDialog(
             "Delete \(selectedNoteIds.count) pages?",
@@ -276,7 +281,7 @@ private struct NotesListContent: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
+        ToolbarItem(placement: .cancellationAction) {
             if let module = selectedModule {
                 StorageTypeBadge(storageType: module.storageType)
             }
@@ -327,7 +332,8 @@ private struct NotesListContent: View {
                     Task {
                         do {
                             let note = try await noteRepository.createNote(moduleId: selectedModuleId)
-                            syncLogger.logNoteCreate(note)
+                            // Don't logNoteCreate here — the editor's onDisappear handles sync
+                            // so we don't push an empty note to other devices
                             selectedNote = note
                         } catch {
                             print("Failed to create note: \(error)")
@@ -339,14 +345,16 @@ private struct NotesListContent: View {
             }
         }
 
+        #if os(iOS)
         ToolbarItemGroup(placement: .keyboard) {
             Spacer()
             Button {
-                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                KeyboardHelper.dismiss()
             } label: {
                 Image(systemName: "keyboard.chevron.compact.down")
             }
         }
+        #endif
     }
 
     @ViewBuilder
@@ -361,7 +369,6 @@ private struct NotesListContent: View {
                     guard TierManager.shared.requireNoteCreation(currentCount: noteRepository.notes.count) else { return }
                     Task {
                         if let note = try? await noteRepository.createNote(moduleId: selectedModuleId) {
-                            syncLogger.logNoteCreate(note)
                             selectedNote = note
                         }
                     }
@@ -494,7 +501,7 @@ private struct NotesListContent: View {
                 } header: {
                     Text("TRACKING")
                         .font(.caption.weight(.semibold))
-                        .foregroundColor(Color(.secondaryLabel))
+                        .foregroundColor(.secondary)
                         .textCase(nil)
                 }
             }
@@ -506,7 +513,7 @@ private struct NotesListContent: View {
             } header: {
                 Text("RECENTS")
                     .font(.caption.weight(.semibold))
-                    .foregroundColor(Color(.secondaryLabel))
+                    .foregroundColor(.secondary)
                     .textCase(nil)
             }
 
@@ -514,8 +521,11 @@ private struct NotesListContent: View {
         }
         #if os(iOS)
         .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
+        #else
+        .listStyle(.plain)
+        .listRowBackground(Color.systemBackground)
         #endif
+        .scrollContentBackground(.hidden)
         .confirmationDialog(
             longPressedBlockName ?? "",
             isPresented: Binding(
@@ -605,7 +615,7 @@ private struct NotesListContent: View {
                             count: groupedNotes[groupName]?.count ?? 0,
                             onTap: { selectedBlockName = groupName },
                             onLongPress: {
-                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                HapticFeedback.impact(.medium)
                                 longPressedBlockName = groupName
                             }
                         )
@@ -617,7 +627,7 @@ private struct NotesListContent: View {
             } header: {
                 Text("BLOCKS")
                     .font(.caption.weight(.semibold))
-                    .foregroundColor(Color(.secondaryLabel))
+                    .foregroundColor(.secondary)
                     .textCase(nil)
             }
         }
@@ -636,7 +646,7 @@ private struct NotesListContent: View {
             NoteRowView(note: note, sectionContent: sectionPreviews[note.id], autoTitle: autoTitles[note.id])
         }
         .contentShape(Rectangle())
-        .listRowBackground(Color(.systemBackground))
+        .listRowBackground(Color.systemBackground)
         .onTapGesture {
             if isSelectionMode {
                 withAnimation(.easeInOut(duration: 0.15)) {

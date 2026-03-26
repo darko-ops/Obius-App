@@ -36,6 +36,9 @@ final class DatabaseManager {
                 let dir = appGroupURL.deletingLastPathComponent()
                 try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
                 dbURL = appGroupURL
+                #if DEBUG
+                print("[DatabaseManager] Using app group database: \(appGroupURL.path)")
+                #endif
             } else {
                 // Fallback to legacy path if App Group unavailable
                 let appSupport = try FileManager.default.url(
@@ -45,6 +48,9 @@ final class DatabaseManager {
                     create: true
                 )
                 dbURL = appSupport.appendingPathComponent("obius.sqlite")
+                #if DEBUG
+                print("[DatabaseManager] ⚠️ App group unavailable — using fallback: \(dbURL.path)")
+                #endif
             }
 
             var config = Configuration()
@@ -806,6 +812,39 @@ final class DatabaseManager {
             try db.execute(sql: """
                 UPDATE syncMetadata SET schemaVersion = 33
             """)
+        }
+
+        // v34: Remove default Local/Cloud modules — all projects are user-created now
+        migrator.registerMigration("v34_remove_default_modules") { db in
+            // Un-default all modules so they can be renamed/deleted
+            try db.execute(sql: "UPDATE modules SET isDefault = 0")
+
+            // Soft-delete the auto-created Local and Cloud modules if they have no notes
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            for name in ["Local", "Cloud"] {
+                let noteCount = try Int.fetchOne(db, sql: """
+                    SELECT COUNT(*) FROM notes
+                    WHERE moduleId IN (SELECT id FROM modules WHERE name = ? AND deletedAt IS NULL)
+                    AND deletedAt IS NULL
+                """, arguments: [name]) ?? 0
+
+                if noteCount == 0 {
+                    try db.execute(sql: """
+                        UPDATE modules SET deletedAt = ?, updatedAt = ? WHERE name = ? AND deletedAt IS NULL
+                    """, arguments: [now, now, name])
+                }
+            }
+
+            // Ensure at least one module exists — create "Artifacts" if all were deleted
+            let remaining = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM modules WHERE deletedAt IS NULL") ?? 0
+            if remaining == 0 {
+                try db.execute(sql: """
+                    INSERT INTO modules (id, name, icon, isDefault, storageType, orderIndex, createdAt, updatedAt)
+                    VALUES (?, 'Artifacts', 'folder', 0, 'local', 0, ?, ?)
+                """, arguments: [UUID().uuidString, now, now])
+            }
+
+            try db.execute(sql: "UPDATE syncMetadata SET schemaVersion = 34")
         }
 
         self.migrator = migrator

@@ -40,7 +40,7 @@ struct ShareSheet: View {
                 }
             }
             .navigationTitle("Share")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }

@@ -1,4 +1,8 @@
 import SwiftUI
+import CoreText
+#if os(iOS)
+import UIKit
+#endif
 
 // MARK: - Inter Font Extension
 
@@ -22,9 +26,10 @@ extension Font {
 // MARK: - Global Font Registration
 
 enum InterFontRegistration {
-    /// Overrides the default UIKit font appearance with Inter so that
+    /// Overrides the default font appearance with Inter so that
     /// SwiftUI text styles (`.body`, `.headline`, etc.) use Inter.
     static func registerAsDefault() {
+        #if os(iOS)
         let fontDescriptors: [(String, UIFont.Weight)] = [
             ("Inter-Regular", .regular),
             ("Inter-Medium", .medium),
@@ -63,5 +68,14 @@ enum InterFontRegistration {
         }
         UINavigationBar.appearance().standardAppearance = navBarAppearance
         UINavigationBar.appearance().scrollEdgeAppearance = navBarAppearance
+        #elseif os(macOS)
+        // On macOS, register fonts via CTFontManager. SwiftUI .custom() handles the rest.
+        let fontNames = ["Inter-Regular", "Inter-Medium", "Inter-SemiBold", "Inter-Bold", "Inter-Light"]
+        for name in fontNames {
+            if let url = Bundle.main.url(forResource: name, withExtension: "ttf") {
+                CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+            }
+        }
+        #endif
     }
 }

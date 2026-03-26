@@ -132,9 +132,17 @@ final class StoreManager: ObservableObject {
     // MARK: - Tier Sync
 
     func syncTier(from info: CustomerInfo) {
+        #if DEBUG
+        let allEntitlements = info.entitlements.all.map { "\($0.key): active=\($0.value.isActive), product=\($0.value.productIdentifier)" }
+        print("[StoreManager] Entitlements: \(allEntitlements.isEmpty ? "(none)" : allEntitlements.joined(separator: ", "))")
+        #endif
+
         guard let entitlement = info.entitlements[Self.entitlementID],
               entitlement.isActive else {
-            if !TierManager.shared.isFoundingMember {
+            // Don't downgrade if Supabase already confirmed a paid tier
+            // (handles macOS where StoreKit may not have an active account)
+            if !TierManager.shared.isFoundingMember &&
+               TierManager.shared.serverConfirmedTier == nil {
                 TierManager.shared.updateTier(.free)
             }
             return
@@ -142,12 +150,58 @@ final class StoreManager: ObservableObject {
 
         // Detect Founders plan — matches the rc_lifetime package
         let productId = entitlement.productIdentifier.lowercased()
+        let tier: Tier
         if productId.contains("founding") || productId.contains("founder") || productId.contains("lifetime") {
             TierManager.shared.isFoundingMember = true
             UserDefaults.standard.set(true, forKey: "obius_is_founding_member")
-            TierManager.shared.updateTier(.founding)
+            tier = .founding
         } else {
-            TierManager.shared.updateTier(.pro)
+            tier = .pro
+        }
+        TierManager.shared.updateTier(tier)
+
+        // Write confirmed tier to Supabase so other devices (macOS) can read it
+        // even if the RevenueCat webhook hasn't fired
+        Task {
+            await Self.syncTierToServer(
+                tier: tier,
+                productId: entitlement.productIdentifier,
+                expiresAt: entitlement.expirationDate
+            )
+        }
+    }
+
+    /// Push the locally-confirmed tier to Supabase user_profiles.
+    /// Acts as a client-side fallback for the RevenueCat webhook.
+    private static func syncTierToServer(tier: Tier, productId: String, expiresAt: Date?) async {
+        guard SupabaseManager.shared.isAuthenticated,
+              let userId = SupabaseManager.shared.currentUser?.id.uuidString.lowercased() else {
+            return
+        }
+
+        var update: [String: String] = [
+            "subscription_tier": tier.rawValue,
+            "subscription_product_id": productId,
+            "updated_at": ISO8601DateFormatter().string(from: Date()),
+        ]
+
+        if let expiresAt {
+            update["subscription_expires_at"] = ISO8601DateFormatter().string(from: expiresAt)
+        }
+
+        if tier == .founding {
+            update["is_founding_member"] = "true"
+        }
+
+        do {
+            try await SupabaseManager.shared.client
+                .from("user_profiles")
+                .update(update)
+                .eq("id", value: userId)
+                .execute()
+            print("[StoreManager] Synced tier '\(tier.rawValue)' to server for \(userId)")
+        } catch {
+            print("[StoreManager] Failed to sync tier to server: \(error)")
         }
     }
 }

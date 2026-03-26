@@ -90,9 +90,7 @@ struct EchoConfigSheet: View {
                 .padding(.top)
             }
             .navigationTitle("Configure Echo")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Remove") {
@@ -151,7 +149,7 @@ struct EchoConfigSheet: View {
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 12)
-        .background(Color(.secondarySystemBackground))
+        .background(Color.secondarySystemBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
@@ -377,9 +375,7 @@ struct EchoDetailSheet: View {
                 }
             }
             .navigationTitle("Echo Details")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -479,12 +475,12 @@ struct ManageEchoesSheet: View {
             }
             .background(Color.black)
             .navigationTitle("Echoes")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button {
                         showingCreateEcho = true
                     } label: {
@@ -648,7 +644,7 @@ struct CreateEchoSheet: View {
                 }
             }
             .navigationTitle("New Echo")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }

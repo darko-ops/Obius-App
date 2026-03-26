@@ -115,6 +115,69 @@ enum RichTextHelper {
         return result
     }
 }
+#elseif os(macOS)
+/// macOS Rich Text Helper using NSFont
+enum RichTextHelper {
+    static func serialize(_ attributedText: NSAttributedString) -> String? {
+        guard attributedText.length > 0 else { return nil }
+        guard let data = try? attributedText.data(
+            from: NSRange(location: 0, length: attributedText.length),
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
+        ) else { return nil }
+        return data.base64EncodedString()
+    }
+
+    static func deserialize(_ base64String: String) -> NSAttributedString? {
+        guard let data = Data(base64Encoded: base64String) else { return nil }
+        return try? NSAttributedString(
+            data: data,
+            options: [.documentType: NSAttributedString.DocumentType.rtf],
+            documentAttributes: nil
+        )
+    }
+
+    static func fromMarkdown(_ text: String) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        let bodyFont = NSFont.systemFont(ofSize: 17)
+        let bodyColor = NSColor.labelColor
+
+        let lines = text.components(separatedBy: "\n")
+
+        for (index, line) in lines.enumerated() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if index > 0 {
+                result.append(NSAttributedString(string: "\n"))
+            }
+
+            if trimmed.hasPrefix("### ") {
+                let content = String(trimmed.dropFirst(4))
+                let font = NSFont.systemFont(ofSize: 19, weight: .semibold)
+                result.append(NSAttributedString(string: content, attributes: [
+                    .font: font, .foregroundColor: bodyColor
+                ]))
+            } else if trimmed.hasPrefix("## ") {
+                let content = String(trimmed.dropFirst(3))
+                let font = NSFont.systemFont(ofSize: 22, weight: .bold)
+                result.append(NSAttributedString(string: content, attributes: [
+                    .font: font, .foregroundColor: bodyColor
+                ]))
+            } else if trimmed.hasPrefix("# ") {
+                let content = String(trimmed.dropFirst(2))
+                let font = NSFont.systemFont(ofSize: 28, weight: .bold)
+                result.append(NSAttributedString(string: content, attributes: [
+                    .font: font, .foregroundColor: bodyColor
+                ]))
+            } else {
+                result.append(NSAttributedString(string: trimmed, attributes: [
+                    .font: bodyFont, .foregroundColor: bodyColor
+                ]))
+            }
+        }
+
+        return result
+    }
+}
 #endif
 
 /// The main section view component with Intent Rail, background tinting, and shimmer lock support
@@ -161,7 +224,7 @@ struct SectionView: View {
     @State private var isEditing = false
     @State private var isProcessingLock = false
     @State private var imageDominantColor: Color?
-    @State private var imageNodeBackground: UIImage?
+    @State private var imageNodeBackground: PlatformImage?
     @FocusState private var textFieldFocused: Bool
 
     @StateObject private var biometricManager = BiometricManager.shared
@@ -354,9 +417,7 @@ struct SectionView: View {
                             }
 
                             Button {
-                                #if os(iOS)
-                                UIPasteboard.general.string = handle.formattedName
-                                #endif
+                                ClipboardHelper.copy(handle.formattedName)
                             } label: {
                                 Label("Copy Loop Name", systemImage: "doc.on.doc")
                             }
@@ -386,7 +447,6 @@ struct SectionView: View {
 
     // MARK: - Audio Node View (fold-styled container for audio)
 
-    #if os(iOS)
     @ViewBuilder
     private var audioNodeFoldView: some View {
         // Content format: "hash|duration" — extract hash and duration
@@ -432,16 +492,9 @@ struct SectionView: View {
         .overlay(focusBorder)
         .contextMenu { contextMenuItems }
     }
-    #else
-    private var audioNodeFoldView: some View {
-        Text("Audio nodes are only supported on iOS")
-            .foregroundStyle(.secondary)
-    }
-    #endif
 
     // MARK: - Image Node View (fold-styled container for images)
 
-    #if os(iOS)
     @ViewBuilder
     private var imageNodeFoldView: some View {
         // Content format: "hash|assetId,hash|assetId,..." — extract just the hash part
@@ -471,7 +524,7 @@ struct SectionView: View {
                 // Blurred copy of the current photo fills the entire node container
                 GeometryReader { geo in
                     if let bgImage = imageNodeBackground {
-                        Image(uiImage: bgImage)
+                        platformImage(bgImage)
                             .resizable()
                             .scaledToFill()
                             .frame(width: geo.size.width, height: geo.size.height)
@@ -479,7 +532,7 @@ struct SectionView: View {
                             .saturation(1.2)
                             .clipped()
                     } else {
-                        (imageDominantColor ?? Color(.systemGray5))
+                        (imageDominantColor ?? Color.systemGray5)
                     }
                 }
             }
@@ -489,13 +542,6 @@ struct SectionView: View {
             .contextMenu { contextMenuItems }
         }
     }
-
-    #else
-    private var imageNodeFoldView: some View {
-        Text("Image nodes are only supported on iOS")
-            .foregroundStyle(.secondary)
-    }
-    #endif
 
     // MARK: - Line View (plain text without node styling)
 
@@ -572,7 +618,7 @@ struct SectionView: View {
                 .frame(maxWidth: .infinity, minHeight: 32)
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight)
                 .onChange(of: content) { _, newValue in
-                    onContentChange(newValue)
+                    onContentChange(newValue, nil)
                 }
             #endif
         }
@@ -807,7 +853,7 @@ struct SectionView: View {
                 .focused($textFieldFocused)
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight)
                 .onChange(of: content) { _, newValue in
-                    onContentChange(newValue)
+                    onContentChange(newValue, nil)
                 }
             #endif
         }
@@ -1065,6 +1111,22 @@ struct SingleLineTextField: UIViewRepresentable {
             textField.resignFirstResponder()
             return true
         }
+    }
+}
+#elseif os(macOS)
+/// macOS single-line text field using SwiftUI TextField
+struct SingleLineTextField: View {
+    @Binding var text: String
+    var isFocused: FocusState<Bool>.Binding
+
+    var body: some View {
+        TextField("", text: $text)
+            .textFieldStyle(.plain)
+            .font(.body)
+            .focused(isFocused)
+            .onSubmit {
+                isFocused.wrappedValue = false
+            }
     }
 }
 #endif
@@ -1663,6 +1725,110 @@ struct EditableTextView: UIViewRepresentable {
         }
     }
 }
+#elseif os(macOS)
+/// macOS editable text view using NSViewRepresentable wrapping NSTextView
+struct EditableTextView: NSViewRepresentable {
+    @Binding var text: String
+    var isFocused: FocusState<Bool>.Binding
+    var richText: String?
+    let onContentChange: (String, String?) -> Void
+    let onFocusChange: (Bool) -> Void
+    var onIndent: (() -> Void)?
+    var onOutdent: (() -> Void)?
+    var currentStatus: IntentType?
+    var onStatusChange: ((IntentType) -> Void)?
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSTextView.scrollableTextView()
+        let textView = scrollView.documentView as! NSTextView
+        textView.delegate = context.coordinator
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.isRichText = true
+        textView.allowsUndo = true
+        textView.drawsBackground = false
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.lineBreakMode = .byWordWrapping
+        textView.textContainerInset = NSSize(width: 0, height: 8)
+        textView.font = NSFont.systemFont(ofSize: 17)
+        textView.textColor = NSColor.labelColor
+
+        // Disable scroll view scrolling — parent ScrollView handles it
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.drawsBackground = false
+
+        // Load rich text if available, otherwise plain text
+        if let richText = richText,
+           let attrText = RichTextHelper.deserialize(richText) {
+            textView.textStorage?.setAttributedString(attrText)
+        } else {
+            textView.string = text
+        }
+
+        HashtagHelper.applyHighlighting(to: textView)
+        context.coordinator.textView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? NSTextView else { return }
+        // Only update when not focused to prevent cursor jumping
+        if textView.window?.firstResponder != textView, textView.string != text {
+            if let richText = richText,
+               let attrText = RichTextHelper.deserialize(richText) {
+                textView.textStorage?.setAttributedString(attrText)
+            } else {
+                textView.string = text
+            }
+        }
+
+        if isFocused.wrappedValue && textView.window?.firstResponder != textView {
+            DispatchQueue.main.async {
+                textView.window?.makeFirstResponder(textView)
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: EditableTextView
+        weak var textView: NSTextView?
+
+        init(_ parent: EditableTextView) {
+            self.parent = parent
+        }
+
+        func textDidBeginEditing(_ notification: Notification) {
+            parent.isFocused.wrappedValue = true
+            parent.onFocusChange(true)
+        }
+
+        func textDidEndEditing(_ notification: Notification) {
+            parent.isFocused.wrappedValue = false
+            parent.onFocusChange(false)
+            guard let textView = textView else { return }
+            let richText = RichTextHelper.serialize(textView.attributedString())
+            parent.onContentChange(textView.string, richText)
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = textView else { return }
+            HashtagHelper.applyHighlighting(to: textView)
+            let newText = textView.string
+            let richText = RichTextHelper.serialize(textView.attributedString())
+            if parent.text != newText {
+                parent.text = newText
+            }
+            parent.onContentChange(newText, richText)
+        }
+    }
+}
 #endif
 
 // MARK: - Template Protected Text View
@@ -1901,6 +2067,38 @@ struct TemplateProtectedTextView: UIViewRepresentable {
             parent.onContentChange(newText, richText)
             textView.invalidateIntrinsicContentSize()
         }
+    }
+}
+#elseif os(macOS)
+/// macOS template protected text view — uses basic TextEditor with template prefix enforcement
+struct TemplateProtectedTextView: View {
+    @Binding var text: String
+    let templatePrefix: String
+    var isFocused: FocusState<Bool>.Binding
+    var richText: String?
+    let onContentChange: (String, String?) -> Void
+    var onIndent: (() -> Void)?
+    var onOutdent: (() -> Void)?
+    var currentStatus: IntentType?
+    var onStatusChange: ((IntentType) -> Void)?
+
+    var body: some View {
+        TextEditor(text: $text)
+            .font(.body)
+            .scrollContentBackground(.hidden)
+            .focused(isFocused)
+            .onAppear {
+                // Ensure template prefix is present
+                let templateSegments = templatePrefix.components(separatedBy: "\n").filter { !$0.isEmpty }
+                let allPresent = templateSegments.allSatisfy { text.contains($0) }
+                if !allPresent {
+                    text = templatePrefix + text
+                    onContentChange(text, nil)
+                }
+            }
+            .onChange(of: text) { _, newValue in
+                onContentChange(newValue, nil)
+            }
     }
 }
 #endif

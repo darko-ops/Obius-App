@@ -2,13 +2,37 @@ import Foundation
 import GRDB
 import SwiftUI
 
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
+/// Helper to create adaptive colors that work on both iOS and macOS
+private func adaptiveColor(light: (CGFloat, CGFloat, CGFloat), dark: (CGFloat, CGFloat, CGFloat)) -> Color {
+    #if os(iOS)
+    return Color(UIColor { traitCollection in
+        traitCollection.userInterfaceStyle == .dark
+            ? UIColor(red: dark.0, green: dark.1, blue: dark.2, alpha: 1.0)
+            : UIColor(red: light.0, green: light.1, blue: light.2, alpha: 1.0)
+    })
+    #else
+    return Color(nsColor: NSColor(name: nil, dynamicProvider: { appearance in
+        let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return isDark
+            ? NSColor(red: dark.0, green: dark.1, blue: dark.2, alpha: 1.0)
+            : NSColor(red: light.0, green: light.1, blue: light.2, alpha: 1.0)
+    }))
+    #endif
+}
+
 /// The semantic intent of a section, determining its visual styling and behavior
 enum IntentType: String, Codable, DatabaseValueConvertible, CaseIterable {
     case idea       // Blue - Creative thoughts and brainstorms
     case question   // Yellow - Questions to explore or answer
     case task       // Green - Actionable items
     case evidence   // Purple - Supporting facts, quotes, references
-    
+
     /// The primary color for this intent type
     var color: Color {
         switch self {
@@ -18,64 +42,66 @@ enum IntentType: String, Codable, DatabaseValueConvertible, CaseIterable {
         case .evidence: return .purple
         }
     }
-    
+
     /// A lighter background tint for section backgrounds (opaque, adapts to light/dark mode)
     var backgroundTint: Color {
         switch self {
         case .idea:
-            return Color(UIColor { traitCollection in
-                traitCollection.userInterfaceStyle == .dark
-                    ? UIColor(red: 0.10, green: 0.15, blue: 0.25, alpha: 1.0)  // Dark blue-gray
-                    : UIColor(red: 0.92, green: 0.95, blue: 1.0, alpha: 1.0)   // Light blue
-            })
+            return adaptiveColor(
+                light: (0.92, 0.95, 1.0),
+                dark: (0.10, 0.15, 0.25)
+            )
         case .question:
-            return Color(UIColor { traitCollection in
-                traitCollection.userInterfaceStyle == .dark
-                    ? UIColor(red: 0.20, green: 0.18, blue: 0.10, alpha: 1.0)  // Dark yellow-brown
-                    : UIColor(red: 1.0, green: 0.98, blue: 0.90, alpha: 1.0)   // Light yellow
-            })
+            return adaptiveColor(
+                light: (1.0, 0.98, 0.90),
+                dark: (0.20, 0.18, 0.10)
+            )
         case .task:
-            return Color(UIColor { traitCollection in
-                traitCollection.userInterfaceStyle == .dark
-                    ? UIColor(red: 0.10, green: 0.20, blue: 0.15, alpha: 1.0)  // Dark green
-                    : UIColor(red: 0.92, green: 1.0, blue: 0.95, alpha: 1.0)   // Light green
-            })
+            return adaptiveColor(
+                light: (0.92, 1.0, 0.95),
+                dark: (0.10, 0.20, 0.15)
+            )
         case .evidence:
-            return Color(UIColor { traitCollection in
-                traitCollection.userInterfaceStyle == .dark
-                    ? UIColor(red: 0.18, green: 0.12, blue: 0.22, alpha: 1.0)  // Dark purple
-                    : UIColor(red: 0.96, green: 0.94, blue: 1.0, alpha: 1.0)   // Light purple
-            })
+            return adaptiveColor(
+                light: (0.96, 0.94, 1.0),
+                dark: (0.18, 0.12, 0.22)
+            )
         }
     }
-    
+
     /// A darker tint for the collapse lip tab on the right edge of nodes
     var lipTint: Color {
         switch self {
         case .idea:
-            return Color(UIColor { traitCollection in
-                traitCollection.userInterfaceStyle == .dark
-                    ? UIColor(red: 0.14, green: 0.22, blue: 0.38, alpha: 1.0)
-                    : UIColor(red: 0.78, green: 0.85, blue: 0.98, alpha: 1.0)
-            })
+            return adaptiveColor(
+                light: (0.78, 0.85, 0.98),
+                dark: (0.14, 0.22, 0.38)
+            )
         case .question:
-            return Color(UIColor { traitCollection in
-                traitCollection.userInterfaceStyle == .dark
-                    ? UIColor(red: 0.30, green: 0.26, blue: 0.14, alpha: 1.0)
-                    : UIColor(red: 0.96, green: 0.92, blue: 0.74, alpha: 1.0)
-            })
+            return adaptiveColor(
+                light: (0.96, 0.92, 0.74),
+                dark: (0.30, 0.26, 0.14)
+            )
         case .task:
-            return Color(UIColor { traitCollection in
-                traitCollection.userInterfaceStyle == .dark
-                    ? UIColor(red: 0.14, green: 0.30, blue: 0.20, alpha: 1.0)
-                    : UIColor(red: 0.80, green: 0.94, blue: 0.85, alpha: 1.0)
-            })
+            return adaptiveColor(
+                light: (0.80, 0.94, 0.85),
+                dark: (0.14, 0.30, 0.20)
+            )
         case .evidence:
-            return Color(UIColor { traitCollection in
-                traitCollection.userInterfaceStyle == .dark
-                    ? UIColor(red: 0.26, green: 0.18, blue: 0.32, alpha: 1.0)
-                    : UIColor(red: 0.88, green: 0.84, blue: 0.96, alpha: 1.0)
-            })
+            return adaptiveColor(
+                light: (0.88, 0.84, 0.96),
+                dark: (0.26, 0.18, 0.32)
+            )
+        }
+    }
+
+    /// Human-readable label
+    var label: String {
+        switch self {
+        case .idea:     return "Idea"
+        case .question: return "Question"
+        case .task:     return "Task"
+        case .evidence: return "Evidence"
         }
     }
 
@@ -88,7 +114,7 @@ enum IntentType: String, Codable, DatabaseValueConvertible, CaseIterable {
         case .evidence: return "quote.bubble.fill"
         }
     }
-    
+
     /// Human-readable display name
     var displayName: String {
         switch self {
@@ -98,7 +124,7 @@ enum IntentType: String, Codable, DatabaseValueConvertible, CaseIterable {
         case .evidence: return "Purple"
         }
     }
-    
+
     /// Keyboard shortcut hint
     var shortcutHint: String {
         switch self {
@@ -115,11 +141,10 @@ enum IntentType: String, Codable, DatabaseValueConvertible, CaseIterable {
 extension Color {
     /// Opaque focused background color that adapts to light/dark mode
     static var focusedBackground: Color {
-        Color(UIColor { traitCollection in
-            traitCollection.userInterfaceStyle == .dark
-                ? UIColor(red: 0.15, green: 0.20, blue: 0.30, alpha: 1.0)  // Dark accent blue
-                : UIColor(red: 0.90, green: 0.94, blue: 1.0, alpha: 1.0)   // Light accent blue
-        })
+        adaptiveColor(
+            light: (0.90, 0.94, 1.0),
+            dark: (0.15, 0.20, 0.30)
+        )
     }
 }
 
@@ -137,14 +162,14 @@ extension IntentType {
         default:                    return .idea
         }
     }
-    
+
     /// Convert to legacy string for server sync (backwards compatibility)
     var legacyValue: String {
         switch self {
         case .idea:     return "idea"
-        case .question: return "idea"  // Server doesn't know about question yet
+        case .question: return "question"
         case .task:     return "task"
-        case .evidence: return "reference"
+        case .evidence: return "evidence"
         }
     }
 }
@@ -157,7 +182,7 @@ enum SectionType: String, Codable, DatabaseValueConvertible {
     case line = "line"   // Plain text line without fold styling
 }
 
-// MARK: - ContentType (moved here for organization)
+// MARK: - ContentType
 
 enum ContentType: String, Codable, DatabaseValueConvertible {
     case text

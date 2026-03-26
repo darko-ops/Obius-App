@@ -208,8 +208,6 @@ class ObiusShareItem: NSObject, UIActivityItemSource {
 // MARK: - Node Share Sheet
 
 /// Custom share sheet that offers iMessage rich card sharing alongside generic sharing.
-/// When "Send in iMessage" is tapped, writes the payload to shared UserDefaults
-/// and opens Messages — the Obius extension auto-inserts the branded card.
 struct NodeShareSheet: View {
     let url: URL
     let title: String
@@ -283,7 +281,7 @@ struct NodeShareSheet: View {
 
                     // Copy link
                     Button {
-                        UIPasteboard.general.string = url.absoluteString
+                        ClipboardHelper.copy(url.absoluteString)
                         copied = true
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                             copied = false
@@ -348,7 +346,7 @@ struct NodeShareSheet: View {
                 Spacer()
             }
             .navigationTitle("Share")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
@@ -363,8 +361,6 @@ struct NodeShareSheet: View {
     }
 
     private func openMessages() {
-        // Build a deep link URL that opens the content directly in the app.
-        // Extract the slug from the web URL (https://obius.io/s/{slug} → obius://share/{slug})
         let deepLink: String
         if let slug = url.pathComponents.last, url.pathComponents.contains("s") {
             deepLink = "obius://share/\(slug)"
@@ -377,6 +373,136 @@ struct NodeShareSheet: View {
             UIApplication.shared.open(messagesURL)
         }
         dismiss()
+    }
+}
+
+#elseif os(macOS)
+import AppKit
+
+// MARK: - macOS Share Sheet
+
+/// macOS sharing using NSSharingServicePicker
+struct NodeShareSheet: View {
+    let url: URL
+    let title: String
+    let preview: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var copied = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Preview card
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.headline)
+                    .lineLimit(2)
+
+                if !preview.isEmpty {
+                    Text(preview)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
+
+                Text(url.absoluteString)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+            .background(Color(.controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .padding(.horizontal)
+            .padding(.top, 8)
+
+            // Share options
+            VStack(spacing: 0) {
+                // Copy link
+                Button {
+                    ClipboardHelper.copy(url.absoluteString)
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        copied = false
+                    }
+                } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                            .font(.title3)
+                            .foregroundStyle(.blue)
+                            .frame(width: 36, height: 36)
+                            .background(Color.blue.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                        Text(copied ? "Copied!" : "Copy Link")
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(.primary)
+
+                        Spacer()
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 12)
+                }
+                .buttonStyle(.plain)
+
+                Divider().padding(.leading, 64)
+
+                // System share
+                Button {
+                    shareViaSystemPicker()
+                } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.title3)
+                            .foregroundStyle(.orange)
+                            .frame(width: 36, height: 36)
+                            .background(Color.orange.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Share…")
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(.primary)
+                            Text("Share link via system services")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 12)
+                }
+                .buttonStyle(.plain)
+            }
+            .background(Color(.controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .padding(.horizontal)
+            .padding(.top, 16)
+
+            Spacer()
+
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding()
+        }
+        .frame(width: 400, height: 350)
+        .navigationTitle("Share")
+    }
+
+    private func shareViaSystemPicker() {
+        let items: [Any] = [url]
+        let picker = NSSharingServicePicker(items: items)
+        if let window = NSApp.keyWindow, let contentView = window.contentView {
+            picker.show(relativeTo: contentView.bounds, of: contentView, preferredEdge: .minY)
+        }
     }
 }
 #endif

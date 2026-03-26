@@ -131,6 +131,11 @@ final class TierManager: ObservableObject {
     @Published var isFoundingMember: Bool = false
     @Published private(set) var foundersSpotsTaken: Int = 0
 
+    /// Set when Supabase `user_profiles.subscription_tier` confirms a paid tier.
+    /// Prevents RevenueCat/StoreKit failures from downgrading the tier on platforms
+    /// where StoreKit may not be available (e.g., macOS development builds).
+    private(set) var serverConfirmedTier: Tier?
+
     var foundersSpotsRemaining: Int {
         max(0, Self.foundersSpotsCap - foundersSpotsTaken)
     }
@@ -162,11 +167,20 @@ final class TierManager: ObservableObject {
         loadPersistedState()
         resetIfNewDay()
 
-        // Check RevenueCat entitlements
+        // Wait for AuthManager to finish restoring session so that
+        // StoreManager is identified with the correct RevenueCat user
+        // before we check entitlements.
+        while AuthManager.shared.isLoading {
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        }
+
+        // Check Supabase first — this is the server-side source of truth
+        // and prevents StoreKit failures on macOS from blocking sync
+        await checkFoundingMemberStatus()
+
+        // Then check RevenueCat entitlements (may override with more recent data)
         await StoreManager.shared.refreshCustomerInfo()
 
-        // Check founding member status from Supabase
-        await checkFoundingMemberStatus()
         await fetchFoundersSpotsCount()
     }
 
@@ -189,33 +203,56 @@ final class TierManager: ObservableObject {
     // MARK: - Founding Member
 
     private func checkFoundingMemberStatus() async {
-        guard SupabaseManager.shared.isAuthenticated else { return }
+        guard SupabaseManager.shared.isAuthenticated else {
+            print("[TierManager] Skipping server check — not authenticated")
+            return
+        }
 
         do {
             struct ProfileRow: Decodable {
                 let is_founding_member: Bool?
+                let subscription_tier: String?
             }
 
-            guard let userId = SupabaseManager.shared.currentUser?.id.uuidString.lowercased() else { return }
+            guard let userId = SupabaseManager.shared.currentUser?.id.uuidString.lowercased() else {
+                print("[TierManager] No current user ID")
+                return
+            }
+
+            print("[TierManager] Checking subscription for user: \(userId)")
 
             let profiles: [ProfileRow] = try await SupabaseManager.shared.client
                 .from("user_profiles")
-                .select("is_founding_member")
+                .select("is_founding_member, subscription_tier")
                 .eq("id", value: userId)
                 .limit(1)
                 .execute()
                 .value
 
-            if let profile = profiles.first, profile.is_founding_member == true {
+            guard let profile = profiles.first else {
+                print("[TierManager] No profile row found in user_profiles")
+                return
+            }
+
+            print("[TierManager] Server tier: \(profile.subscription_tier ?? "nil"), founding: \(profile.is_founding_member ?? false)")
+
+            if profile.is_founding_member == true {
                 isFoundingMember = true
                 UserDefaults.standard.set(true, forKey: Keys.isFoundingMember)
+            }
 
-                if currentTier == .free {
-                    updateTier(.founding)
-                }
+            // Use server-side subscription_tier as source of truth
+            // (kept up-to-date by RevenueCat webhook)
+            if let serverTier = profile.subscription_tier,
+               let tier = Tier(rawValue: serverTier), tier != .free {
+                serverConfirmedTier = tier
+                updateTier(tier)
+                print("[TierManager] Updated tier to \(tier.rawValue) from server")
+            } else {
+                print("[TierManager] Server tier is free or nil — no upgrade")
             }
         } catch {
-            print("[TierManager] Failed to check founding member status: \(error)")
+            print("[TierManager] Failed to check subscription status: \(error)")
         }
     }
 

@@ -1,6 +1,9 @@
 import SwiftUI
 #if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 /// Renders an image node's content: empty state, single image, or swipeable images.
 /// Feathered edges blend into whatever background the parent provides.
@@ -10,9 +13,9 @@ struct ImageNodeView: View {
     let onTap: () -> Void
     var onDominantColorChanged: ((Color) -> Void)? = nil
     var onPageChanged: ((Int) -> Void)? = nil
-    var onCurrentImageChanged: ((UIImage?) -> Void)? = nil
+    var onCurrentImageChanged: ((PlatformImage?) -> Void)? = nil
 
-    @State private var loadedImages: [String: UIImage] = [:]
+    @State private var loadedImages: [String: PlatformImage] = [:]
     @State private var currentPage = 0
     @State private var showDots = false
     @State private var dotsHideTask: Task<Void, Never>?
@@ -29,7 +32,7 @@ struct ImageNodeView: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .contentShape(Rectangle())  // Constrain touch area to the clipped frame
+        .contentShape(Rectangle())
         .onAppear { loadImages() }
         .onChange(of: imageHashes) { _, _ in loadImages() }
     }
@@ -38,7 +41,7 @@ struct ImageNodeView: View {
 
     private var emptyState: some View {
         RoundedRectangle(cornerRadius: 8)
-            .fill(Color(.systemGray5))
+            .fill(Color.gray.opacity(0.15))
             .frame(height: 160)
             .overlay {
                 Image(systemName: "photo")
@@ -54,7 +57,7 @@ struct ImageNodeView: View {
     private var singleImageView: some View {
         Group {
             if let hash = imageHashes.first, let image = loadedImages[hash] {
-                Image(uiImage: image)
+                platformImage(image)
                     .resizable()
                     .scaledToFill()
                     .frame(maxWidth: .infinity)
@@ -78,7 +81,7 @@ struct ImageNodeView: View {
             ForEach(Array(imageHashes.enumerated()), id: \.element) { index, hash in
                 Group {
                     if let image = loadedImages[hash] {
-                        Image(uiImage: image)
+                        platformImage(image)
                             .resizable()
                             .scaledToFill()
                             .frame(maxWidth: .infinity)
@@ -93,11 +96,12 @@ struct ImageNodeView: View {
                 .tag(index)
             }
         }
+        #if os(iOS)
         .tabViewStyle(.page(indexDisplayMode: .never))
+        #endif
         .frame(height: 240)
         .mask(edgeFeatherGradient)
         .overlay(alignment: .bottom) {
-            // Custom page dots — only visible during swipe
             if imageHashes.count > 1 && showDots {
                 pageDotsView
                     .transition(.opacity)
@@ -138,7 +142,6 @@ struct ImageNodeView: View {
 
     // MARK: - Edge Feather Mask
 
-    /// Thin gradient mask that softly feathers image edges into the dominant color background.
     private var edgeFeatherGradient: some View {
         LinearGradient(
             stops: [
@@ -164,13 +167,23 @@ struct ImageNodeView: View {
         }
     }
 
+    // MARK: - Helpers
+
+    private func platformImage(_ image: PlatformImage) -> Image {
+        #if os(iOS)
+        Image(uiImage: image)
+        #else
+        Image(nsImage: image)
+        #endif
+    }
+
     // MARK: - Image Loading
 
     private func loadImages() {
         var didLoadNew = false
         for hash in imageHashes where loadedImages[hash] == nil {
             if let data = try? mediaRepository.getMediaData(hash: hash),
-               let image = UIImage(data: data) {
+               let image = PlatformImage(data: data) {
                 loadedImages[hash] = image
                 didLoadNew = true
             }
@@ -182,20 +195,24 @@ struct ImageNodeView: View {
     }
 
     private func computeDominantColor() {
-        let colors: [UIColor] = imageHashes.compactMap { hash in
+        let colors: [PlatformColor] = imageHashes.compactMap { hash in
             loadedImages[hash]?.averageColor
         }
         guard !colors.isEmpty else { return }
 
-        // Average all image colors
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
         for color in colors {
             var cr: CGFloat = 0, cg: CGFloat = 0, cb: CGFloat = 0, ca: CGFloat = 0
+            #if os(macOS)
+            let rgbColor = color.usingColorSpace(.sRGB) ?? color
+            rgbColor.getRed(&cr, green: &cg, blue: &cb, alpha: &ca)
+            #else
             color.getRed(&cr, green: &cg, blue: &cb, alpha: &ca)
+            #endif
             r += cr; g += cg; b += cb
         }
         let count = CGFloat(colors.count)
-        let avgColor = Color(UIColor(red: r / count, green: g / count, blue: b / count, alpha: 1.0))
+        let avgColor = Color(red: Double(r / count), green: Double(g / count), blue: Double(b / count))
         dominantColor = avgColor
         onDominantColorChanged?(avgColor)
     }
@@ -220,22 +237,21 @@ struct FullscreenImageItem: Identifiable {
 struct FullscreenImageViewer: View {
     let imageEntries: [(hash: String, assetId: String)]
     let mediaRepository: MediaRepository
-    let onEditSave: (_ keptEntries: [(hash: String, assetId: String)], _ newPicks: [(UIImage, String?)]) -> Void
+    let onEditSave: (_ keptEntries: [(hash: String, assetId: String)], _ newPicks: [(PlatformImage, String?)]) -> Void
     @Environment(\.dismiss) private var dismiss
 
     @State private var currentPage: Int
-    @State private var loadedImages: [String: UIImage] = [:]
+    @State private var loadedImages: [String: PlatformImage] = [:]
     @State private var showingEditSheet = false
     @State private var dragOffset: CGFloat = 0
 
-    /// How far through the dismiss gesture (0 = idle, 1 = fully dragged)
     private var dragProgress: Double {
         Double(min(abs(dragOffset) / 300.0, 1.0))
     }
 
     private var imageHashes: [String] { imageEntries.map(\.hash) }
 
-    init(imageEntries: [(hash: String, assetId: String)], mediaRepository: MediaRepository, startPage: Int = 0, onEditSave: @escaping (_ keptEntries: [(hash: String, assetId: String)], _ newPicks: [(UIImage, String?)]) -> Void) {
+    init(imageEntries: [(hash: String, assetId: String)], mediaRepository: MediaRepository, startPage: Int = 0, onEditSave: @escaping (_ keptEntries: [(hash: String, assetId: String)], _ newPicks: [(PlatformImage, String?)]) -> Void) {
         self.imageEntries = imageEntries
         self.mediaRepository = mediaRepository
         self.onEditSave = onEditSave
@@ -244,11 +260,9 @@ struct FullscreenImageViewer: View {
 
     var body: some View {
         ZStack {
-            // Background fades as user drags
             Color.black.opacity(1.0 - dragProgress * 0.5)
                 .ignoresSafeArea()
 
-            // Image content moves with drag and scales down slightly
             Group {
                 if imageHashes.isEmpty {
                     Text("No images")
@@ -262,7 +276,6 @@ struct FullscreenImageViewer: View {
             .offset(y: dragOffset)
             .scaleEffect(1.0 - dragProgress * 0.1)
         }
-        // Controls fade out during drag
         .overlay(alignment: .topLeading) {
             if imageHashes.count > 1 {
                 Text("\(currentPage + 1) / \(imageHashes.count)")
@@ -272,7 +285,7 @@ struct FullscreenImageViewer: View {
                     .padding(.vertical, 6)
                     .background(Capsule().fill(Color.white.opacity(0.15)))
                     .padding()
-                    .opacity(1.0 - dragProgress * 2) // Fade quickly
+                    .opacity(1.0 - dragProgress * 2)
             }
         }
         .overlay(alignment: .topTrailing) {
@@ -302,12 +315,9 @@ struct FullscreenImageViewer: View {
             .padding()
             .opacity(1.0 - dragProgress * 2)
         }
-        // Drag-to-dismiss gesture
         .simultaneousGesture(
             DragGesture()
                 .onChanged { value in
-                    // Only track primarily vertical drags so horizontal
-                    // page swipes still work for multi-image views
                     if abs(value.translation.height) > abs(value.translation.width) {
                         dragOffset = value.translation.height
                     }
@@ -333,13 +343,23 @@ struct FullscreenImageViewer: View {
             )
         }
         .onAppear { loadImages() }
+        #if os(iOS)
         .statusBarHidden()
+        #endif
+    }
+
+    private func platformImage(_ image: PlatformImage) -> Image {
+        #if os(iOS)
+        Image(uiImage: image)
+        #else
+        Image(nsImage: image)
+        #endif
     }
 
     private var singleImage: some View {
         Group {
             if let hash = imageHashes.first, let image = loadedImages[hash] {
-                Image(uiImage: image)
+                platformImage(image)
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -354,7 +374,7 @@ struct FullscreenImageViewer: View {
             ForEach(Array(imageHashes.enumerated()), id: \.element) { index, hash in
                 Group {
                     if let image = loadedImages[hash] {
-                        Image(uiImage: image)
+                        platformImage(image)
                             .resizable()
                             .scaledToFit()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -365,13 +385,15 @@ struct FullscreenImageViewer: View {
                 .tag(index)
             }
         }
+        #if os(iOS)
         .tabViewStyle(.page(indexDisplayMode: .automatic))
+        #endif
     }
 
     private func loadImages() {
         for hash in imageHashes where loadedImages[hash] == nil {
             if let data = try? mediaRepository.getMediaData(hash: hash),
-               let image = UIImage(data: data) {
+               let image = PlatformImage(data: data) {
                 loadedImages[hash] = image
             }
         }
@@ -381,16 +403,14 @@ struct FullscreenImageViewer: View {
 // MARK: - Image Edit Sheet
 
 /// Grid sheet for managing node images — toggle selection to remove, add new from library.
-/// Uses ordered selection so badges show position numbers instead of checkmarks.
 struct ImageEditSheet: View {
     let entries: [(hash: String, assetId: String)]
     let mediaRepository: MediaRepository
-    let onSave: (_ keptEntries: [(hash: String, assetId: String)], _ newPicks: [(UIImage, String?)]) -> Void
+    let onSave: (_ keptEntries: [(hash: String, assetId: String)], _ newPicks: [(PlatformImage, String?)]) -> Void
     @Environment(\.dismiss) private var dismiss
 
-    /// Tracks selection order. Each item is either an existing entry (by hash) or a new pick (by UUID).
     @State private var selectionOrder: [SelectionItem]
-    @State private var loadedImages: [String: UIImage] = [:]
+    @State private var loadedImages: [String: PlatformImage] = [:]
     @State private var newPicks: [NewPick] = []
     @State private var showingPicker = false
     @State private var pickerID = UUID()
@@ -402,15 +422,14 @@ struct ImageEditSheet: View {
 
     struct NewPick: Identifiable {
         let id = UUID()
-        let image: UIImage
+        let image: PlatformImage
         let assetId: String?
     }
 
-    init(entries: [(hash: String, assetId: String)], mediaRepository: MediaRepository, onSave: @escaping (_ keptEntries: [(hash: String, assetId: String)], _ newPicks: [(UIImage, String?)]) -> Void) {
+    init(entries: [(hash: String, assetId: String)], mediaRepository: MediaRepository, onSave: @escaping (_ keptEntries: [(hash: String, assetId: String)], _ newPicks: [(PlatformImage, String?)]) -> Void) {
         self.entries = entries
         self.mediaRepository = mediaRepository
         self.onSave = onSave
-        // Initialize with all existing entries selected in their current order
         _selectionOrder = State(initialValue: entries.map { .existing(hash: $0.hash) })
     }
 
@@ -424,23 +443,18 @@ struct ImageEditSheet: View {
         NavigationView {
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 2) {
-                    // Existing images
                     ForEach(entries, id: \.hash) { entry in
                         existingCell(entry: entry)
                     }
-
-                    // Newly picked images
                     ForEach(newPicks) { pick in
                         newPickCell(pick: pick)
                     }
-
-                    // Add from library button
                     addCell
                 }
                 .padding(2)
             }
             .navigationTitle("Edit Photos")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -465,6 +479,14 @@ struct ImageEditSheet: View {
 
     // MARK: - Cells
 
+    private func platformImage(_ image: PlatformImage) -> Image {
+        #if os(iOS)
+        Image(uiImage: image)
+        #else
+        Image(nsImage: image)
+        #endif
+    }
+
     @ViewBuilder
     private func existingCell(entry: (hash: String, assetId: String)) -> some View {
         let item = SelectionItem.existing(hash: entry.hash)
@@ -472,10 +494,10 @@ struct ImageEditSheet: View {
         let isSelected = orderIndex != nil
 
         if let image = loadedImages[entry.hash] {
-            Color(.systemGray6)
+            Color.gray.opacity(0.1)
                 .aspectRatio(1, contentMode: .fit)
                 .overlay {
-                    Image(uiImage: image)
+                    platformImage(image)
                         .resizable()
                         .scaledToFit()
                 }
@@ -495,7 +517,7 @@ struct ImageEditSheet: View {
                     }
                 }
         } else {
-            Color(.systemGray5)
+            Color.gray.opacity(0.15)
                 .aspectRatio(1, contentMode: .fit)
         }
     }
@@ -506,10 +528,10 @@ struct ImageEditSheet: View {
         let orderIndex = selectionOrder.firstIndex(of: item)
         let isSelected = orderIndex != nil
 
-        Color(.systemGray6)
+        Color.gray.opacity(0.1)
             .aspectRatio(1, contentMode: .fit)
             .overlay {
-                Image(uiImage: pick.image)
+                platformImage(pick.image)
                     .resizable()
                     .scaledToFit()
             }
@@ -552,7 +574,7 @@ struct ImageEditSheet: View {
             pickerID = UUID()
             showingPicker = true
         } label: {
-            Color(.systemGray5)
+            Color.gray.opacity(0.15)
                 .aspectRatio(1, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
                 .overlay {
@@ -565,11 +587,11 @@ struct ImageEditSheet: View {
                     .foregroundStyle(.gray)
                 }
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Helpers
 
-    /// All asset IDs that should appear pre-checked in the photo picker, in selection order
     private func allPreselectedAssetIds() -> [String] {
         var ids: [String] = []
         for item in selectionOrder {
@@ -588,16 +610,12 @@ struct ImageEditSheet: View {
         return ids
     }
 
-    /// Add new picks from the photo picker without modifying existing selections.
-    /// Existing photos keep their selection state — user deselects manually in the grid.
-    private func reconcilePickerResults(_ results: [(UIImage, String?)]) {
-        // Build set of all known asset IDs to avoid adding duplicates
+    private func reconcilePickerResults(_ results: [(PlatformImage, String?)]) {
         let allKnownAssetIds = Set(
             entries.map(\.assetId).filter { !$0.isEmpty } +
             newPicks.compactMap(\.assetId)
         )
 
-        // Only add genuinely new picks (asset IDs not already tracked)
         for (image, pickedAssetId) in results {
             if let pickedAssetId, allKnownAssetIds.contains(pickedAssetId) {
                 continue
@@ -611,16 +629,15 @@ struct ImageEditSheet: View {
     private func loadImages() {
         for entry in entries where loadedImages[entry.hash] == nil {
             if let data = try? mediaRepository.getMediaData(hash: entry.hash),
-               let image = UIImage(data: data) {
+               let image = PlatformImage(data: data) {
                 loadedImages[entry.hash] = image
             }
         }
     }
 
     private func save() {
-        // Build ordered results respecting selection order
         var keptEntries: [(hash: String, assetId: String)] = []
-        var keptNewPicks: [(UIImage, String?)] = []
+        var keptNewPicks: [(PlatformImage, String?)] = []
 
         for item in selectionOrder {
             switch item {
@@ -640,10 +657,10 @@ struct ImageEditSheet: View {
     }
 }
 
-// MARK: - UIImage Average Color
+// MARK: - PlatformImage Average Color
 
+#if os(iOS)
 extension UIImage {
-    /// Computes the average color of the image using CIAreaAverage filter.
     var averageColor: UIColor? {
         guard let ciImage = CIImage(image: self) else { return nil }
         let extent = ciImage.extent
@@ -661,6 +678,31 @@ extension UIImage {
                       format: .RGBA8, colorSpace: nil)
 
         return UIColor(red: CGFloat(bitmap[0]) / 255.0,
+                       green: CGFloat(bitmap[1]) / 255.0,
+                       blue: CGFloat(bitmap[2]) / 255.0,
+                       alpha: 1.0)
+    }
+}
+#elseif os(macOS)
+extension NSImage {
+    var averageColor: NSColor? {
+        guard let tiffData = tiffRepresentation,
+              let ciImage = CIImage(data: tiffData) else { return nil }
+        let extent = ciImage.extent
+        let extentVector = CIVector(x: extent.origin.x, y: extent.origin.y,
+                                     z: extent.size.width, w: extent.size.height)
+        guard let filter = CIFilter(name: "CIAreaAverage",
+                                     parameters: [kCIInputImageKey: ciImage,
+                                                  kCIInputExtentKey: extentVector]),
+              let outputImage = filter.outputImage else { return nil }
+
+        var bitmap = [UInt8](repeating: 0, count: 4)
+        let context = CIContext(options: [.workingColorSpace: kCFNull as Any])
+        context.render(outputImage, toBitmap: &bitmap, rowBytes: 4,
+                      bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                      format: .RGBA8, colorSpace: nil)
+
+        return NSColor(red: CGFloat(bitmap[0]) / 255.0,
                        green: CGFloat(bitmap[1]) / 255.0,
                        blue: CGFloat(bitmap[2]) / 255.0,
                        alpha: 1.0)

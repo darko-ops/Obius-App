@@ -440,9 +440,7 @@ struct EditProfileView: View {
                 }
             }
             .navigationTitle("Edit Profile")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -487,7 +485,7 @@ struct EditProfileView: View {
     private var bannerSection: some View {
         ZStack(alignment: .bottomTrailing) {
             if let banner = profileImages.bannerImage {
-                Image(uiImage: banner)
+                platformImage(banner)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(height: 160)
@@ -535,18 +533,18 @@ struct EditProfileView: View {
     private var avatarSection: some View {
         ZStack(alignment: .bottomTrailing) {
             if let avatar = profileImages.profileImage {
-                Image(uiImage: avatar)
+                platformImage(avatar)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(width: 100, height: 100)
                     .clipShape(Circle())
-                    .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 4))
+                    .overlay(Circle().stroke(Color.systemBackground, lineWidth: 4))
             } else {
                 ZStack {
                     Circle()
                         .fill(Color.accentColor.opacity(0.15))
                         .frame(width: 100, height: 100)
-                        .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 4))
+                        .overlay(Circle().stroke(Color.systemBackground, lineWidth: 4))
 
                     if authManager.isAuthenticated {
                         Text(userInitials)
@@ -568,7 +566,7 @@ struct EditProfileView: View {
                     .padding(6)
                     .background(Color.accentColor)
                     .clipShape(Circle())
-                    .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
+                    .overlay(Circle().stroke(Color.systemBackground, lineWidth: 2))
             }
         }
     }
@@ -590,7 +588,7 @@ struct EditProfileView: View {
         guard let item else { return }
         Task {
             guard let data = try? await item.loadTransferable(type: Data.self),
-                  let image = UIImage(data: data) else { return }
+                  let image = PlatformImage(data: data) else { return }
             switch type {
             case .avatar:
                 profileImages.saveProfileImage(image)

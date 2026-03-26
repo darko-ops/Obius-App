@@ -218,6 +218,33 @@ const TOOL_DEFINITIONS = [
       required: ['section_id', 'section_preview', 'intent'],
     },
   },
+  {
+    name: 'rewrite_page',
+    description:
+      'Rewrite the entire page in a single action. Use this when the user asks you to remove, restructure, or broadly change content that spans the body AND sections. Produces ONE preview card showing the full result. Sections not listed in keep_sections are deleted. Sections listed with new_content are updated. The user sees a single "accept or dismiss" for the whole change.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        note_id: { type: 'string', description: 'The UUID of the page' },
+        note_title: { type: 'string', description: 'The title of the page (for the confirmation card)' },
+        new_body: { type: 'string', description: 'The full new body text for the page (empty string to clear)' },
+        keep_sections: {
+          type: 'array',
+          description: 'Sections to KEEP. Any section not listed here is deleted. Include the section ID and optionally new_content to update it.',
+          items: {
+            type: 'object',
+            properties: {
+              section_id: { type: 'string', description: 'The UUID of the section to keep' },
+              new_content: { type: 'string', description: 'Optional new content for this section. Omit or null to keep existing content unchanged.' },
+            },
+            required: ['section_id'],
+          },
+        },
+        summary: { type: 'string', description: 'A short human-readable summary of what changed (e.g. "Removed 3 task nodes and trimmed the intro")' },
+      },
+      required: ['note_id', 'note_title', 'new_body', 'keep_sections', 'summary'],
+    },
+  },
 ];
 
 // ---------- System prompt builders ----------
