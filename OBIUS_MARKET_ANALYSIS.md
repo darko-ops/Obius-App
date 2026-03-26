@@ -87,6 +87,23 @@ All AI calls route through a Supabase Edge Function (`ai-proxy`). No API keys on
 - Model-agnostic backend -- can swap AI providers without app updates
 - AI features are opt-in, respecting Privacy Mode users
 
+### 7. macOS Progress (Multi-Platform Trajectory)
+
+The macOS expansion is **already underway**, not theoretical. Evidence from the codebase:
+
+| Layer | Status | Detail |
+|---|---|---|
+| **Package.swift** | macOS v14+ declared | Platform target exists alongside iOS v17 |
+| **Database (GRDB/SQLite)** | **Working** | Shared app group container `group.app.obius.shared`, full schema, migrations |
+| **Data layer** | Shared | All 10+ repositories, SyncEngine, ColdStore are platform-agnostic |
+| **ShimmerView** | Cross-platform | `NSVisualEffectView` + `NSViewRepresentable` for macOS blur effects |
+| **HandleBadge** | Cross-platform | `NSPasteboard` for macOS clipboard operations |
+| **DraggableSectionList** | Cross-platform | macOS stub for keyboard toolbar, haptic abstraction |
+| **SectionView** | Cross-platform | Imports `AppKit` on macOS, `UIKit` on iOS |
+| **UI completion** | In progress | Core editing, navigation, and remaining views need macOS adaptation |
+
+**What this means for VCs:** The hardest part of going multi-platform -- the shared data architecture, sync engine, and persistence layer -- is **done**. What remains is UI surface area. This is a 2-3 month sprint to a shipping macOS app, not a 12-month rebuild.
+
 ---
 
 ## II. Is This Truly Innovative?
@@ -132,7 +149,7 @@ The closest competitor architecturally is Obsidian, but Obsidian is plugin-depen
 | S4 | **Proactive AI intelligence engine** -- surfaces insights without user prompting (safety, cleanup, reminders) | High |
 | S5 | **Handle Loop system** -- single-source-of-truth synced content blocks across notes | Medium-High |
 | S6 | **Security-first AI proxy** -- no client-side API keys, model-agnostic backend | Medium |
-| S7 | **Native iOS (Swift/SwiftUI)** -- performance, platform integration, App Store distribution | Medium |
+| S7 | **Native Apple platforms (Swift/SwiftUI)** -- iOS shipping, macOS in progress with shared DB layer, conditional compilation across UI components (AppKit bindings, NSViewRepresentable). Package.swift declares macOS v14+. Multi-platform DNA already in the codebase | Medium-High |
 | S8 | **Clean architecture** -- Repository pattern, MVVM, 10+ data repositories, migration system | Medium |
 | S9 | **Comprehensive Echo system** -- one-time + recurring reminders with AI-suggested temporal extraction | Medium |
 | S10 | **Dual sharing model** -- live links + immutable commit snapshots with comments and view tracking | Medium |
@@ -141,7 +158,7 @@ The closest competitor architecturally is Obsidian, but Obsidian is plugin-depen
 
 | # | Weakness | Risk Level |
 |---|---|---|
-| W1 | **iOS only** -- no Android, no web, no desktop. Limits TAM significantly | High |
+| W1 | **Apple-only (iOS shipping, macOS in progress)** -- no Android or web yet. macOS DB layer works, 4 UI files have conditional compilation, but macOS app is not fully shipped. Limits TAM but trajectory is positive | Medium-High |
 | W2 | **Solo/small team** -- 36K lines of code with ambitious feature scope. Execution risk | High |
 | W3 | **No proven monetization** -- freemium model implied but not implemented/validated | High |
 | W4 | **No network effects yet** -- sharing exists but no collaborative editing, no community | Medium |
@@ -154,7 +171,7 @@ The closest competitor architecturally is Obsidian, but Obsidian is plugin-depen
 
 | # | Opportunity | Potential |
 |---|---|---|
-| O1 | **Multi-platform expansion** -- web app, macOS (Catalyst/native), Android would unlock massive TAM | Very High |
+| O1 | **Complete multi-platform expansion** -- macOS is already in progress (shared DB, conditional compilation in 4+ UI files, Package.swift macOS v14+). Finishing macOS + adding web app + Android would unlock massive TAM. The hardest part (shared data architecture) is done | Very High |
 | O2 | **Enterprise/team tier** -- version control + security insights = enterprise-ready DNA | Very High |
 | O3 | **API/SDK for integrations** -- Handle Loops could become a protocol for synced content across apps | High |
 | O4 | **Education vertical** -- structured notes + evidence intents + version history = perfect for researchers/students | High |
@@ -272,14 +289,14 @@ The closest competitor architecturally is Obsidian, but Obsidian is plugin-depen
 
 | Allocation | % | Purpose |
 |---|---|---|
-| Engineering (multi-platform) | 40% | Web app + macOS + Android |
+| Engineering (multi-platform) | 40% | Complete macOS app, web app, Android |
 | Product & Design | 20% | User research, onboarding, simplification |
 | Growth & Marketing | 20% | Content marketing, PKM community, influencer seeding |
 | AI Infrastructure | 10% | Fine-tuned models, embedding pipeline, cost optimization |
 | Operations | 10% | Legal, compliance, App Store optimization |
 
 **Pitch Narrative:**
-> "Obius is a local-first thinking OS that gives knowledge workers version-controlled, AI-augmented notes without sacrificing privacy. We've built what would take a funded team 18+ months -- a production iOS app with git-style commits, synced content blocks, a proactive intelligence engine, and a security-first AI proxy -- as a lean team. We're raising to go multi-platform and capture the privacy-first PKM market before incumbents can pivot."
+> "Obius is a local-first thinking OS that gives knowledge workers version-controlled, AI-augmented notes without sacrificing privacy. We've built what would take a funded team 18+ months -- a production iOS app with macOS already in development (shared DB layer, conditional UI compilation), git-style commits, synced content blocks, a proactive intelligence engine, and a security-first AI proxy -- as a lean team. The hardest multi-platform problem (shared data architecture) is already solved. We're raising to complete macOS, ship web, and capture the privacy-first PKM market before incumbents can pivot."
 
 ---
 
@@ -291,11 +308,11 @@ The closest competitor architecturally is Obsidian, but Obsidian is plugin-depen
 2. **Ship a paywall** -- Even if only 2% convert, you need pricing validation. $7.99/mo Pro tier
 3. **Simplify onboarding** -- The product is powerful but complex. New users need a guided "first 5 minutes" experience
 4. **Build a landing page** -- obius.io needs to tell the story. Position around "Your thinking, version-controlled"
-5. **Start a waitlist for web** -- Signal demand for multi-platform before building it
+5. **Complete macOS app** -- The DB layer and conditional compilation are there. Finishing the macOS UI is the fastest path to a "runs on Apple ecosystem" story that VCs love
 
 ### Medium-Term (3-9 months)
 
-6. **Ship web app** -- This is the single highest-leverage move for TAM expansion
+6. **Ship web app** -- After macOS, this is the highest-leverage move for TAM expansion
 7. **Build collaborative handles** -- Shared synced content blocks = viral loop + network effect
 8. **Launch on Product Hunt** -- PKM community is highly active there
 9. **Content marketing** -- "Why your notes need version control" / "The case for local-first AI" thought pieces
@@ -333,7 +350,7 @@ The window is open. The product is ready. **Execution speed is everything now.**
 
 ---
 
-*"The best time to plant a tree was 20 years ago. The second best time is now. The best time to ship multi-platform was yesterday."*
+*"The best time to plant a tree was 20 years ago. The second best time is now. The macOS DB is already running -- finish the UI and own the Apple ecosystem."*
 
 ---
 
