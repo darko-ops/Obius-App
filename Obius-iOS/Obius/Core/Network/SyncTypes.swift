@@ -154,7 +154,7 @@ struct RemoteNote: Decodable {
         }()
 
         return Note(
-            id: id,
+            id: id.uppercased(),  // Normalize: PostgreSQL uuid type lowercases, but local UUIDs are uppercase
             title: title,
             aiTitle: aiTitle,
             body: body ?? "",
@@ -167,7 +167,7 @@ struct RemoteNote: Decodable {
             isPinned: isPinned.value,
             groupName: groupName,
             intent: IntentType.fromLegacy(colorIntent),
-            moduleId: moduleId,
+            moduleId: moduleId?.uppercased(),  // Normalize module ID case too
             localVersion: version,
             serverVersion: version,
             syncStatus: .synced,
@@ -231,18 +231,18 @@ struct RemoteSection: Decodable {
 
     func toLocal() -> Section {
         Section(
-            id: id,
-            noteId: noteId,
+            id: id.uppercased(),  // Normalize: PostgreSQL uuid type lowercases
+            noteId: noteId.uppercased(),  // Must match note's uppercased ID
             content: content,
             contentType: ContentType(rawValue: contentType) ?? .text,
             title: nil,  // Title is local-only, not synced from server
-            parentSectionId: parentSectionId,
+            parentSectionId: parentSectionId?.uppercased(),
             orderKey: orderKey,
             indentLevel: indentLevel,
             isCollapsed: isCollapsed.value,
             isLocked: false,  // Locked state is local-only, not synced from server
             intent: IntentType.fromLegacy(colorIntent),
-            handleId: handleId,  // Handle Loop support
+            handleId: handleId?.uppercased(),  // Handle Loop support
             createdAt: parseTimestamp(createdAt),
             updatedAt: parseTimestamp(updatedAt),
             deletedAt: deletedAt.flatMap { parseTimestamp($0) },
@@ -282,7 +282,7 @@ struct RemoteHandle: Decodable {
 
     func toLocal() -> Handle {
         Handle(
-            id: id,
+            id: id.uppercased(),  // Normalize: PostgreSQL uuid type lowercases
             name: name,
             displayName: displayName,
             content: content,

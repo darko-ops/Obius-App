@@ -82,7 +82,7 @@ actor SyncEngine {
             }
 
             // Nuclear reset: delete all old syncOperations and re-enqueue everything.
-            let resetKey = "hasResetSyncOps_v16"
+            let resetKey = "hasResetSyncOps_v17"
             if !UserDefaults.standard.bool(forKey: resetKey) {
                 // Delete sync operations in its own transaction
                 try? await database.write { db in
@@ -118,6 +118,7 @@ actor SyncEngine {
                     LEFT JOIN modules m ON m.id = n.moduleId
                     WHERE n.deletedAt IS NULL
                     AND n.createdAt < ?
+                    AND n.syncStatus != 'synced'
                     AND NOT EXISTS (
                         SELECT 1 FROM syncOperations so
                         WHERE so.entityId = n.id
@@ -178,6 +179,7 @@ actor SyncEngine {
                            s.createdAt, s.updatedAt
                     FROM sections s
                     WHERE s.deletedAt IS NULL
+                    AND s.syncStatus != 'synced'
                     AND NOT EXISTS (
                         SELECT 1 FROM syncOperations so
                         WHERE so.entityId = s.id
@@ -398,54 +400,91 @@ actor SyncEngine {
             // Clean up any leftover "Synced Project" ghost modules
             try db.execute(sql: "DELETE FROM modules WHERE name = 'Synced Project'")
 
+            // One-time cleanup: remove lowercase UUID duplicates created by case mismatch bug.
+            // PostgreSQL returns lowercase UUIDs but local UUIDs are uppercase, causing duplicates.
+            let dupeCleanupKey = "hasCleanedLowercaseDupes_v1"
+            if !UserDefaults.standard.bool(forKey: dupeCleanupKey) {
+                // Delete notes whose id is all-lowercase AND an uppercase version exists
+                let lowercaseNotes = try String.fetchAll(db, sql: """
+                    SELECT id FROM notes WHERE id != UPPER(id)
+                    AND EXISTS (SELECT 1 FROM notes n2 WHERE n2.id = UPPER(notes.id))
+                """)
+                for dupeId in lowercaseNotes {
+                    // Delete sections belonging to the lowercase duplicate
+                    try db.execute(sql: "DELETE FROM sections WHERE noteId = ?", arguments: [dupeId])
+                    try db.execute(sql: "DELETE FROM notes WHERE id = ?", arguments: [dupeId])
+                }
+                // Also clean up orphaned lowercase sections
+                let lowercaseSections = try String.fetchAll(db, sql: """
+                    SELECT id FROM sections WHERE id != UPPER(id)
+                    AND EXISTS (SELECT 1 FROM sections s2 WHERE s2.id = UPPER(sections.id))
+                """)
+                for dupeId in lowercaseSections {
+                    try db.execute(sql: "DELETE FROM sections WHERE id = ?", arguments: [dupeId])
+                }
+                // Clean up lowercase handles
+                let lowercaseHandles = try String.fetchAll(db, sql: """
+                    SELECT id FROM handles WHERE id != UPPER(id)
+                    AND EXISTS (SELECT 1 FROM handles h2 WHERE h2.id = UPPER(handles.id))
+                """)
+                for dupeId in lowercaseHandles {
+                    try db.execute(sql: "DELETE FROM handles WHERE id = ?", arguments: [dupeId])
+                }
+                if !lowercaseNotes.isEmpty || !lowercaseSections.isEmpty || !lowercaseHandles.isEmpty {
+                    print("[Sync] Cleaned up \(lowercaseNotes.count) duplicate notes, \(lowercaseSections.count) sections, \(lowercaseHandles.isEmpty ? 0 : lowercaseHandles.count) handles from UUID case mismatch")
+                }
+                // Also clean up syncOperations referencing lowercase IDs
+                try db.execute(sql: "DELETE FROM syncOperations WHERE entityId != UPPER(entityId)")
+                UserDefaults.standard.set(true, forKey: dupeCleanupKey)
+            }
+
             // Apply note updates/creates — create missing modules from synced metadata
             for remoteNote in response.notes {
                 let localNote = remoteNote.toLocal()
 
-                // If the moduleId doesn't exist locally, create it using synced name/icon
-                if let moduleId = localNote.moduleId, !moduleId.isEmpty {
-                    let exists = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM modules WHERE id = ?", arguments: [moduleId]) ?? 0
-                    if exists == 0 {
-                        let moduleName = remoteNote.moduleName ?? "Synced"
-                        let moduleIcon = remoteNote.moduleIcon ?? "cloud"
-                        let now = Int64(Date().timeIntervalSince1970 * 1000)
-
-                        // Check if a module with the same name already exists
-                        let existingByName = try String.fetchOne(db, sql: """
-                            SELECT id FROM modules WHERE name = ? AND deletedAt IS NULL
-                        """, arguments: [moduleName])
-
-                        if let existingId = existingByName {
-                            // Module with same name exists — remap note to use the existing module
-                            var remappedNote = localNote
-                            remappedNote.moduleId = existingId
-                            if let existing = try Note.fetchOne(db, key: remappedNote.id) {
-                                if (existing.serverVersion ?? 0) < remappedNote.localVersion {
-                                    try remappedNote.update(db)
-                                }
-                            } else {
-                                try remappedNote.insert(db)
-                            }
-                            continue
-                        } else {
-                            // Create the module with the same ID so all devices share the same moduleId
-                            try db.execute(sql: """
-                                INSERT OR IGNORE INTO modules (id, name, icon, isDefault, storageType, orderIndex, createdAt, updatedAt)
-                                VALUES (?, ?, ?, 0, 'cloud', 0, ?, ?)
-                            """, arguments: [moduleId, moduleName, moduleIcon, now, now])
-                            print("[Sync] Created module '\(moduleName)' (\(moduleId)) from synced note")
-                        }
-                    }
-                }
-
-                // Check if exists locally
+                // Check if note already exists locally
                 if let existing = try Note.fetchOne(db, key: localNote.id) {
-                    // Only update if server version is newer
-                    if (existing.serverVersion ?? 0) <= localNote.localVersion {
-                        try localNote.update(db)
+                    // UPDATE path — only update if server version is newer
+                    if (existing.serverVersion ?? 0) < localNote.localVersion {
+                        // Preserve local-only fields not included in server data
+                        var mergedNote = localNote
+                        mergedNote.moduleId = existing.moduleId  // Keep local module assignment
+                        mergedNote.tags = existing.tags
+                        mergedNote.aiTags = existing.aiTags
+                        mergedNote.viewCount = existing.viewCount
+                        try mergedNote.update(db)
+                        print("[Sync] Updated note \(localNote.id.prefix(8)) (v\(existing.serverVersion ?? 0) → v\(localNote.localVersion))")
                     }
                 } else {
-                    try localNote.insert(db)
+                    // INSERT path — new note from another device
+                    // Ensure the module exists locally (remap or create as needed)
+                    var noteToInsert = localNote
+                    if let moduleId = localNote.moduleId, !moduleId.isEmpty {
+                        let moduleExists = (try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM modules WHERE id = ?", arguments: [moduleId]) ?? 0) > 0
+                        if !moduleExists {
+                            let moduleName = remoteNote.moduleName ?? "Synced"
+                            let moduleIcon = remoteNote.moduleIcon ?? "cloud"
+                            let now = Int64(Date().timeIntervalSince1970 * 1000)
+
+                            // Check if a module with the same name already exists
+                            if let existingId = try String.fetchOne(db, sql: """
+                                SELECT id FROM modules WHERE name = ? AND deletedAt IS NULL
+                            """, arguments: [moduleName]) {
+                                // Remap to existing module with same name
+                                noteToInsert.moduleId = existingId
+                                print("[Sync] Remapped new note \(localNote.id.prefix(8)) to existing module '\(moduleName)' (\(existingId.prefix(8)))")
+                            } else {
+                                // Create the module with the server's ID
+                                try db.execute(sql: """
+                                    INSERT OR IGNORE INTO modules (id, name, icon, isDefault, storageType, orderIndex, createdAt, updatedAt)
+                                    VALUES (?, ?, ?, 0, 'cloud', 0, ?, ?)
+                                """, arguments: [moduleId, moduleName, moduleIcon, now, now])
+                                print("[Sync] Created module '\(moduleName)' (\(moduleId.prefix(8))) for new note")
+                            }
+                        }
+                    }
+                    try noteToInsert.insert(db)
+                    print("[Sync] Inserted new note \(localNote.id.prefix(8)) into module \(noteToInsert.moduleId?.prefix(8) ?? "nil")")
                 }
             }
 
@@ -470,7 +509,7 @@ actor SyncEngine {
 
                 do {
                     if let existing = try Section.fetchOne(db, key: localSection.id) {
-                        if (existing.serverVersion ?? 0) <= localSection.localVersion {
+                        if (existing.serverVersion ?? 0) < localSection.localVersion {
                             try localSection.update(db)
                         }
                     } else {
@@ -481,34 +520,57 @@ actor SyncEngine {
                 }
             }
 
-            // Apply deletions
+            // Purge stale sync operations for entities just updated from the server.
+            // Without this, enqueueUnsyncedEntities may have queued "create" ops with OLD data
+            // that would overwrite the server's newer version during the push phase.
+            let pulledNoteIds = response.notes.map { $0.id.uppercased() }
+            let pulledSectionIds = response.sections.map { $0.id.uppercased() }
+            let pulledHandleIds = (response.handles ?? []).map { $0.id.uppercased() }
+            let allPulledIds = pulledNoteIds + pulledSectionIds + pulledHandleIds
+            if !allPulledIds.isEmpty {
+                let placeholders = allPulledIds.map { _ in "?" }.joined(separator: ",")
+                let deletedOps = try Int.fetchOne(db, sql: """
+                    SELECT COUNT(*) FROM syncOperations WHERE synced = 0 AND entityId IN (\(placeholders))
+                """, arguments: StatementArguments(allPulledIds)) ?? 0
+                if deletedOps > 0 {
+                    try db.execute(sql: """
+                        DELETE FROM syncOperations WHERE synced = 0 AND entityId IN (\(placeholders))
+                    """, arguments: StatementArguments(allPulledIds))
+                    print("[Sync] Purged \(deletedOps) stale sync operations for entities updated from server")
+                }
+            }
+
+            // Apply deletions (uppercase IDs to match local UUID format)
             for noteId in response.deletedNoteIds {
+                let normalizedId = noteId.uppercased()
                 try db.execute(sql: """
                     UPDATE notes SET deletedAt = ?, syncStatus = 'synced'
                     WHERE id = ? AND deletedAt IS NULL
-                """, arguments: [Int64(Date().timeIntervalSince1970 * 1000), noteId])
+                """, arguments: [Int64(Date().timeIntervalSince1970 * 1000), normalizedId])
             }
 
             for sectionId in response.deletedSectionIds {
+                let normalizedId = sectionId.uppercased()
                 try db.execute(sql: """
                     UPDATE sections SET deletedAt = ?, syncStatus = 'synced'
                     WHERE id = ? AND deletedAt IS NULL
-                """, arguments: [Int64(Date().timeIntervalSince1970 * 1000), sectionId])
+                """, arguments: [Int64(Date().timeIntervalSince1970 * 1000), normalizedId])
             }
 
             // Apply handle deletions (Handle Loop support)
             if let deletedHandleIds = response.deletedHandleIds {
                 for handleId in deletedHandleIds {
+                    let normalizedId = handleId.uppercased()
                     try db.execute(sql: """
                         UPDATE handles SET deletedAt = ?, syncStatus = 'synced'
                         WHERE id = ? AND deletedAt IS NULL
-                    """, arguments: [Int64(Date().timeIntervalSince1970 * 1000), handleId])
+                    """, arguments: [Int64(Date().timeIntervalSince1970 * 1000), normalizedId])
 
                     // Also unlink any sections from deleted handles
                     try db.execute(sql: """
                         UPDATE sections SET handleId = NULL
                         WHERE handleId = ?
-                    """, arguments: [handleId])
+                    """, arguments: [normalizedId])
                 }
             }
 
@@ -614,9 +676,10 @@ actor SyncEngine {
                     case "handle": table = "handles"  // Handle Loop support
                     default: table = "sections"
                     }
+                    let pushedVersion = entityVersions[op.entityId] ?? 1
                     try db.execute(sql: """
-                        UPDATE \(table) SET syncStatus = 'synced' WHERE id = ?
-                    """, arguments: [op.entityId])
+                        UPDATE \(table) SET syncStatus = 'synced', serverVersion = ? WHERE id = ?
+                    """, arguments: [pushedVersion, op.entityId])
                 }
             }
         }

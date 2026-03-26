@@ -104,6 +104,26 @@ private struct NoteEditorContent: View {
         ))
     }
 
+    /// Log sync operations for any locally-modified (pending) note and sections.
+    /// Awaitable — ensures all operations are written to DB before returning.
+    private func syncPendingEntitiesAsync(viewModel: NoteEditorViewModel) async {
+        if let note = viewModel.note, note.syncStatus == .pending {
+            if note.serverVersion == nil {
+                await appState.syncLogger.logNoteCreateSync(note)
+            } else {
+                await appState.syncLogger.logNoteUpdateSync(note)
+            }
+        }
+        for section in viewModel.sections {
+            guard section.syncStatus == .pending else { continue }
+            if section.serverVersion == nil {
+                await appState.syncLogger.logSectionCreateSync(section)
+            } else {
+                await appState.syncLogger.logSectionUpdateSync(section)
+            }
+        }
+    }
+
     var body: some View {
         mainContent
             .navigationTitle("")
@@ -129,27 +149,25 @@ private struct NoteEditorContent: View {
                     viewModel.focusedSectionId = newValue
                 }
             }
-            .onDisappear {
-                // Sync all current content when leaving the editor
-                if let note = viewModel.note {
-                    // Use create if the note hasn't been synced yet, update otherwise
-                    if note.syncStatus == .pending || note.serverVersion == nil {
-                        appState.syncLogger.logNoteCreate(note)
-                    } else {
-                        appState.syncLogger.logNoteUpdate(note)
-                    }
-                    for section in viewModel.sections {
-                        if section.serverVersion == nil {
-                            appState.syncLogger.logSectionCreate(section)
-                        } else {
-                            appState.syncLogger.logSectionUpdate(section)
-                        }
+            .onAppear {
+                // Wire up debounced sync logging — fires after edits stop for 2 seconds
+                viewModel.onContentChanged = { [weak viewModel] in
+                    guard let viewModel else { return }
+                    Task { @MainActor in
+                        await syncPendingEntitiesAsync(viewModel: viewModel)
                     }
                 }
+            }
+            .onDisappear {
                 viewModel.generateAITitleIfNeeded()
                 viewModel.generateAITagsIfNeeded()
                 Task {
+                    // Log pending operations with await — guarantees DB writes complete
+                    // before sync() reads the syncOperations table.
+                    await syncPendingEntitiesAsync(viewModel: viewModel)
                     await viewModel.cleanupEmptyNoteIfNeeded()
+                    // Trigger immediate sync so changes push before app backgrounds.
+                    await appState.syncEngine.sync()
                 }
             }
             .task {

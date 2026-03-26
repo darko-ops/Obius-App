@@ -44,6 +44,33 @@ final class SyncOperationLogger {
         )
     }
 
+    func logNoteCreateSync(_ note: Note) async {
+        await logOperationSync(
+            entityType: "note",
+            entityId: note.id,
+            operationType: "create",
+            payload: noteToPayload(note)
+        )
+    }
+
+    func logSectionCreateSync(_ section: Section) async {
+        await logOperationSync(
+            entityType: "section",
+            entityId: section.id,
+            operationType: "create",
+            payload: sectionToPayload(section)
+        )
+    }
+
+    func logSectionUpdateSync(_ section: Section) async {
+        await logOperationSync(
+            entityType: "section",
+            entityId: section.id,
+            operationType: "update",
+            payload: sectionToPayload(section)
+        )
+    }
+
     func logNoteDelete(_ noteId: String) {
         logOperation(
             entityType: "note",

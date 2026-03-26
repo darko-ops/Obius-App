@@ -49,8 +49,13 @@ final class NoteRepository: ObservableObject {
     func updateNoteBody(_ noteId: String, body: String, richText: String? = nil) async throws {
         try await database.write { db in
             guard var note = try Note.fetchOne(db, key: noteId) else { return }
+            // Only touch if body text actually changed — prevents spurious sync pushes.
+            // richText=nil means "not provided" (e.g. macOS plain TextEditor), not "clear it".
+            guard note.body != body else { return }
             note.body = body
-            note.bodyRichText = richText
+            if let richText = richText {
+                note.bodyRichText = richText
+            }
             note.touch()
             try note.update(db)
         }
@@ -60,6 +65,10 @@ final class NoteRepository: ObservableObject {
         try await database.write { db in
             guard var note = try Note.fetchOne(db, key: noteId) else { return }
             let key = afterSectionId.map { "after_\($0)" } ?? "end"
+            let oldContent = note.interstitialContent[key] ?? ""
+            let oldRich = note.interstitialRichContent[key]
+            // Only touch if content actually changed
+            guard oldContent != content || oldRich != richText else { return }
             if content.isEmpty {
                 note.interstitialContent.removeValue(forKey: key)
                 note.interstitialRichContent.removeValue(forKey: key)
