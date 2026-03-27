@@ -129,6 +129,7 @@
 		B8A1D00A0000000000000003 /* ClipboardHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F00A0000000000000003 /* ClipboardHelper.swift */; };
 		B8A1D00A0000000000000004 /* KeyboardHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F00A0000000000000004 /* KeyboardHelper.swift */; };
 		B8A1D00A0000000000000005 /* View+Platform.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F00A0000000000000005 /* View+Platform.swift */; };
+		B8A1D00A0000000000000008 /* WindowAccessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F00A0000000000000008 /* WindowAccessor.swift */; };
 /* End PBXBuildFile section */
 
 
@@ -156,6 +157,7 @@
 		B8A1F00A0000000000000003 /* ClipboardHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardHelper.swift; sourceTree = "<group>"; };
 		B8A1F00A0000000000000004 /* KeyboardHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardHelper.swift; sourceTree = "<group>"; };
 		B8A1F00A0000000000000005 /* View+Platform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "View+Platform.swift"; path = "View+Platform.swift"; sourceTree = "<group>"; };
+		B8A1F00A0000000000000008 /* WindowAccessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowAccessor.swift; sourceTree = "<group>"; };
 		B8A1F00A0000000000000006 /* Obius-macOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Obius-macOS.entitlements"; sourceTree = "<group>"; };
 		B8A1F0010000000000000009 /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000010 /* SupabaseClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseClient.swift; sourceTree = "<group>"; };
@@ -407,6 +409,7 @@
 				B8A1F00A0000000000000002 /* PlatformImage+Extensions.swift */,
 				B8A1F00A0000000000000001 /* PlatformTypes.swift */,
 				B8A1F00A0000000000000005 /* View+Platform.swift */,
+				B8A1F00A0000000000000008 /* WindowAccessor.swift */,
 			);
 			path = Utilities;
 			sourceTree = "<group>";
@@ -727,6 +730,7 @@
 				B8A1D00A0000000000000003 /* ClipboardHelper.swift in Sources */,
 				B8A1D00A0000000000000004 /* KeyboardHelper.swift in Sources */,
 				B8A1D00A0000000000000005 /* View+Platform.swift in Sources */,
+				B8A1D00A0000000000000008 /* WindowAccessor.swift in Sources */,
 				B8A1D0040000000000000001 /* AppearanceManager.swift in Sources */,
 				B8A1D0010000000000000009 /* NetworkMonitor.swift in Sources */,
 				B8A1D0010000000000000010 /* SupabaseClient.swift in Sources */,

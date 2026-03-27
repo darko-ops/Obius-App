@@ -117,13 +117,7 @@ private struct NotesListContent: View {
         .background(Color.systemBackground)
         .navigationTitle("")
         .inlineNavigationTitle()
-        #if os(iOS)
-        .toolbarBackground(Color.systemBackground, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        #else
-        .toolbarBackground(Color.systemBackground, for: .windowToolbar)
-        .toolbarBackground(.visible, for: .windowToolbar)
-        #endif
+        .platformToolbarBackground(.black)
         .toolbar { toolbarContent }
         .confirmationDialog(
             "Delete \(selectedNoteIds.count) pages?",
@@ -294,10 +288,10 @@ private struct NotesListContent: View {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.white)
                     Text(selectedModuleName)
                         .font(.headline)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(.white)
                 }
             }
             .buttonStyle(.plain)
@@ -503,6 +497,9 @@ private struct NotesListContent: View {
                         .font(.caption.weight(.semibold))
                         .foregroundColor(.secondary)
                         .textCase(nil)
+                        #if os(macOS)
+                        .listRowBackground(Color.black)
+                        #endif
                 }
             }
 
@@ -515,6 +512,9 @@ private struct NotesListContent: View {
                     .font(.caption.weight(.semibold))
                     .foregroundColor(.secondary)
                     .textCase(nil)
+                    #if os(macOS)
+                    .listRowBackground(Color.black)
+                    #endif
             }
 
             blocksSection
@@ -629,6 +629,9 @@ private struct NotesListContent: View {
                     .font(.caption.weight(.semibold))
                     .foregroundColor(.secondary)
                     .textCase(nil)
+                    #if os(macOS)
+                    .listRowBackground(Color.black)
+                    #endif
             }
         }
     }
@@ -1040,6 +1043,8 @@ struct RoundedSearchBar: View {
                 .focused($isFocused)
                 #if os(iOS)
                 .textInputAutocapitalization(.never)
+                #else
+                .textFieldStyle(.plain)
                 #endif
                 .autocorrectionDisabled()
 

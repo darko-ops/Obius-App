@@ -79,12 +79,10 @@ struct IntelligenceView: View {
 
     var body: some View {
         mainContent
+        .background(Color.black)
         .navigationTitle("")
         .inlineNavigationTitle()
-        #if os(iOS)
-        .toolbarBackground(Color(.systemBackground), for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        #endif
+        .platformToolbarBackground(.black)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button {
@@ -92,7 +90,7 @@ struct IntelligenceView: View {
                 } label: {
                     Image(systemName: "gearshape.fill")
                         .font(.system(size: 12))
-                        .foregroundStyle(Color(.lightGray))
+                        .foregroundStyle(.white)
                         .offset(y: 2)
                 }
             }
@@ -103,10 +101,10 @@ struct IntelligenceView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.up.chevron.down")
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.white)
                         Text(selectedModuleName)
                             .font(.headline)
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.white)
                     }
                 }
                 .buttonStyle(.plain)
@@ -117,7 +115,7 @@ struct IntelligenceView: View {
                 } label: {
                     Text("@")
                         .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(Color(.lightGray))
+                        .foregroundStyle(.white)
                 }
             }
         }

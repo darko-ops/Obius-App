@@ -59,7 +59,8 @@ extension View {
         #endif
     }
 
-    /// Apply navigation bar toolbar background on iOS only.
+    /// Apply navigation bar toolbar background on iOS; on macOS the window-level
+    /// WindowAccessor handles the titlebar appearance globally.
     @ViewBuilder
     func platformToolbarBackground(_ color: Color) -> some View {
         #if os(iOS)

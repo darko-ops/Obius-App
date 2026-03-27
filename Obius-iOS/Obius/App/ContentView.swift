@@ -288,6 +288,8 @@ struct MainTabView: View {
             }
             .background(Color.black)
         }
+        .background(WindowAccessor())
+        .configureWindowBackground()
         #endif
     }
 }
