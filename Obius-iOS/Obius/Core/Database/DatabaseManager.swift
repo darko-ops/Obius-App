@@ -5,7 +5,7 @@ import Combine
 final class DatabaseManager {
     private let migrator: DatabaseMigrator
 
-    static let schemaVersion = 32
+    static let schemaVersion = 36
 
     /// The App Group container path for the shared database
     static var appGroupDatabaseURL: URL? {
@@ -36,6 +36,9 @@ final class DatabaseManager {
                 let dir = appGroupURL.deletingLastPathComponent()
                 try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
                 dbURL = appGroupURL
+                #if DEBUG
+                print("[DatabaseManager] Using app group database: \(appGroupURL.path)")
+                #endif
             } else {
                 // Fallback to legacy path if App Group unavailable
                 let appSupport = try FileManager.default.url(
@@ -45,6 +48,9 @@ final class DatabaseManager {
                     create: true
                 )
                 dbURL = appSupport.appendingPathComponent("obius.sqlite")
+                #if DEBUG
+                print("[DatabaseManager] ⚠️ App group unavailable — using fallback: \(dbURL.path)")
+                #endif
             }
 
             var config = Configuration()
@@ -782,6 +788,114 @@ final class DatabaseManager {
             try db.execute(sql: """
                 UPDATE syncMetadata SET schemaVersion = 32
             """)
+        }
+
+        // v33: Migrate list/link insights to dedicated types and remove orphaned reminder rows
+        migrator.registerMigration("v33_insight_list_link_types") { db in
+            // Lists were stored as cleanup with sourceSectionId 'list'
+            try db.execute(sql: """
+                UPDATE insights SET insightType = 'list'
+                WHERE insightType = 'cleanup' AND sourceSectionId = 'list'
+            """)
+
+            // Links were stored as reminder with sourceSectionId 'link'
+            try db.execute(sql: """
+                UPDATE insights SET insightType = 'link'
+                WHERE insightType = 'reminder' AND sourceSectionId = 'link'
+            """)
+
+            // Delete remaining orphaned reminder rows
+            try db.execute(sql: """
+                DELETE FROM insights WHERE insightType = 'reminder'
+            """)
+
+            try db.execute(sql: """
+                UPDATE syncMetadata SET schemaVersion = 33
+            """)
+        }
+
+        // v34: Remove default Local/Cloud modules — all projects are user-created now
+        migrator.registerMigration("v34_remove_default_modules") { db in
+            // Un-default all modules so they can be renamed/deleted
+            try db.execute(sql: "UPDATE modules SET isDefault = 0")
+
+            // Soft-delete the auto-created Local and Cloud modules if they have no notes
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            for name in ["Local", "Cloud"] {
+                let noteCount = try Int.fetchOne(db, sql: """
+                    SELECT COUNT(*) FROM notes
+                    WHERE moduleId IN (SELECT id FROM modules WHERE name = ? AND deletedAt IS NULL)
+                    AND deletedAt IS NULL
+                """, arguments: [name]) ?? 0
+
+                if noteCount == 0 {
+                    try db.execute(sql: """
+                        UPDATE modules SET deletedAt = ?, updatedAt = ? WHERE name = ? AND deletedAt IS NULL
+                    """, arguments: [now, now, name])
+                }
+            }
+
+            // Ensure at least one module exists — create "Artifacts" if all were deleted
+            let remaining = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM modules WHERE deletedAt IS NULL") ?? 0
+            if remaining == 0 {
+                try db.execute(sql: """
+                    INSERT INTO modules (id, name, icon, isDefault, storageType, orderIndex, createdAt, updatedAt)
+                    VALUES (?, 'Artifacts', 'folder', 0, 'local', 0, ?, ?)
+                """, arguments: [UUID().uuidString, now, now])
+            }
+
+            try db.execute(sql: "UPDATE syncMetadata SET schemaVersion = 34")
+        }
+
+        // v35: Add sync columns to echoes table for cloud sync
+        migrator.registerMigration("v35_echo_sync_fields") { db in
+            try db.execute(sql: "ALTER TABLE echoes ADD COLUMN localVersion INTEGER NOT NULL DEFAULT 1")
+            try db.execute(sql: "ALTER TABLE echoes ADD COLUMN serverVersion INTEGER")
+            try db.execute(sql: "ALTER TABLE echoes ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'pending'")
+
+            try db.execute(sql: "UPDATE syncMetadata SET schemaVersion = 35")
+        }
+
+        // v36: Recreate echoes table without FK constraint on handleId.
+        // Handles don't fully sync to cloud, so the FK causes echo inserts
+        // to fail on devices where the handle doesn't exist locally yet.
+        migrator.registerMigration("v36_echo_drop_handle_fk") { db in
+            // Preserve existing data
+            try db.execute(sql: "ALTER TABLE echoes RENAME TO echoes_old")
+
+            // Recreate without FK reference
+            try db.create(table: "echoes") { t in
+                t.column("id", .text).primaryKey()
+                t.column("handleId", .text).notNull()
+                t.column("isRecurring", .boolean).notNull().defaults(to: false)
+                t.column("intervalsJSON", .text)
+                t.column("fireDate", .integer).notNull()
+                t.column("isActive", .boolean).notNull().defaults(to: true)
+                t.column("nextFireDate", .integer)
+                t.column("isAlerted", .boolean).notNull().defaults(to: false)
+                t.column("lastAcknowledgedAt", .integer)
+                t.column("createdAt", .integer).notNull()
+                t.column("updatedAt", .integer).notNull()
+                t.column("localVersion", .integer).notNull().defaults(to: 1)
+                t.column("serverVersion", .integer)
+                t.column("syncStatus", .text).notNull().defaults(to: "pending")
+            }
+
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            try db.execute(sql: """
+                INSERT INTO echoes (id, handleId, isRecurring, intervalsJSON, fireDate, isActive, nextFireDate, isAlerted, lastAcknowledgedAt, createdAt, updatedAt, localVersion, serverVersion, syncStatus)
+                SELECT id, handleId, isRecurring, intervalsJSON, fireDate, isActive, nextFireDate, isAlerted, lastAcknowledgedAt,
+                       COALESCE(createdAt, ?), COALESCE(updatedAt, ?),
+                       COALESCE(localVersion, 1), serverVersion, COALESCE(syncStatus, 'pending')
+                FROM echoes_old
+            """, arguments: [now, now])
+            try db.execute(sql: "DROP TABLE echoes_old")
+
+            try db.create(index: "idx_echoes_handle", on: "echoes", columns: ["handleId"])
+            try db.create(index: "idx_echoes_active", on: "echoes", columns: ["isActive"])
+            try db.create(index: "idx_echoes_next_fire", on: "echoes", columns: ["nextFireDate"])
+
+            try db.execute(sql: "UPDATE syncMetadata SET schemaVersion = 36")
         }
 
         self.migrator = migrator

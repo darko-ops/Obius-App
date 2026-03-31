@@ -1,8 +1,6 @@
 import SwiftUI
 import AVFoundation
 
-#if os(iOS)
-
 // MARK: - Audio Recorder Model
 
 @MainActor
@@ -18,6 +16,7 @@ final class AudioRecorderModel: ObservableObject {
 
     /// Request microphone permission then start recording
     func startRecording() {
+        #if os(iOS)
         AVAudioApplication.requestRecordPermission { [weak self] granted in
             Task { @MainActor in
                 guard granted else {
@@ -27,10 +26,29 @@ final class AudioRecorderModel: ObservableObject {
                 self?.beginRecording()
             }
         }
+        #elseif os(macOS)
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            beginRecording()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                Task { @MainActor in
+                    guard granted else {
+                        print("Microphone permission denied")
+                        return
+                    }
+                    self?.beginRecording()
+                }
+            }
+        default:
+            print("Microphone permission denied")
+        }
+        #endif
     }
 
     /// Actually start recording to a temporary M4A file (called after permission is granted)
     private func beginRecording() {
+        #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
@@ -39,6 +57,7 @@ final class AudioRecorderModel: ObservableObject {
             print("Failed to configure audio session: \(error)")
             return
         }
+        #endif
 
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("audio_\(UUID().uuidString).m4a")
@@ -202,6 +221,7 @@ struct AudioRecorderView: View {
                     }
                 }
             }
+            .buttonStyle(.plain)
 
             Spacer()
         }
@@ -246,5 +266,3 @@ struct RecordingWaveformView: View {
         max(1, Int(width / 5))
     }
 }
-
-#endif

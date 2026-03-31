@@ -18,10 +18,11 @@ final class ModuleRepository: ObservableObject {
         database.observeAllModules()
             .receive(on: DispatchQueue.main)
             .catch { error -> Just<[Module]> in
-                print("Error observing modules: \(error)")
+                print("[ModuleRepository] Error observing modules: \(error)")
                 return Just([])
             }
             .sink { [weak self] modules in
+                print("[ModuleRepository] Observed \(modules.count) modules: \(modules.map { $0.name })")
                 self?.modules = modules
             }
             .store(in: &cancellables)
@@ -74,12 +75,14 @@ final class ModuleRepository: ObservableObject {
         }
     }
 
+    /// Returns the first available module as a fallback
     func getLocalModule() -> Module? {
-        modules.first { $0.isDefault && $0.name == "Local" }
+        modules.first
     }
 
+    /// Returns the Cloud module if it exists
     func getCloudModule() -> Module? {
-        modules.first { $0.isDefault && $0.name == "Cloud" }
+        modules.first { $0.name == "Cloud" }
     }
 
     // MARK: - Update
@@ -93,10 +96,6 @@ final class ModuleRepository: ObservableObject {
         try await database.write { db in
             guard var module = try Module.fetchOne(db, key: id) else { return }
 
-            if module.isDefault {
-                throw ModuleError.cannotModifyDefault
-            }
-
             // Check for duplicate name (excluding self)
             let existing = try Module
                 .filter(Module.Columns.name == trimmed)
@@ -109,6 +108,7 @@ final class ModuleRepository: ObservableObject {
             }
 
             module.name = trimmed
+            module.isDefault = false
             module.touch()
             try module.update(db)
         }
@@ -129,32 +129,40 @@ final class ModuleRepository: ObservableObject {
 
     // MARK: - Delete
 
-    func deleteModule(id: String) async throws {
+    /// Deletes a module, reassigning its notes to another module.
+    /// Returns the IDs of notes that were reassigned (for sync logging).
+    @discardableResult
+    func deleteModule(id: String) async throws -> [String] {
         try await database.write { db in
-            guard var module = try Module.fetchOne(db, key: id) else { return }
+            guard var module = try Module.fetchOne(db, key: id) else { return [] }
 
-            if module.isDefault {
-                throw ModuleError.cannotModifyDefault
+            // Find another module to reassign notes to
+            guard let fallbackModule = try Module
+                .filter(Module.Columns.id != id)
+                .filter(Module.Columns.deletedAt == nil)
+                .order(Module.Columns.orderIndex)
+                .fetchOne(db)
+            else {
+                throw ModuleError.cannotDeleteLast
             }
 
-            // Find the Local module to reassign notes
-            guard let localModule = try Module
-                .filter(Module.Columns.name == "Local")
-                .filter(Module.Columns.isDefault == true)
-                .filter(Module.Columns.deletedAt == nil)
-                .fetchOne(db)
-            else { return }
+            // Get IDs of notes being reassigned
+            let affectedNoteIds = try String.fetchAll(db, sql: """
+                SELECT id FROM notes WHERE moduleId = ? AND deletedAt IS NULL
+            """, arguments: [id])
 
-            // Move all notes from this module to Local
+            // Move all notes from this module to the fallback
             let now = Int64(Date().timeIntervalSince1970 * 1000)
             try db.execute(sql: """
                 UPDATE notes SET moduleId = ?, updatedAt = ?, localVersion = localVersion + 1, syncStatus = 'pending'
                 WHERE moduleId = ?
-            """, arguments: [localModule.id, now, id])
+            """, arguments: [fallbackModule.id, now, id])
 
             // Soft-delete the module
             module.softDelete()
             try module.update(db)
+
+            return affectedNoteIds
         }
     }
 }
@@ -164,7 +172,7 @@ final class ModuleRepository: ObservableObject {
 enum ModuleError: LocalizedError {
     case emptyName
     case duplicateName(String)
-    case cannotModifyDefault
+    case cannotDeleteLast
 
     var errorDescription: String? {
         switch self {
@@ -172,8 +180,8 @@ enum ModuleError: LocalizedError {
             return "Project name cannot be empty"
         case .duplicateName(let name):
             return "A project named '\(name)' already exists"
-        case .cannotModifyDefault:
-            return "Default projects cannot be modified"
+        case .cannotDeleteLast:
+            return "You must have at least one project"
         }
     }
 }

@@ -17,9 +17,9 @@ struct CommitPickerForShare: View {
                     ProgressView()
                 } else if commits.isEmpty {
                     ContentUnavailableView(
-                        "No Commits",
+                        "No Versions",
                         systemImage: "doc.zipper",
-                        description: Text("Commit a page first to create a permanent shareable link.")
+                        description: Text("Save a version first to create a permanent shareable link.")
                     )
                 } else {
                     List(commits) { commit in
@@ -33,8 +33,8 @@ struct CommitPickerForShare: View {
                     }
                 }
             }
-            .navigationTitle("Pick a Commit")
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("Pick a Version")
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }

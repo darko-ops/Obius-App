@@ -36,6 +36,38 @@ export interface Section {
   embedding_updated_at: string | null;
 }
 
+export interface Handle {
+  id: string;
+  user_id: string;
+  name: string;
+  display_name: string;
+  content: string;
+  intent: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  version: number;
+  last_modified_by: string | null;
+}
+
+export interface Echo {
+  id: string;
+  user_id: string;
+  handle_id: string;
+  is_recurring: boolean;
+  intervals_json: string | null;
+  fire_date: number;
+  is_active: boolean;
+  next_fire_date: number | null;
+  is_alerted: boolean;
+  last_acknowledged_at: number | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  version: number;
+  last_modified_by: string | null;
+}
+
 export interface Device {
   id: string;
   user_id: string;
@@ -77,7 +109,7 @@ export interface SyncState {
 export type ColorIntent = 'default' | 'important' | 'idea' | 'task' | 'reference';
 export type ContentType = 'text' | 'checklist' | 'code' | 'quote';
 export type Platform = 'ios' | 'android' | 'web';
-export type EntityType = 'note' | 'section';
+export type EntityType = 'note' | 'section' | 'echo' | 'handle';
 export type Operation = 'create' | 'update' | 'delete';
 
 // Sync Request/Response Types
@@ -90,8 +122,12 @@ export interface SyncPullRequest {
 export interface SyncPullResponse {
   notes: Note[];
   sections: Section[];
+  handles: Handle[];
+  echoes: Echo[];
   deleted_note_ids: string[];
   deleted_section_ids: string[];
+  deleted_handle_ids: string[];
+  deleted_echo_ids: string[];
   server_timestamp: string;
   has_more: boolean;
 }
@@ -118,7 +154,7 @@ export interface ConflictInfo {
   server_version: number;
   client_version: number;
   resolution: 'server_wins' | 'client_wins' | 'merged';
-  merged_entity?: Note | Section;
+  merged_entity?: Note | Section | Handle | Echo;
 }
 
 export interface SyncPushResponse {

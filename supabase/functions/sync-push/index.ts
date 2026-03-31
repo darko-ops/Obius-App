@@ -16,7 +16,10 @@ import type {
   ConflictInfo,
   Note,
   Section,
+  Handle,
+  Echo,
 } from '../_shared/types.ts';
+import { requireFeature, requireEntityCreate } from '../_shared/entitlements.ts';
 
 serve(async (req: Request) => {
   // Handle CORS preflight
@@ -52,6 +55,10 @@ serve(async (req: Request) => {
     if (deviceError || !device) {
       return errorResponse('INVALID_DEVICE', 'Device not found or unauthorized', 403);
     }
+
+    // Cloud sync requires Pro
+    const syncGate = await requireFeature(supabase, userId, 'cloudSync');
+    if (syncGate) return syncGate;
 
     const accepted: string[] = [];
     const conflicts: ConflictInfo[] = [];
@@ -107,10 +114,48 @@ async function processOperation(
   deviceId: string,
   op: SyncOperation
 ): Promise<ProcessResult> {
-  const table = op.entity_type === 'note' ? 'notes' : 'sections';
+  const tableMap: Record<string, string> = { note: 'notes', section: 'sections', echo: 'echoes', handle: 'handles' };
+  const table = tableMap[op.entity_type] || 'sections';
+
+  // Sanitize boolean fields that may arrive as strings from older clients
+  const boolFields = ['is_pinned', 'is_collapsed', 'is_recurring', 'is_active', 'is_alerted'];
+  for (const field of boolFields) {
+    if (typeof op.payload[field] === 'string') {
+      op.payload[field] = op.payload[field] === 'true' || op.payload[field] === '1';
+    }
+  }
+
+  // Sanitize content_type for sections — ensure valid value
+  if (op.entity_type === 'section' && op.payload.content_type) {
+    const validTypes = ['text', 'checklist', 'code', 'quote', 'image', 'audio'];
+    if (!validTypes.includes(op.payload.content_type as string)) {
+      op.payload.content_type = 'text';
+    }
+  }
+
+  // Strip fields that don't exist in Supabase tables to prevent insert errors
+  const noteFields = new Set(['title', 'ai_title', 'ai_summary', 'body', 'body_rich_text', 'interstitial_content', 'interstitial_rich_content', 'is_pinned', 'color_intent', 'module_id', 'module_name', 'module_icon', 'group_name', 'created_at', 'updated_at', 'deleted_at']);
+  const sectionFields = new Set(['note_id', 'content', 'content_type', 'parent_section_id', 'order_key', 'indent_level', 'is_collapsed', 'color_intent', 'handle_id', 'created_at', 'updated_at', 'deleted_at']);
+  const handleFields = new Set(['name', 'display_name', 'content', 'intent', 'created_at', 'updated_at', 'deleted_at']);
+  const echoFields = new Set(['handle_id', 'is_recurring', 'intervals_json', 'fire_date', 'is_active', 'next_fire_date', 'is_alerted', 'last_acknowledged_at', 'created_at', 'updated_at', 'deleted_at']);
+  const fieldMap: Record<string, Set<string>> = { note: noteFields, section: sectionFields, handle: handleFields, echo: echoFields };
+  const allowedFields = fieldMap[op.entity_type] || sectionFields;
+  for (const key of Object.keys(op.payload)) {
+    if (!allowedFields.has(key)) {
+      delete op.payload[key];
+    }
+  }
 
   // CREATE operation
   if (op.operation === 'create') {
+    // Enforce entity limits for free-tier users
+    const noteId = op.entity_type === 'section' ? (op.payload.note_id as string) : undefined;
+    const limitCheck = await requireEntityCreate(supabase, userId, op.entity_type, noteId);
+    if (limitCheck) {
+      // Return as a conflict with the limit error
+      return { success: false };
+    }
+
     const insertData = {
       ...op.payload,
       id: op.entity_id,
@@ -132,7 +177,12 @@ async function processOperation(
           operation: 'update',
         });
       }
-      console.error(`Create error for ${op.entity_id}:`, error);
+      // Foreign key violation = parent note was deleted; treat as success so the operation doesn't retry forever
+      if (error.code === '23503') {
+        console.warn(`Skipping orphaned ${op.entity_type} ${op.entity_id}: parent entity missing`);
+        return { success: true };
+      }
+      console.error(`Create error for ${op.entity_id} (${op.entity_type}):`, error, 'payload keys:', Object.keys(insertData));
       return { success: false };
     }
 
@@ -166,8 +216,8 @@ async function processOperation(
       const clientTimestamp = new Date(op.client_timestamp);
       const serverTimestamp = new Date(existing.updated_at);
 
-      // Last-write-wins resolution
-      if (clientTimestamp > serverTimestamp) {
+      // Last-write-wins resolution (also accept if timestamps are very close, e.g. re-sync)
+      if (clientTimestamp >= serverTimestamp || (serverTimestamp.getTime() - clientTimestamp.getTime() < 5000)) {
         // Client wins - apply client changes
         const updateData = {
           ...op.payload,
@@ -210,7 +260,7 @@ async function processOperation(
             server_version: existing.version,
             client_version: op.client_version,
             resolution: 'server_wins',
-            merged_entity: existing as Note | Section,
+            merged_entity: existing as Note | Section | Handle | Echo,
           },
         };
       }
@@ -301,9 +351,4 @@ async function logOperation(
     previous_version: previousVersion,
     new_version: newVersion,
   });
-}
-
-// Re-export createServiceClient for logOperation
-function createServiceClient() {
-  return (await import('../_shared/supabase-client.ts')).createServiceClient();
 }

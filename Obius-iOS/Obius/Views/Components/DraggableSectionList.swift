@@ -762,12 +762,15 @@ struct InterstitialTextView: View {
 import UIKit
 
 enum HapticFeedback {
-    static func impact(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
+    typealias FeedbackStyle = UIImpactFeedbackGenerator.FeedbackStyle
+    typealias FeedbackType = UINotificationFeedbackGenerator.FeedbackType
+
+    static func impact(_ style: FeedbackStyle) {
         let generator = UIImpactFeedbackGenerator(style: style)
         generator.impactOccurred()
     }
 
-    static func notification(_ type: UINotificationFeedbackGenerator.FeedbackType) {
+    static func notification(_ type: FeedbackType) {
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(type)
     }

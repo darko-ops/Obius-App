@@ -104,18 +104,18 @@ struct SignInView: View {
             .padding(.bottom)
         }
         .padding()
+        #if os(iOS)
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
                 Button {
-                    #if os(iOS)
                     UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                    #endif
                 } label: {
                     Image(systemName: "keyboard.chevron.compact.down")
                 }
             }
         }
+        #endif
         .sheet(isPresented: $showingResetPassword) {
             ResetPasswordView()
         }
@@ -223,18 +223,18 @@ struct SignUpView: View {
             .padding(.bottom)
         }
         .padding()
+        #if os(iOS)
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
                 Button {
-                    #if os(iOS)
                     UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                    #endif
                 } label: {
                     Image(systemName: "keyboard.chevron.compact.down")
                 }
             }
         }
+        #endif
     }
 }
 
@@ -310,25 +310,23 @@ struct ResetPasswordView: View {
                 }
             }
             .padding()
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         dismiss()
                     }
                 }
+                #if os(iOS)
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
                     Button {
-                        #if os(iOS)
                         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                        #endif
                     } label: {
                         Image(systemName: "keyboard.chevron.compact.down")
                     }
                 }
+                #endif
             }
         }
         .presentationDetents([.medium])

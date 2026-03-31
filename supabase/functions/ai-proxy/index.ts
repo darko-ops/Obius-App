@@ -11,8 +11,33 @@ import {
 } from '../_shared/supabase-client.ts';
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { sendMessage, sendRaw, logUsage } from '../_shared/anthropic-client.ts';
+import { requireAIAction, requireFeature } from '../_shared/entitlements.ts';
 
 const AI_MODEL = 'claude-haiku-4-5-20251001';
+
+// ---------- Prompt loader ----------
+
+// Read prompt templates from _shared/prompts/ at import time.
+// Deno Deploy bundles these files so they're available at runtime.
+async function loadPrompt(name: string): Promise<string> {
+  try {
+    return await Deno.readTextFile(
+      new URL(`../_shared/prompts/${name}.md`, import.meta.url)
+    );
+  } catch {
+    console.warn(`Prompt file ${name}.md not found, using fallback`);
+    return '';
+  }
+}
+
+// Cache prompts on first request
+let promptCache: Record<string, string> = {};
+async function getPrompt(name: string): Promise<string> {
+  if (!promptCache[name]) {
+    promptCache[name] = await loadPrompt(name);
+  }
+  return promptCache[name];
+}
 
 // ---------- Tool definitions for send_with_tools ----------
 
@@ -87,7 +112,7 @@ const TOOL_DEFINITIONS = [
   {
     name: 'update_page_body',
     description:
-      'Suggest updated body text for a page. Use this when the user asks you to refine, rewrite, expand, or edit a page\'s content. The user will see the proposed changes and can accept or dismiss.',
+      'Suggest updated body text for a page. Use this when the user asks you to refine, rewrite, expand, or edit a page\'s body text (not sections). The user will see the proposed changes and can accept or dismiss.',
     input_schema: {
       type: 'object',
       properties: {
@@ -101,7 +126,7 @@ const TOOL_DEFINITIONS = [
   {
     name: 'delete_section',
     description:
-      'Delete a section (node or line) from the focused page. The user will see a confirmation card before it executes. If the user says "remove the node" and there are multiple nodes, ask them which one they mean before calling this tool.',
+      'Delete a section (node or line) from the focused page. If the user says "remove the node" and there are multiple nodes, ask which one first.',
     input_schema: {
       type: 'object',
       properties: {
@@ -111,97 +136,158 @@ const TOOL_DEFINITIONS = [
       required: ['section_id', 'section_preview'],
     },
   },
+  {
+    name: 'update_section_content',
+    description:
+      'Update the content of a specific section by ID. More precise than update_page_body — use this when the user wants to edit a particular node or line.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        section_id: { type: 'string', description: 'The UUID of the section to update' },
+        section_preview: { type: 'string', description: 'Short preview of current content (for the confirmation card)' },
+        new_content: { type: 'string', description: 'The full updated content for this section' },
+      },
+      required: ['section_id', 'section_preview', 'new_content'],
+    },
+  },
+  {
+    name: 'create_section',
+    description:
+      'Create a new section (node or line) on the focused page. Use this when the user asks to add a node, create a section, convert content into a node, turn text into nodes, or restructure a page into sections. Call this tool MULTIPLE TIMES to create several nodes at once.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        note_id: { type: 'string', description: 'The UUID of the page to add the section to' },
+        note_title: { type: 'string', description: 'The title of the page (for the confirmation card)' },
+        content: { type: 'string', description: 'The content for the new section' },
+        section_type: {
+          type: 'string',
+          enum: ['fold', 'line'],
+          description: 'fold = node with colored background, line = plain text',
+        },
+        content_type: {
+          type: 'string',
+          enum: ['text', 'checklist', 'code', 'quote'],
+          description: 'The content type (default: text)',
+        },
+        after_section_id: {
+          type: 'string',
+          description: 'Insert after this section ID. Null or omitted = add at the end.',
+        },
+        intent: {
+          type: 'string',
+          enum: ['idea', 'question', 'task', 'evidence'],
+          description: 'The intent/color for the new section (default: idea)',
+        },
+      },
+      required: ['note_id', 'content', 'section_type'],
+    },
+  },
+  {
+    name: 'move_section',
+    description:
+      'Move a section to a new position within the page. Specify which section to place it after.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        section_id: { type: 'string', description: 'The UUID of the section to move' },
+        section_preview: { type: 'string', description: 'Short preview of the section content' },
+        after_section_id: {
+          type: 'string',
+          description: 'Place after this section ID. Null or omitted = move to the top.',
+        },
+      },
+      required: ['section_id', 'section_preview'],
+    },
+  },
+  {
+    name: 'set_section_intent',
+    description:
+      'Change the intent/color of a specific section.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        section_id: { type: 'string', description: 'The UUID of the section' },
+        section_preview: { type: 'string', description: 'Short preview of the section content' },
+        intent: {
+          type: 'string',
+          enum: ['idea', 'question', 'task', 'evidence'],
+          description: 'The new intent to set',
+        },
+      },
+      required: ['section_id', 'section_preview', 'intent'],
+    },
+  },
+  {
+    name: 'rewrite_page',
+    description:
+      'Rewrite the entire page in a single action. Use this when the user asks you to remove, restructure, or broadly change content that spans the body AND sections. Produces ONE preview card showing the full result. Sections not listed in keep_sections are deleted. Sections listed with new_content are updated. The user sees a single "accept or dismiss" for the whole change.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        note_id: { type: 'string', description: 'The UUID of the page' },
+        note_title: { type: 'string', description: 'The title of the page (for the confirmation card)' },
+        new_body: { type: 'string', description: 'The full new body text for the page (empty string to clear)' },
+        keep_sections: {
+          type: 'array',
+          description: 'Sections to KEEP. Any section not listed here is deleted. Include the section ID and optionally new_content to update it.',
+          items: {
+            type: 'object',
+            properties: {
+              section_id: { type: 'string', description: 'The UUID of the section to keep' },
+              new_content: { type: 'string', description: 'Optional new content for this section. Omit or null to keep existing content unchanged.' },
+            },
+            required: ['section_id'],
+          },
+        },
+        summary: { type: 'string', description: 'A short human-readable summary of what changed (e.g. "Removed 3 task nodes and trimmed the intro")' },
+      },
+      required: ['note_id', 'note_title', 'new_body', 'keep_sections', 'summary'],
+    },
+  },
 ];
 
-// ---------- System prompts per action ----------
+// ---------- System prompt builders ----------
 
-function systemPromptForSendWithTools(noteContext: string): string {
-  return `You are the intelligence assistant inside Obius, a note-taking app. \
-Answer questions about the user's notes and help them stay organised. \
-Be concise and helpful.
-
-You can suggest actions using your tools. The user will see each action \
-as a card with Accept/Dismiss buttons — the action only executes if \
-accepted. Suggest actions when clearly relevant. You may combine text \
-with tool calls.
-
-When the user asks you to edit, refine, rewrite, or improve a page's body, \
-use the update_page_body tool to propose the new content.
-
-When the user asks you to edit, refine, rewrite, or improve a loop's content, \
-use the update_loop_content tool to propose the new content.
-
-When the user asks to delete or remove a node/section, check the sections list in the context. \
-If there is exactly one node (type: node), use the delete_section tool with that section's ID. \
-If there are multiple nodes and the user's request is ambiguous (e.g. "remove the node"), \
-ask them which one they mean by listing the nodes with their content previews. \
-If the user specifies enough detail to identify which node, use delete_section directly.
-
-The user's workspace shows the focused content above and your suggestion as an \
-action card they can accept. Use the correct tool for the focused item (page vs loop).
-
-Available intents: idea (blue), question (yellow), task (green), evidence (purple).
-Loop names: 2-50 chars, letters/numbers/underscores only.
-
-Current workspace context:
-${noteContext}`;
+async function systemPromptForSendWithTools(noteContext: string): Promise<string> {
+  const template = await getPrompt('send_with_tools');
+  if (template) {
+    return template.replace('{{NOTE_CONTEXT}}', noteContext);
+  }
+  // Fallback if prompt file not found
+  return `You are the intelligence assistant inside Obius, a note-taking app. Help users organize and edit notes. Be concise.\n\nContext:\n${noteContext}`;
 }
 
-const GENERATE_TITLE_SYSTEM =
-  'You are a title generator. Given note content, respond with ONLY a short title (2-5 words). No quotes, no punctuation, no explanation.';
-
-const GENERATE_TAGS_SYSTEM =
-  'You are a keyword tagger. Given note content, extract the most important specific keywords — concrete nouns, names, tools, or topics actually mentioned in the text. Prefer specific words from the content over abstract concepts. Respond with ONLY a comma-separated list of 1-4 single-word tags. No hashtags, no quotes, no explanation. Example: swift, authentication, firebase';
-
-function systemPromptForTemporalEchoes(todayISO: string): string {
-  return `You are a temporal phrase detector for Obius, a note-taking app with Echoes (reminders). \
-Analyze the notes and identify temporal phrases that imply the user should be reminded \
-about something. Examples: "follow up Thursday", "revisit in 2 weeks", "check back next month", \
-"dentist appointment at 3pm", "deadline Friday", "every Monday".
-
-You also receive a list of existing handles (loops). If a temporal phrase relates to a specific \
-existing handle, use that handle's ID and displayName. Otherwise, set handleId to "new" and \
-set handleName to a short, descriptive snake_case name derived from the context \
-(e.g. "dentist_appointment", "client_followup", "weekly_standup"). \
-NEVER use "none" as a handleName — always derive a meaningful name from the content.
-
-Return a JSON array of objects with: \
-"handleId" (UUID of an existing handle, or "new" if suggesting a new handle), \
-"handleName" (display name — MUST be descriptive, e.g. "dentist_appointment" not "none"), \
-"phrase" (the exact temporal phrase found in the note), \
-"isRecurring" (boolean), \
-"intervalValue" (integer, e.g. 1 for "every week"), \
-"intervalUnit" (one of: minutes, hours, days, weeks, months), \
-"fireDateISO" (ISO-8601 date-time for when the echo should first fire), \
-"noteId" (the note's ID where the phrase was found).
-
-For non-recurring echoes, set intervalValue=0 and intervalUnit="days". \
-For recurring, set the appropriate interval. \
-Use today's date context to compute fireDateISO from relative phrases like "Thursday" or "next week". \
-Today is ${todayISO}. \
-Max 3 suggestions. Return [] if nothing qualifies. \
-Return ONLY the JSON array, no other text.`;
+async function systemPromptForChat(noteContext: string): Promise<string> {
+  const template = await getPrompt('send_chat');
+  if (template) {
+    return template.replace('{{NOTE_CONTEXT}}', noteContext);
+  }
+  return `You are the intelligence assistant inside Obius. Help the user discuss their content conversationally.\n\nContext:\n${noteContext}`;
 }
 
-function systemPromptForChat(noteContext: string): string {
-  return `You are the intelligence assistant inside Obius, a note-taking app. \
-The user wants to discuss and analyze their content conversationally. \
-Answer questions, give opinions, summarize, compare, and help them think. \
-Do NOT suggest edits, changes, or tool-based actions — just have a helpful conversation.
-
-Current workspace context:
-${noteContext}`;
+async function getGenerateTitleSystem(): Promise<string> {
+  return (await getPrompt('generate_title')) ||
+    'You are a title generator. Given note content, respond with ONLY a short title (2-5 words). No quotes, no punctuation, no explanation.';
 }
 
-const EXTRACT_ENTITIES_SYSTEM = `Analyze the following note sections and identify recurring entities (people, places, projects, \
-topics, lists) that the user references repeatedly or that would benefit from being a synced \
-Loop (a content block that stays consistent across pages).
+async function getGenerateTagsSystem(): Promise<string> {
+  return (await getPrompt('generate_tags')) ||
+    'You are a keyword tagger. Respond with ONLY a comma-separated list of 1-4 single-word tags.';
+}
 
-Return a JSON array of objects with: "name" (display name), "handleName" (lowercase, \
-underscores, 2-50 chars), "reason" (1 sentence why), "sectionId" (which section contains it).
+async function systemPromptForTemporalEchoes(todayISO: string): Promise<string> {
+  const template = await getPrompt('temporal_echoes');
+  if (template) {
+    return template.replace('{{TODAY_ISO}}', todayISO);
+  }
+  return `You are a temporal phrase detector. Today is ${todayISO}. Return a JSON array of echo suggestions.`;
+}
 
-Only suggest entities that genuinely recur or would benefit from syncing. Max 3 suggestions. \
-Return [] if nothing qualifies. Return ONLY the JSON array, no other text.`;
+async function getExtractEntitiesSystem(): Promise<string> {
+  return (await getPrompt('extract_entities')) ||
+    'Analyze note sections for recurring entities. Return a JSON array.';
+}
 
 // ---------- Action handlers ----------
 
@@ -218,12 +304,14 @@ async function handleSendWithTools(body: ActionRequest, userId: string, supabase
     return errorResponse('INVALID_REQUEST', 'messages array is required');
   }
 
+  const system = await systemPromptForSendWithTools(noteContext);
+
   const raw = await sendRaw(
     messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
     {
       model: AI_MODEL,
-      maxTokens: 1024,
-      system: systemPromptForSendWithTools(noteContext),
+      maxTokens: 4096,
+      system,
       tools: TOOL_DEFINITIONS,
     }
   );
@@ -241,11 +329,13 @@ async function handleSendChat(body: ActionRequest, userId: string, supabase: Sup
     return errorResponse('INVALID_REQUEST', 'messages array is required');
   }
 
+  const system = await systemPromptForChat(noteContext);
+
   const response = await sendMessage(
     messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
     {
-      maxTokens: 1024,
-      system: systemPromptForChat(noteContext),
+      maxTokens: 4096,
+      system,
       model: AI_MODEL,
     }
   );
@@ -261,9 +351,10 @@ async function handleGenerateTitle(body: ActionRequest, userId: string, supabase
     return errorResponse('INVALID_REQUEST', 'content is required');
   }
 
+  const system = await getGenerateTitleSystem();
   const response = await sendMessage(
     [{ role: 'user', content: `Generate a short title for this note:\n\n${content}` }],
-    { maxTokens: 30, system: GENERATE_TITLE_SYSTEM, model: AI_MODEL }
+    { maxTokens: 30, system, model: AI_MODEL }
   );
 
   logUsage({ supabase, userId, action: 'title_gen', inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, model: response.model }).catch(() => {});
@@ -277,9 +368,10 @@ async function handleGenerateTags(body: ActionRequest, userId: string, supabase:
     return errorResponse('INVALID_REQUEST', 'content is required');
   }
 
+  const system = await getGenerateTagsSystem();
   const response = await sendMessage(
     [{ role: 'user', content: `Extract keyword tags from this note:\n\n${content}` }],
-    { maxTokens: 50, system: GENERATE_TAGS_SYSTEM, model: AI_MODEL }
+    { maxTokens: 50, system, model: AI_MODEL }
   );
 
   logUsage({ supabase, userId, action: 'tag_gen', inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, model: response.model }).catch(() => {});
@@ -296,9 +388,10 @@ async function handleExtractTemporalEchoes(body: ActionRequest, userId: string, 
   }
 
   const todayISO = new Date().toISOString();
+  const system = await systemPromptForTemporalEchoes(todayISO);
   const response = await sendMessage(
     [{ role: 'user', content: `Notes:\n${noteSummaries}\n\nHandles:\n${handles || ''}` }],
-    { maxTokens: 512, system: systemPromptForTemporalEchoes(todayISO), model: AI_MODEL }
+    { maxTokens: 512, system, model: AI_MODEL }
   );
 
   logUsage({ supabase, userId, action: 'temporal_echo', inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, model: response.model }).catch(() => {});
@@ -312,9 +405,10 @@ async function handleExtractEntities(body: ActionRequest, userId: string, supaba
     return errorResponse('INVALID_REQUEST', 'sectionsText is required');
   }
 
+  const system = await getExtractEntitiesSystem();
   const response = await sendMessage(
     [{ role: 'user', content: sectionsText }],
-    { maxTokens: 256, system: EXTRACT_ENTITIES_SYSTEM, model: AI_MODEL }
+    { maxTokens: 256, system, model: AI_MODEL }
   );
 
   logUsage({ supabase, userId, action: 'entity_extract', inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, model: response.model }).catch(() => {});
@@ -342,6 +436,20 @@ serve(async (req: Request) => {
 
     const body: ActionRequest = await req.json();
     const { action } = body;
+
+    // Enforce AI action rate limit (skipped for anonymous users)
+    if (userId !== 'anonymous') {
+      const blocked = await requireAIAction(supabase, userId);
+      if (blocked) return blocked;
+    }
+
+    // AI workspace actions require Pro
+    if (action === 'send_with_tools' || action === 'send_chat') {
+      if (userId !== 'anonymous') {
+        const gated = await requireFeature(supabase, userId, 'aiWorkspace');
+        if (gated) return gated;
+      }
+    }
 
     switch (action) {
       case 'send_with_tools':

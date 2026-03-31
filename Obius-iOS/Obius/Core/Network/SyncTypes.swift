@@ -18,17 +18,20 @@ struct SyncPullResponse: Decodable {
     let notes: [RemoteNote]
     let sections: [RemoteSection]
     let handles: [RemoteHandle]?  // Handle Loop support
+    let echoes: [RemoteEcho]?  // Echo cloud sync
     let deletedNoteIds: [String]
     let deletedSectionIds: [String]
     let deletedHandleIds: [String]?  // Handle Loop support
+    let deletedEchoIds: [String]?  // Echo cloud sync
     let serverTimestamp: String
     let hasMore: Bool
 
     enum CodingKeys: String, CodingKey {
-        case notes, sections, handles
+        case notes, sections, handles, echoes
         case deletedNoteIds = "deleted_note_ids"
         case deletedSectionIds = "deleted_section_ids"
         case deletedHandleIds = "deleted_handle_ids"
+        case deletedEchoIds = "deleted_echo_ids"
         case serverTimestamp = "server_timestamp"
         case hasMore = "has_more"
     }
@@ -103,8 +106,16 @@ struct RemoteNote: Decodable {
     let title: String?
     let aiTitle: String?
     let aiSummary: String?
-    let isPinned: Bool
+    let body: String?
+    let bodyRichText: String?
+    let interstitialContent: String?
+    let interstitialRichContent: String?
+    let isPinned: FlexBool
     let colorIntent: String
+    let groupName: String?
+    let moduleId: String?
+    let moduleName: String?
+    let moduleIcon: String?
     let createdAt: String
     let updatedAt: String
     let deletedAt: String?
@@ -116,8 +127,16 @@ struct RemoteNote: Decodable {
         case title
         case aiTitle = "ai_title"
         case aiSummary = "ai_summary"
+        case body
+        case bodyRichText = "body_rich_text"
+        case interstitialContent = "interstitial_content"
+        case interstitialRichContent = "interstitial_rich_content"
         case isPinned = "is_pinned"
         case colorIntent = "color_intent"
+        case groupName = "group_name"
+        case moduleId = "module_id"
+        case moduleName = "module_name"
+        case moduleIcon = "module_icon"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case deletedAt = "deleted_at"
@@ -125,20 +144,56 @@ struct RemoteNote: Decodable {
     }
 
     func toLocal() -> Note {
-        Note(
-            id: id,
+        // Parse interstitial JSON strings into dictionaries
+        let interstitial: [String: String] = {
+            guard let str = interstitialContent, let data = str.data(using: .utf8),
+                  let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return [:] }
+            return dict
+        }()
+        let interstitialRich: [String: String] = {
+            guard let str = interstitialRichContent, let data = str.data(using: .utf8),
+                  let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return [:] }
+            return dict
+        }()
+
+        return Note(
+            id: id.uppercased(),  // Normalize: PostgreSQL uuid type lowercases, but local UUIDs are uppercase
             title: title,
             aiTitle: aiTitle,
+            body: body ?? "",
+            bodyRichText: bodyRichText,
+            interstitialContent: interstitial,
+            interstitialRichContent: interstitialRich,
             createdAt: parseTimestamp(createdAt),
             updatedAt: parseTimestamp(updatedAt),
             deletedAt: deletedAt.flatMap { parseTimestamp($0) },
-            isPinned: isPinned,
+            isPinned: isPinned.value,
+            groupName: groupName,
             intent: IntentType.fromLegacy(colorIntent),
+            moduleId: moduleId?.uppercased(),  // Normalize module ID case too
             localVersion: version,
             serverVersion: version,
             syncStatus: .synced,
             lastSyncedAt: Int64(Date().timeIntervalSince1970 * 1000)
         )
+    }
+}
+
+/// Decodes booleans that may come as Bool, String ("true"/"false"), or Int (0/1)
+struct FlexBool: Decodable {
+    let value: Bool
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let b = try? container.decode(Bool.self) {
+            value = b
+        } else if let s = try? container.decode(String.self) {
+            value = s == "true" || s == "1"
+        } else if let i = try? container.decode(Int.self) {
+            value = i != 0
+        } else {
+            value = false
+        }
     }
 }
 
@@ -151,7 +206,7 @@ struct RemoteSection: Decodable {
     let parentSectionId: String?
     let orderKey: String
     let indentLevel: Int
-    let isCollapsed: Bool
+    let isCollapsed: FlexBool
     let colorIntent: String?
     let handleId: String?  // Handle Loop support
     let createdAt: String
@@ -179,21 +234,76 @@ struct RemoteSection: Decodable {
 
     func toLocal() -> Section {
         Section(
-            id: id,
-            noteId: noteId,
+            id: id.uppercased(),  // Normalize: PostgreSQL uuid type lowercases
+            noteId: noteId.uppercased(),  // Must match note's uppercased ID
             content: content,
             contentType: ContentType(rawValue: contentType) ?? .text,
             title: nil,  // Title is local-only, not synced from server
-            parentSectionId: parentSectionId,
+            parentSectionId: parentSectionId?.uppercased(),
             orderKey: orderKey,
             indentLevel: indentLevel,
-            isCollapsed: isCollapsed,
+            isCollapsed: isCollapsed.value,
             isLocked: false,  // Locked state is local-only, not synced from server
             intent: IntentType.fromLegacy(colorIntent),
-            handleId: handleId,  // Handle Loop support
+            handleId: handleId?.uppercased(),  // Handle Loop support
             createdAt: parseTimestamp(createdAt),
             updatedAt: parseTimestamp(updatedAt),
             deletedAt: deletedAt.flatMap { parseTimestamp($0) },
+            localVersion: version,
+            serverVersion: version,
+            syncStatus: .synced
+        )
+    }
+}
+
+// MARK: - Remote Echo (Cloud Sync)
+
+struct RemoteEcho: Decodable {
+    let id: String
+    let userId: String
+    let handleId: String
+    let isRecurring: FlexBool
+    let intervalsJson: String?
+    let fireDate: Int64
+    let isActive: FlexBool
+    let nextFireDate: Int64?
+    let isAlerted: FlexBool
+    let lastAcknowledgedAt: Int64?
+    let createdAt: String
+    let updatedAt: String
+    let deletedAt: String?
+    let version: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case handleId = "handle_id"
+        case isRecurring = "is_recurring"
+        case intervalsJson = "intervals_json"
+        case fireDate = "fire_date"
+        case isActive = "is_active"
+        case nextFireDate = "next_fire_date"
+        case isAlerted = "is_alerted"
+        case lastAcknowledgedAt = "last_acknowledged_at"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case deletedAt = "deleted_at"
+        case version
+    }
+
+    func toLocal() -> Echo {
+        Echo(
+            id: id.uppercased(),
+            handleId: handleId.uppercased(),
+            isRecurring: isRecurring.value,
+            intervalsJSON: intervalsJson,
+            fireDate: fireDate,
+            isActive: isActive.value,
+            nextFireDate: nextFireDate,
+            isAlerted: isAlerted.value,
+            lastAcknowledgedAt: lastAcknowledgedAt,
+            createdAt: parseTimestamp(createdAt),
+            updatedAt: parseTimestamp(updatedAt),
             localVersion: version,
             serverVersion: version,
             syncStatus: .synced
@@ -230,7 +340,7 @@ struct RemoteHandle: Decodable {
 
     func toLocal() -> Handle {
         Handle(
-            id: id,
+            id: id.uppercased(),  // Normalize: PostgreSQL uuid type lowercases
             name: name,
             displayName: displayName,
             content: content,
@@ -374,15 +484,32 @@ struct AnyCodable: Codable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
 
-        switch value {
-        case is NSNull:
+        // Handle NSNull first
+        if value is NSNull {
             try container.encodeNil()
-        case let bool as Bool:
-            try container.encode(bool)
-        case let int as Int:
-            try container.encode(int)
-        case let double as Double:
-            try container.encode(double)
+            return
+        }
+
+        // Handle NSNumber explicitly — JSONSerialization returns NSNumber for booleans,
+        // integers, and doubles. Swift's `as Bool`/`as Int` pattern matching is unreliable
+        // for NSNumber, so use CFBooleanGetTypeID() to distinguish booleans from numbers.
+        if let number = value as? NSNumber {
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                try container.encode(number.boolValue)
+            } else {
+                // Check if it's a floating point type
+                let objCType = String(cString: number.objCType)
+                if objCType == "d" || objCType == "f" {
+                    try container.encode(number.doubleValue)
+                } else {
+                    try container.encode(number.intValue)
+                }
+            }
+            return
+        }
+
+        // Handle native Swift types
+        switch value {
         case let string as String:
             try container.encode(string)
         case let array as [Any]:
@@ -390,10 +517,9 @@ struct AnyCodable: Codable {
         case let dict as [String: Any]:
             try container.encode(dict.mapValues { AnyCodable($0) })
         default:
-            throw EncodingError.invalidValue(
-                value,
-                EncodingError.Context(codingPath: [], debugDescription: "Unable to encode value")
-            )
+            // Fallback: convert to string instead of throwing, so the SDK's
+            // try? never produces a nil body
+            try container.encode(String(describing: value))
         }
     }
 }

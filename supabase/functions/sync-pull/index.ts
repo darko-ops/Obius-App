@@ -14,7 +14,10 @@ import type {
   SyncPullResponse,
   Note,
   Section,
+  Handle,
+  Echo,
 } from '../_shared/types.ts';
+import { requireFeature } from '../_shared/entitlements.ts';
 
 const MAX_ITEMS_PER_SYNC = 500;
 
@@ -48,6 +51,10 @@ serve(async (req: Request) => {
     if (deviceError || !device) {
       return errorResponse('INVALID_DEVICE', 'Device not found or unauthorized', 403);
     }
+
+    // Cloud sync requires Pro
+    const syncGate = await requireFeature(supabase, userId, 'cloudSync');
+    if (syncGate) return syncGate;
 
     // Parse timestamp
     const sinceTimestamp = last_sync_timestamp
@@ -84,6 +91,36 @@ serve(async (req: Request) => {
       return errorResponse('DB_ERROR', 'Failed to fetch sections', 500);
     }
 
+    // Fetch updated handles
+    const { data: handles, error: handlesError } = await supabase
+      .from('handles')
+      .select('*')
+      .eq('user_id', userId)
+      .gt('updated_at', sinceTimestamp.toISOString())
+      .is('deleted_at', null)
+      .order('updated_at', { ascending: true })
+      .limit(MAX_ITEMS_PER_SYNC);
+
+    if (handlesError) {
+      console.error('Error fetching handles:', handlesError);
+      return errorResponse('DB_ERROR', 'Failed to fetch handles', 500);
+    }
+
+    // Fetch updated echoes
+    const { data: echoes, error: echoesError } = await supabase
+      .from('echoes')
+      .select('*')
+      .eq('user_id', userId)
+      .gt('updated_at', sinceTimestamp.toISOString())
+      .is('deleted_at', null)
+      .order('updated_at', { ascending: true })
+      .limit(MAX_ITEMS_PER_SYNC);
+
+    if (echoesError) {
+      console.error('Error fetching echoes:', echoesError);
+      return errorResponse('DB_ERROR', 'Failed to fetch echoes', 500);
+    }
+
     // Fetch deleted items from changelog
     const { data: deletions, error: deletionsError } = await supabase
       .from('sync_changelog')
@@ -101,23 +138,33 @@ serve(async (req: Request) => {
     // Separate deletions by type
     const deletedNoteIds: string[] = [];
     const deletedSectionIds: string[] = [];
+    const deletedHandleIds: string[] = [];
+    const deletedEchoIds: string[] = [];
 
     for (const deletion of deletions || []) {
       if (deletion.entity_type === 'note') {
         deletedNoteIds.push(deletion.entity_id);
       } else if (deletion.entity_type === 'section') {
         deletedSectionIds.push(deletion.entity_id);
+      } else if (deletion.entity_type === 'handle') {
+        deletedHandleIds.push(deletion.entity_id);
+      } else if (deletion.entity_type === 'echo') {
+        deletedEchoIds.push(deletion.entity_id);
       }
     }
 
     // Filter out items that client already has at same version
     const filteredNotes = filterByVersion(notes || [], known_versions);
     const filteredSections = filterByVersion(sections || [], known_versions);
+    const filteredHandles = filterByVersion(handles || [], known_versions);
+    const filteredEchoes = filterByVersion(echoes || [], known_versions);
 
     // Check if there are more items to sync
     const hasMore =
       (notes?.length || 0) >= MAX_ITEMS_PER_SYNC ||
-      (sections?.length || 0) >= MAX_ITEMS_PER_SYNC;
+      (sections?.length || 0) >= MAX_ITEMS_PER_SYNC ||
+      (echoes?.length || 0) >= MAX_ITEMS_PER_SYNC ||
+      (handles?.length || 0) >= MAX_ITEMS_PER_SYNC;
 
     // Update device last sync time
     await supabase
@@ -133,8 +180,12 @@ serve(async (req: Request) => {
         // Don't send embedding vector to client (too large)
         embedding: null,
       })) as Section[],
+      handles: filteredHandles as Handle[],
+      echoes: filteredEchoes as Echo[],
       deleted_note_ids: deletedNoteIds,
       deleted_section_ids: deletedSectionIds,
+      deleted_handle_ids: deletedHandleIds,
+      deleted_echo_ids: deletedEchoIds,
       server_timestamp: new Date().toISOString(),
       has_more: hasMore,
     };

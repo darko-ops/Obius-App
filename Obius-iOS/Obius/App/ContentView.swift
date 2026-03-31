@@ -19,7 +19,7 @@ struct ContentView: View {
                 LocalOrAuthView()
             }
         }
-        .fullScreenCover(item: $deepLinkRouter.pendingShareSlugItem) { item in
+        .platformFullScreenCover(item: $deepLinkRouter.pendingShareSlugItem) { item in
             SharedContentView(slug: item.slug)
                 .environmentObject(appState)
         }
@@ -73,7 +73,11 @@ struct LocalOrAuthView: View {
                         useLocalMode = true
                     } label: {
                         HStack {
+                            #if os(iOS)
                             Image(systemName: "iphone")
+                            #else
+                            Image(systemName: "desktopcomputer")
+                            #endif
                             Text("Continue Offline")
                         }
                         .frame(maxWidth: .infinity)
@@ -86,6 +90,19 @@ struct LocalOrAuthView: View {
                         .multilineTextAlignment(.center)
                 }
                 .padding(.horizontal, 32)
+
+                // Free trial nudge — shown after they've seen the app intro
+                if TierManager.shared.currentTier == .free {
+                    HStack(spacing: 6) {
+                        Image(systemName: "sparkles")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                        Text("Start a 7-day free trial of Pro anytime in Settings.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 32)
+                }
 
                 Spacer()
             }
@@ -107,6 +124,7 @@ struct MainTabView: View {
     @State private var showBanner = false
     @State private var bannerContexts: [PortalContext] = []
 
+    #if os(iOS)
     private static func tintedLogo(color: UIColor) -> UIImage {
         guard let original = UIImage(named: "ObiusLogo")?.withRenderingMode(.alwaysTemplate),
               let cgImage = original.cgImage else { return UIImage() }
@@ -137,36 +155,11 @@ struct MainTabView: View {
         UITabBar.appearance().standardAppearance = appearance
         UITabBar.appearance().scrollEdgeAppearance = appearance
     }
+    #endif
 
     var body: some View {
         ZStack(alignment: .top) {
-            TabView(selection: $selectedTab) {
-                NavigationStack {
-                    NotesListView()
-                }
-                .tabItem {
-                    Image(systemName: "note.text")
-                }
-                .tag(0)
-
-                NavigationStack {
-                    IntelligenceView()
-                        .environmentObject(appState.insightRepository)
-                }
-                .tabItem {
-                    Image(uiImage: selectedTab == 1 ? Self.resizedTwoToneLogo : Self.resizedGreyLogo)
-                }
-                .tag(1)
-
-                NavigationStack {
-                    LibraryView(pendingEchoId: $pendingEchoId)
-                }
-                .tabItem {
-                    Image(systemName: "person.crop.circle")
-                }
-                .tag(2)
-            }
-            .tint(.white)
+            mainNavigation
 
             // In-app echo alert banner with context
             if showBanner, let echo = bannerEcho {
@@ -177,7 +170,6 @@ struct MainTabView: View {
                         portalContexts: bannerContexts,
                         onNavigate: { noteId in
                             withAnimation { showBanner = false }
-                            // Navigate to the note via Intelligence tab
                             pendingEchoId = echo.id
                             selectedTab = 2
                         }
@@ -215,11 +207,10 @@ struct MainTabView: View {
         .onChange(of: echoManager.firedEcho) { _, echo in
             guard let echo else { return }
             bannerEcho = echo
-            bannerContexts = [] // Show immediately, contexts load async
+            bannerContexts = []
             withAnimation(.spring(duration: 0.4)) { showBanner = true }
             echoManager.firedEcho = nil
 
-            // Load portal context in background
             Task {
                 let contexts = await EchoContextCard.buildContexts(
                     handleId: echo.handleId,
@@ -229,13 +220,78 @@ struct MainTabView: View {
                 withAnimation { bannerContexts = contexts }
             }
 
-            // Auto-dismiss after 8 seconds (longer with context card)
             DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
                 withAnimation { showBanner = false }
             }
         }
     }
 
+    // MARK: - Platform Navigation
+
+    @ViewBuilder
+    private var mainNavigation: some View {
+        #if os(iOS)
+        TabView(selection: $selectedTab) {
+            NavigationStack {
+                NotesListView()
+            }
+            .tabItem {
+                Image(systemName: "note.text")
+            }
+            .tag(0)
+
+            NavigationStack {
+                IntelligenceView()
+                    .environmentObject(appState.insightRepository)
+            }
+            .tabItem {
+                Image(uiImage: selectedTab == 1 ? Self.resizedTwoToneLogo : Self.resizedGreyLogo)
+            }
+            .tag(1)
+
+            NavigationStack {
+                LibraryView(pendingEchoId: $pendingEchoId)
+            }
+            .tabItem {
+                Image(systemName: "person.crop.circle")
+            }
+            .tag(2)
+        }
+        .tint(.white)
+        #else
+        NavigationSplitView {
+            List(selection: $selectedTab) {
+                Label("Notes", systemImage: "note.text")
+                    .tag(0)
+                Label("Intelligence", systemImage: "brain")
+                    .tag(1)
+                Label("Library", systemImage: "person.crop.circle")
+                    .tag(2)
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color.black)
+            .navigationSplitViewColumnWidth(min: 180, ideal: 220)
+            .navigationTitle("Obius")
+        } detail: {
+            NavigationStack {
+                switch selectedTab {
+                case 0:
+                    NotesListView()
+                case 1:
+                    IntelligenceView()
+                        .environmentObject(appState.insightRepository)
+                case 2:
+                    LibraryView(pendingEchoId: $pendingEchoId)
+                default:
+                    NotesListView()
+                }
+            }
+            .background(Color.black)
+        }
+        .background(WindowAccessor())
+        .configureWindowBackground()
+        #endif
+    }
 }
 
 #Preview {

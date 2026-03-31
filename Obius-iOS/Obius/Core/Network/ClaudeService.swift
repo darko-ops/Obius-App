@@ -68,6 +68,19 @@ enum ClaudeService {
         return data
     }
 
+    // MARK: - Tier Gate
+
+    private static func checkAIGate() async throws {
+        let allowed = await MainActor.run { TierManager.shared.requireAI() }
+        guard allowed else {
+            throw ClaudeError.proxyError("AI action limit reached. Upgrade for more.")
+        }
+    }
+
+    private static func recordAIUsage() async {
+        await MainActor.run { TierManager.shared.recordAIAction() }
+    }
+
     // MARK: - Send With Tools
 
     /// Send a conversation with tool definitions so Claude can suggest structured actions.
@@ -75,6 +88,8 @@ enum ClaudeService {
         messages: [Message],
         noteContext: String
     ) async throws -> ToolResponse {
+        try await checkAIGate()
+        await recordAIUsage()
         let request = AIProxyRequest(
             action: "send_with_tools",
             messages: messages,
@@ -83,13 +98,27 @@ enum ClaudeService {
 
         let data = try await invokeProxyRaw(request)
 
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = json["content"] as? [[String: Any]] else {
-            throw ClaudeError.unexpectedBody
+        let rawString = String(data: data, encoding: .utf8) ?? ""
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ClaudeError.proxyError("Could not parse response: \(rawString.prefix(200))")
+        }
+
+        // The Anthropic API returns content as an array of blocks
+        guard let content = json["content"] as? [[String: Any]] else {
+            // Check if there's an error message in the response
+            if let errorObj = json["error"] as? [String: Any],
+               let message = errorObj["message"] as? String {
+                throw ClaudeError.proxyError(message)
+            }
+            let keys = Array(json.keys).joined(separator: ", ")
+            let stopReason = json["stop_reason"] as? String ?? "unknown"
+            throw ClaudeError.proxyError("Unexpected response (keys: \(keys), stop_reason: \(stopReason)). Raw: \(rawString.prefix(300))")
         }
 
         var textParts: [String] = []
         var actions: [SuggestedAction] = []
+        var failedTools: [(name: String, reason: String)] = []
 
         for block in content {
             guard let blockType = block["type"] as? String else { continue }
@@ -99,8 +128,20 @@ enum ClaudeService {
             } else if blockType == "tool_use" {
                 if let action = SuggestedAction.from(toolUseBlock: block) {
                     actions.append(action)
+                } else {
+                    let toolName = block["name"] as? String ?? "unknown"
+                    let inputKeys = (block["input"] as? [String: Any])?.keys.joined(separator: ", ") ?? "no input"
+                    let hasId = block["id"] != nil
+                    failedTools.append((name: toolName, reason: "id=\(hasId), inputKeys=[\(inputKeys)]"))
+                    print("[ClaudeService] Failed to parse tool_use: \(toolName), id=\(hasId), inputKeys=[\(inputKeys)], raw=\(block)")
                 }
             }
+        }
+
+        // If all tool calls failed to parse, show exactly what went wrong
+        if actions.isEmpty && !failedTools.isEmpty {
+            let details = failedTools.map { "\($0.name) (\($0.reason))" }.joined(separator: "; ")
+            textParts.append("Tool calls failed to parse: \(details). Please try again.")
         }
 
         let combinedText = textParts.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -114,6 +155,8 @@ enum ClaudeService {
         messages: [Message],
         noteContext: String
     ) async throws -> String {
+        try await checkAIGate()
+        await recordAIUsage()
         let request = AIProxyRequest(
             action: "send_chat",
             messages: messages,
@@ -127,6 +170,8 @@ enum ClaudeService {
 
     /// Generate a short AI title (2-5 words) from note content.
     static func generateTitle(from content: String) async throws -> String {
+        try await checkAIGate()
+        await recordAIUsage()
         let request = AIProxyRequest(action: "generate_title", content: content)
         let response: TextResponse = try await invokeProxy(request)
         return response.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -136,6 +181,8 @@ enum ClaudeService {
 
     /// Generate concept tags from note content. Returns 1-5 single-word tags.
     static func generateTags(from content: String) async throws -> [String] {
+        try await checkAIGate()
+        await recordAIUsage()
         let request = AIProxyRequest(action: "generate_tags", content: content)
         let response: TextResponse = try await invokeProxy(request)
         return response.text
@@ -207,6 +254,8 @@ enum ClaudeService {
 
     /// Analyze notes for temporal phrases and suggest Echo configurations.
     static func extractTemporalEchoes(_ noteSummaries: String, handles: String) async throws -> [TemporalEchoSuggestion] {
+        try await checkAIGate()
+        await recordAIUsage()
         let request = AIProxyRequest(
             action: "extract_temporal_echoes",
             noteSummaries: noteSummaries,
@@ -230,6 +279,8 @@ enum ClaudeService {
 
     /// Analyze note sections and suggest entities that could become Loops.
     static func extractEntities(from sections: [(id: String, content: String)]) async throws -> [ExtractedEntity] {
+        try await checkAIGate()
+        await recordAIUsage()
         let sectionsText = sections.map { "sectionId: \($0.id)\n\($0.content)" }.joined(separator: "\n---\n")
         let request = AIProxyRequest(action: "extract_entities", sectionsText: sectionsText)
         let response: TextResponse = try await invokeProxy(request)

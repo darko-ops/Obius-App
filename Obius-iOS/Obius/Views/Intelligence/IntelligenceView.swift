@@ -20,12 +20,15 @@ struct IntelligenceView: View {
     @State private var activeCategorySheet: InsightType?
     @State private var selectedEcho: Echo?
     @State private var showingManageEchoes = false
+    @State private var lastScanFingerprint: Int64 = 0
+    @State private var selectedFilter: InsightType?
 
     private var insightEngine: InsightEngine {
         InsightEngine(
             noteRepository: appState.noteRepository,
             sectionRepository: appState.sectionRepository,
             handleRepository: appState.handleRepository,
+            echoRepository: appState.echoRepository,
             insightRepository: insightRepository,
             database: appState.database
         )
@@ -46,6 +49,8 @@ struct IntelligenceView: View {
     private func insightsInModule(_ insights: [Insight]) -> [Insight] {
         guard let noteIds = moduleNoteIds else { return insights }
         return insights.filter { insight in
+            // Inactive loop insights store handleId in sourceNoteId — show in all modules
+            if insight.sourceSectionId == "inactive_loop" { return true }
             guard let sourceNoteId = insight.sourceNoteId else { return true }
             return noteIds.contains(sourceNoteId)
         }
@@ -54,7 +59,7 @@ struct IntelligenceView: View {
     // MARK: - Category Grouping
 
     /// Display order for categories on the main view.
-    private static let categoryOrder: [InsightType] = [.safety, .reminder, .cleanup]
+    private static let categoryOrder: [InsightType] = [.safety, .link, .list, .cleanup]
 
     /// Groups surfaced (non-echo) insights by type.
     private var categoryGroups: [(type: InsightType, insights: [Insight])] {
@@ -74,10 +79,10 @@ struct IntelligenceView: View {
 
     var body: some View {
         mainContent
-        .navigationTitle("Intelligence")
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
-        #endif
+        .background(Color.black)
+        .navigationTitle("")
+        .inlineNavigationTitle()
+        .platformToolbarBackground(.black)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button {
@@ -85,7 +90,7 @@ struct IntelligenceView: View {
                 } label: {
                     Image(systemName: "gearshape.fill")
                         .font(.system(size: 12))
-                        .foregroundStyle(Color(.lightGray))
+                        .foregroundStyle(.white)
                         .offset(y: 2)
                 }
             }
@@ -96,10 +101,10 @@ struct IntelligenceView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.up.chevron.down")
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.white)
                         Text(selectedModuleName)
                             .font(.headline)
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.white)
                     }
                 }
                 .buttonStyle(.plain)
@@ -110,7 +115,7 @@ struct IntelligenceView: View {
                 } label: {
                     Text("@")
                         .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(Color(.lightGray))
+                        .foregroundStyle(.white)
                 }
             }
         }
@@ -123,11 +128,10 @@ struct IntelligenceView: View {
             CreateInsightSheet { title, body in
                 Task {
                     try? await insightRepository.createInsight(
-                        type: .reminder,
+                        type: .cleanup,
                         title: title,
                         body: body,
-                        status: .tracked,
-                        sourceSectionId: "task"
+                        status: .tracked
                     )
                     haptic(.success)
                 }
@@ -196,6 +200,7 @@ struct IntelligenceView: View {
             await runScan()
         }
         .onChange(of: selectedModuleId) { _, _ in
+            selectedFilter = nil
             Task { await runScan() }
         }
         .navigationDestination(item: $navigateToNote) { note in
@@ -209,13 +214,13 @@ struct IntelligenceView: View {
         VStack(spacing: 0) {
             ScrollView {
                 LazyVStack(spacing: 16) {
-                    trackedSection
-
                     activeEchoesSection
 
                     if !upcomingEchoInsights.isEmpty {
                         upcomingEchoesSection
                     }
+
+                    trackedSection
 
                     if !allSurfacedInsights.isEmpty {
                         categoriesSection
@@ -231,9 +236,49 @@ struct IntelligenceView: View {
                 }
                 .padding()
             }
-            .overlay(alignment: .bottomTrailing) {
-                workspaceFAB
+            .refreshable {
+                await refreshIfNeeded()
             }
+            .overlay {
+                WorkspaceFAB {
+                    guard TierManager.shared.requireFeature(.aiWorkspace) else { return }
+                    showWorkspaceSheet = true
+                }
+            }
+        }
+    }
+
+    // MARK: - Filter Bar
+
+    private var filterBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                FilterChip(
+                    label: "For You",
+                    icon: "sparkles",
+                    isSelected: selectedFilter == nil,
+                    tint: .white
+                ) {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selectedFilter = nil
+                    }
+                }
+
+                ForEach(availableFilterTypes) { type in
+                    FilterChip(
+                        label: type.label,
+                        icon: type.icon,
+                        isSelected: selectedFilter == type,
+                        tint: type.tint.color
+                    ) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedFilter = type
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
         }
     }
 
@@ -311,6 +356,14 @@ struct IntelligenceView: View {
         }
     }
 
+    // MARK: - Filter
+
+    /// Insight types that currently have surfaced insights, in display order.
+    private var availableFilterTypes: [InsightType] {
+        let presentTypes = Set(allSurfacedInsights.map(\.insightType))
+        return Self.categoryOrder.filter { presentTypes.contains($0) }
+    }
+
     // MARK: - Category Cards
 
     private var allSurfacedInsights: [Insight] {
@@ -322,6 +375,11 @@ struct IntelligenceView: View {
             }
     }
 
+    private var filteredSurfacedInsights: [Insight] {
+        guard let filter = selectedFilter else { return allSurfacedInsights }
+        return allSurfacedInsights.filter { $0.insightType == filter }
+    }
+
     private var categoriesSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("INSIGHTS")
@@ -329,7 +387,13 @@ struct IntelligenceView: View {
                 .foregroundStyle(.secondary)
                 .padding(.bottom, 8)
 
-            ForEach(allSurfacedInsights) { insight in
+            if !availableFilterTypes.isEmpty {
+                filterBar
+                    .padding(.horizontal, -16)
+                    .padding(.bottom, 8)
+            }
+
+            ForEach(filteredSurfacedInsights) { insight in
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         HStack(spacing: 4) {
@@ -374,15 +438,14 @@ struct IntelligenceView: View {
                     }
 
                     Text(insight.title)
-                        .font(.caption.weight(.medium))
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(2)
 
                     if !insight.body.isEmpty {
                         Text(insight.body)
-                            .font(.caption2)
+                            .font(.caption)
                             .foregroundStyle(.secondary)
-                            .lineLimit(2)
                     }
                 }
                 .padding(.vertical, 10)
@@ -391,7 +454,7 @@ struct IntelligenceView: View {
                     selectedInsight = insight
                 }
 
-                if insight.id != allSurfacedInsights.last?.id {
+                if insight.id != filteredSurfacedInsights.last?.id {
                     Divider()
                         .padding(.leading, 36)
                 }
@@ -447,52 +510,24 @@ struct IntelligenceView: View {
     // MARK: - Empty State
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 0) {
             Spacer()
-                .frame(height: 60)
 
-            Image(systemName: "brain")
-                .font(.system(size: 60))
-                .foregroundStyle(.secondary)
+            VStack(spacing: 16) {
+                EmptyStatePulse()
 
-            Text("Intelligence")
-                .font(.title2.weight(.semibold))
-
-            Text("Insights about your notes will appear here automatically.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
+                Text("All clear")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 32)
+            .padding(.horizontal, 40)
 
             Spacer()
-                .frame(height: 60)
         }
     }
 
-    // MARK: - Workspace FAB
-
-    private var workspaceFAB: some View {
-        Button {
-            showWorkspaceSheet = true
-        } label: {
-            Image("MobiusStrip")
-                .renderingMode(.template)
-                .resizable()
-                .scaledToFit()
-                .frame(width: 85, height: 85)
-                .foregroundStyle(.white)
-                .frame(width: 56, height: 56)
-                .background(Color(red: 0.08, green: 0.08, blue: 0.08))
-                .clipShape(Circle())
-                .overlay(
-                    Circle()
-                        .stroke(Color.white, lineWidth: 1)
-                )
-                .shadow(color: .white.opacity(0.2), radius: 10)
-        }
-        .padding(.trailing, 20)
-        .padding(.bottom, 20)
-    }
+    // MARK: - Workspace FAB (moved to shared WorkspaceFAB component)
 
     // MARK: - Actions
 
@@ -538,6 +573,15 @@ struct IntelligenceView: View {
                     }
                 }
             } : nil,
+            onDeleteLoop: (insight.insightType == .cleanup && insight.sourceSectionId == "inactive_loop") ? {
+                Task {
+                    if let handleId = insight.sourceNoteId {
+                        try? await HandleManager.shared.deleteHandle(id: handleId)
+                        try? await insightRepository.dismissInsight(insight.id)
+                        haptic(.success)
+                    }
+                }
+            } : nil,
             onCreateBlock: (insight.insightType == .cleanup && insight.sourceSectionId == "dormant_loop") ? { blockName in
                 Task {
                     if let noteId = insight.sourceNoteId {
@@ -567,9 +611,7 @@ struct IntelligenceView: View {
         }
 
         // relatedNoteId may contain comma-separated IDs for multi-reference insights
-        // (but not for suggested_echo, where it stores JSON config)
-        let isSuggestedEcho = insight.insightType == .reminder && insight.sourceSectionId == "suggested_echo"
-        if !isSuggestedEcho, let relatedField = insight.relatedNoteId {
+        if let relatedField = insight.relatedNoteId {
             let relatedIds = relatedField.split(separator: ",").map(String.init)
             for relatedId in relatedIds {
                 if let note = appState.noteRepository.notes.first(where: { $0.id == relatedId }) {
@@ -581,20 +623,66 @@ struct IntelligenceView: View {
         return refs
     }
 
+    /// Fingerprint based on note count + max updatedAt — changes when any page is added, deleted, or edited.
+    private var currentFingerprint: Int64 {
+        let notes = appState.noteRepository.notes.filter { !$0.isDeleted }
+        let maxUpdated = notes.map(\.updatedAt).max() ?? 0
+        return maxUpdated &+ Int64(notes.count)
+    }
+
     private func runScan() async {
         isScanning = true
         await insightEngine.scan(moduleId: selectedModuleId)
+        lastScanFingerprint = currentFingerprint
         isScanning = false
+    }
+
+    private func refreshIfNeeded() async {
+        guard currentFingerprint != lastScanFingerprint else { return }
+        await runScan()
     }
 
     // MARK: - Haptics
 
-    private func haptic(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
-        UIImpactFeedbackGenerator(style: style).impactOccurred()
+    private func haptic(_ style: HapticFeedback.FeedbackStyle) {
+        HapticFeedback.impact(style)
     }
 
-    private func haptic(_ type: UINotificationFeedbackGenerator.FeedbackType) {
-        UINotificationFeedbackGenerator().notificationOccurred(type)
+    private func haptic(_ type: HapticFeedback.FeedbackType) {
+        HapticFeedback.notification(type)
+    }
+}
+
+// MARK: - Filter Chip
+
+private struct FilterChip: View {
+    let label: String
+    let icon: String
+    let isSelected: Bool
+    let tint: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 10))
+                Text(label)
+                    .font(.caption.weight(.medium))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .foregroundStyle(isSelected ? .black : tint)
+            .background(
+                Capsule()
+                    .fill(isSelected ? tint : tint.opacity(0.12))
+            )
+            .overlay(
+                Capsule()
+                    .stroke(tint.opacity(isSelected ? 0 : 0.3), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -634,8 +722,8 @@ struct ChatMessageView: View {
                 Text(message.content)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(message.role == .user ? Color.accentColor : Color(red: 0.12, green: 0.12, blue: 0.12))
-                    .foregroundStyle(message.role == .user ? .white : Color(.lightGray))
+                    .background(message.role == .user ? Color.white : Color(red: 0.12, green: 0.12, blue: 0.12))
+                    .foregroundStyle(message.role == .user ? .black : Color(.lightGray))
                     .clipShape(RoundedRectangle(cornerRadius: 16))
             }
 
@@ -652,6 +740,7 @@ struct ChatMessageView: View {
 /// Sheet that lists all loops, reusing the same row style as the Library page.
 struct LoopsSheetView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var appState: AppState
 
     let handles: [Handle]
 
@@ -693,11 +782,11 @@ struct LoopsSheetView: View {
             }
             .background(Color.black)
             .navigationTitle("Loops")
+            .inlineNavigationTitle()
             #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
             .toolbarBackground(Color.black, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
@@ -711,6 +800,97 @@ struct LoopsSheetView: View {
 }
 
 // MARK: - Workspace Sheet
+
+// MARK: - Body Text Editor with Selection + Create Node
+
+#if os(iOS)
+/// A UITextView wrapper that supports text selection tracking.
+struct BodyTextEditor: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var selectedRange: NSRange?
+    var onCreateNode: () -> Void
+    var onTextChange: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIView(context: Context) -> WidthConstrainedTextView {
+        let tv = WidthConstrainedTextView()
+        tv.delegate = context.coordinator
+        tv.font = .preferredFont(forTextStyle: .caption1)
+        tv.textColor = .label
+        tv.backgroundColor = .clear
+        tv.isScrollEnabled = false
+        tv.textContainerInset = .zero
+        tv.textContainer.lineFragmentPadding = 0
+        tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return tv
+    }
+
+    func updateUIView(_ tv: WidthConstrainedTextView, context: Context) {
+        if tv.text != text {
+            tv.text = text
+        }
+    }
+
+    class WidthConstrainedTextView: UITextView {
+        override var intrinsicContentSize: CGSize {
+            guard let superview else { return super.intrinsicContentSize }
+            let width = superview.bounds.width
+            if width > 0 {
+                let size = sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+                return CGSize(width: UIView.noIntrinsicMetric, height: size.height)
+            }
+            return super.intrinsicContentSize
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            invalidateIntrinsicContentSize()
+        }
+    }
+
+    class Coordinator: NSObject, UITextViewDelegate {
+        var parent: BodyTextEditor
+
+        init(_ parent: BodyTextEditor) {
+            self.parent = parent
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            parent.text = textView.text
+            parent.onTextChange()
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            let range = textView.selectedRange
+            if range.length > 0 {
+                parent.selectedRange = range
+            } else {
+                parent.selectedRange = nil
+            }
+        }
+    }
+}
+#else
+/// macOS body text editor using TextEditor
+struct BodyTextEditor: View {
+    @Binding var text: String
+    @Binding var selectedRange: NSRange?
+    var onCreateNode: () -> Void
+    var onTextChange: () -> Void
+
+    var body: some View {
+        TextEditor(text: $text)
+            .font(.caption)
+            .scrollContentBackground(.hidden)
+            .onChange(of: text) { _, _ in
+                onTextChange()
+            }
+    }
+}
+#endif
 
 struct WorkspaceSheet: View {
     @Environment(\.dismiss) private var dismiss
@@ -730,7 +910,7 @@ struct WorkspaceSheet: View {
     }
 
     @State private var selectedHandleIds: Set<String> = []
-    @State private var focusMode: FocusMode = .pages
+    @State private var focusMode: FocusMode?
     @State private var selectedPageId: String?
     @State private var cachedPageSections: [Section] = []
     @State private var editableContent = ""
@@ -747,9 +927,14 @@ struct WorkspaceSheet: View {
     @State private var editableTitle = ""
     @State private var editableBody = ""
     @State private var editableSectionContents: [String: String] = [:]
+    @State private var bodySelection: NSRange?
+    @State private var showCreateNodeFromSelection = false
 
-    // History
+    // History — backed by real commits
     @State private var isHistoryExpanded = false
+    @State private var pageCommits: [Commit] = []
+    @State private var expandedCommitId: String?
+    @State private var expandedCommitContent: CommitContent?
 
     private var selectedHandles: [Handle] {
         handles.filter { selectedHandleIds.contains($0.id) }
@@ -790,7 +975,39 @@ struct WorkspaceSheet: View {
     }
 
     private var hasSelection: Bool {
-        selectedPageId != nil || !selectedHandleIds.isEmpty
+        if focusMode == nil && preselectedPageId == nil { return true }
+        return selectedPageId != nil || !selectedHandleIds.isEmpty
+    }
+
+    private var isProjectWideMode: Bool {
+        focusMode == nil && preselectedPageId == nil
+    }
+
+    private static let editPlaceholders = [
+        "Lets build something...",
+        "Drop an idea here...",
+        "Give this a shape...",
+        "Initialize a concept...",
+        "Unfold the vision...",
+        "Refine the core...",
+        "Architect the thought...",
+        "Draft the intent...",
+    ]
+
+    private static let chatPlaceholders = [
+        "Give this a shape...",
+        "Initialize a concept...",
+        "Unfold the vision...",
+        "Refine the core...",
+        "Architect the thought...",
+        "Draft the intent...",
+    ]
+
+    @State private var currentEditPlaceholder = editPlaceholders.randomElement()!
+    @State private var currentChatPlaceholder = chatPlaceholders.randomElement()!
+
+    private var inputPlaceholder: String {
+        interactionMode == .edit ? currentEditPlaceholder : currentChatPlaceholder
     }
 
     private var canSend: Bool {
@@ -851,6 +1068,7 @@ struct WorkspaceSheet: View {
                         }
                     }
                     .padding()
+                    .frame(maxWidth: .infinity)
                 }
 
                 // Input bar pinned at bottom (only after mode chosen)
@@ -860,11 +1078,11 @@ struct WorkspaceSheet: View {
             }
             .background(Color.black)
             .navigationTitle("Workspace")
+            .inlineNavigationTitle()
             #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
             .toolbarBackground(Color.black, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
@@ -880,6 +1098,7 @@ struct WorkspaceSheet: View {
                 selectedPageId = preselectedPageId
                 focusMode = .pages
                 loadSectionsForPage(preselectedPageId)
+                loadCommits(for: preselectedPageId)
             }
         }
     }
@@ -955,16 +1174,31 @@ struct WorkspaceSheet: View {
             // Page body + sections + interstitials
             VStack(alignment: .leading, spacing: 0) {
                 if isEditable {
-                    if !editableBody.isEmpty || true {
-                        TextField("Body", text: $editableBody, axis: .vertical)
-                            .font(.caption)
-                            .foregroundStyle(.primary)
-                            .textFieldStyle(.plain)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.bottom, 6)
-                            .onChange(of: editableBody) { _ in
-                                savePageBody(noteId: note.id)
-                            }
+                    BodyTextEditor(
+                        text: $editableBody,
+                        selectedRange: $bodySelection,
+                        onCreateNode: { createNodeFromSelection(noteId: note.id) },
+                        onTextChange: { savePageBody(noteId: note.id) }
+                    )
+                    .frame(minHeight: 20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, 6)
+
+                    // Show "Create Node" button when text is selected
+                    if bodySelection != nil {
+                        Button {
+                            createNodeFromSelection(noteId: note.id)
+                        } label: {
+                            Label("Create Node from Selection", systemImage: "plus.rectangle.fill")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(Color.accentColor)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.accentColor.opacity(0.12))
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.bottom, 6)
                     }
                 } else {
                     let body = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1042,6 +1276,29 @@ struct WorkspaceSheet: View {
                                 .foregroundStyle(.primary)
                         }
                     }
+                } else if section.contentType == .image {
+                    #if os(iOS)
+                    let hashes = content.split(separator: ",").map { entry in
+                        String(entry.split(separator: "|").first ?? "")
+                    }
+                    ImageNodeView(
+                        imageHashes: hashes,
+                        mediaRepository: appState.mediaRepository,
+                        onTap: {}
+                    )
+                    .frame(height: 160)
+                    #endif
+                } else if section.contentType == .audio {
+                    #if os(iOS)
+                    let parts = content.split(separator: "|")
+                    let hash = String(parts.first ?? "")
+                    let duration = TimeInterval(parts.count > 1 ? String(parts[1]) : "0") ?? 0
+                    AudioNodeView(
+                        audioHash: hash,
+                        duration: duration,
+                        mediaRepository: appState.mediaRepository
+                    )
+                    #endif
                 } else if !content.isEmpty {
                     Text(content)
                         .font(.caption)
@@ -1063,7 +1320,30 @@ struct WorkspaceSheet: View {
                     .frame(width: 2, height: 14)
                     .padding(.top, 2)
 
-                if !content.isEmpty {
+                if section.contentType == .image {
+                    #if os(iOS)
+                    let hashes = content.split(separator: ",").map { entry in
+                        String(entry.split(separator: "|").first ?? "")
+                    }
+                    ImageNodeView(
+                        imageHashes: hashes,
+                        mediaRepository: appState.mediaRepository,
+                        onTap: {}
+                    )
+                    .frame(height: 160)
+                    #endif
+                } else if section.contentType == .audio {
+                    #if os(iOS)
+                    let parts = content.split(separator: "|")
+                    let hash = String(parts.first ?? "")
+                    let duration = TimeInterval(parts.count > 1 ? String(parts[1]) : "0") ?? 0
+                    AudioNodeView(
+                        audioHash: hash,
+                        duration: duration,
+                        mediaRepository: appState.mediaRepository
+                    )
+                    #endif
+                } else if !content.isEmpty {
                     Text(content)
                         .font(.caption)
                         .foregroundStyle(.primary)
@@ -1076,57 +1356,111 @@ struct WorkspaceSheet: View {
 
     @ViewBuilder
     private func editableSectionRow(for section: Section) -> some View {
-        let handleName = section.handleId
-            .flatMap { HandleManager.shared.getHandle(id: $0) }
-            .map { "@\($0.displayName)" }
-
-        let binding = Binding<String>(
-            get: { editableSectionContents[section.id] ?? section.content },
-            set: { editableSectionContents[section.id] = $0 }
-        )
-
-        if section.sectionType == .fold {
-            // Node / bubble style — editable
-            VStack(alignment: .leading, spacing: 4) {
-                if let handleName {
-                    Text(handleName)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(section.intent.color)
-                }
-
-                TextField("Content", text: binding, axis: .vertical)
-                    .font(.caption)
-                    .foregroundStyle(.primary)
-                    .textFieldStyle(.plain)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .onChange(of: binding.wrappedValue) { _ in
-                        saveSectionContent(sectionId: section.id)
-                    }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8).fill(section.intent.backgroundTint))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .padding(.vertical, 2)
+        // Image and audio sections are not text-editable — render them visually
+        if section.contentType == .image || section.contentType == .audio {
+            sectionRow(for: section)
         } else {
-            // Line style — editable
-            HStack(alignment: .top, spacing: 6) {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(section.intent.color.opacity(0.5))
-                    .frame(width: 2, height: 14)
-                    .padding(.top, 2)
+            let handleName = section.handleId
+                .flatMap { HandleManager.shared.getHandle(id: $0) }
+                .map { "@\($0.displayName)" }
 
-                TextField("Content", text: binding, axis: .vertical)
-                    .font(.caption)
-                    .foregroundStyle(.primary)
-                    .textFieldStyle(.plain)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .onChange(of: binding.wrappedValue) { _ in
-                        saveSectionContent(sectionId: section.id)
+            let binding = Binding<String>(
+                get: { editableSectionContents[section.id] ?? section.content },
+                set: { editableSectionContents[section.id] = $0 }
+            )
+
+            if section.sectionType == .fold {
+                // Node / bubble style — editable
+                VStack(alignment: .leading, spacing: 4) {
+                    if let handleName {
+                        Text(handleName)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(section.intent.color)
                     }
+
+                    TextField("Content", text: binding, axis: .vertical)
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                        .textFieldStyle(.plain)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .onChange(of: binding.wrappedValue) { _ in
+                            saveSectionContent(sectionId: section.id)
+                        }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(section.intent.backgroundTint))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .padding(.vertical, 2)
+            } else {
+                // Line style — editable
+                HStack(alignment: .top, spacing: 6) {
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(section.intent.color.opacity(0.5))
+                        .frame(width: 2, height: 14)
+                        .padding(.top, 2)
+
+                    TextField("Content", text: binding, axis: .vertical)
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                        .textFieldStyle(.plain)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .onChange(of: binding.wrappedValue) { _ in
+                            saveSectionContent(sectionId: section.id)
+                        }
+                }
+                .padding(.vertical, 2)
             }
-            .padding(.vertical, 2)
+        }
+    }
+
+    /// Create a node from the currently selected body text.
+    /// Splits the body into before/after, creates a section with the selected text.
+    private func createNodeFromSelection(noteId: String) {
+        guard let range = bodySelection,
+              range.length > 0,
+              let swiftRange = Range(range, in: editableBody) else { return }
+
+        let selectedText = String(editableBody[swiftRange])
+        let beforeText = String(editableBody[editableBody.startIndex..<swiftRange.lowerBound])
+        let afterText = String(editableBody[swiftRange.upperBound..<editableBody.endIndex])
+
+        // Update the body to only contain the text before the selection
+        editableBody = beforeText.trimmingCharacters(in: .whitespacesAndNewlines)
+        bodySelection = nil
+
+        Task {
+            // Save the trimmed body
+            try? await appState.noteRepository.updateNoteBody(noteId, body: editableBody)
+
+            // Create a section with the selected text
+            let section = try? await appState.sectionRepository.createSection(
+                noteId: noteId,
+                content: selectedText.trimmingCharacters(in: .whitespacesAndNewlines),
+                contentType: .text,
+                sectionType: .fold
+            )
+
+            // If there's text after the selection, save it as interstitial content after the new section
+            let trimmedAfter = afterText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedAfter.isEmpty, let section = section {
+                try? await appState.noteRepository.updateInterstitialContent(
+                    noteId,
+                    afterSectionId: section.id,
+                    content: trimmedAfter
+                )
+            }
+
+            // Refresh the workspace view
+            loadSectionsForPage(noteId)
+
+            // Auto-commit this change
+            _ = try? await appState.commitModule.createCommit(
+                noteId: noteId,
+                name: "Created node from body text"
+            )
+            loadCommits(for: noteId)
         }
     }
 
@@ -1151,23 +1485,37 @@ struct WorkspaceSheet: View {
         }
     }
 
-    // MARK: - Change History
+    // MARK: - Commit Helpers
 
-    private var resolvedActions: [(action: SuggestedAction, timestamp: Date)] {
-        messages.flatMap { message in
-            message.actions
-                .filter { action in
-                    switch action.status {
-                    case .accepted, .dismissed, .failed: return true
-                    case .pending: return false
-                    }
+    private func loadCommits(for noteId: String) {
+        Task {
+            if let commits = try? await appState.commitRepository.getCommits(noteId: noteId) {
+                await MainActor.run {
+                    pageCommits = commits.filter { !$0.isHidden }
                 }
-                .map { (action: $0, timestamp: message.timestamp) }
+            }
         }
     }
 
+    /// Create a commit snapshot after an accepted AI action.
+    private func autoCommitAction(_ action: SuggestedAction, noteId: String) {
+        Task {
+            let name = "AI: \(action.title)"
+            _ = try? await appState.commitModule.createCommit(
+                noteId: noteId,
+                name: name,
+                isAutoCommit: false
+            )
+            // Reload commits to update the history
+            loadCommits(for: noteId)
+        }
+    }
+
+    // MARK: - Change History (backed by real commits)
+
     private var changeHistory: some View {
-        let actions = resolvedActions
+        let noteName = pages.first(where: { $0.id == selectedPageId })?.displayTitle ?? "Page"
+
         return VStack(alignment: .leading, spacing: 0) {
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -1179,8 +1527,8 @@ struct WorkspaceSheet: View {
                         .font(.caption)
                     Text("HISTORY")
                         .font(.caption.weight(.semibold))
-                    if !actions.isEmpty {
-                        Text("\(actions.count)")
+                    if !pageCommits.isEmpty {
+                        Text("\(pageCommits.count)")
                             .font(.caption2.weight(.bold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 6)
@@ -1196,15 +1544,36 @@ struct WorkspaceSheet: View {
             .buttonStyle(.plain)
 
             if isHistoryExpanded {
-                if actions.isEmpty {
-                    Text("No changes yet")
+                if pageCommits.isEmpty {
+                    Text("No history yet")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                         .padding(.top, 8)
                 } else {
+                    let displayCommits = Array(pageCommits.prefix(20))
                     VStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(actions.enumerated()), id: \.element.action.id) { index, item in
-                            historyRow(action: item.action, timestamp: item.timestamp, isLast: index == actions.count - 1)
+                        ForEach(Array(displayCommits.enumerated()), id: \.element.id) { index, commit in
+                            CommitRowView(commit: commit, noteName: noteName, isFirst: index == 0, isLast: index == displayCommits.count - 1)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        if expandedCommitId == commit.id {
+                                            expandedCommitId = nil
+                                            expandedCommitContent = nil
+                                        } else {
+                                            expandedCommitId = commit.id
+                                            expandedCommitContent = nil
+                                            loadCommitContent(for: commit)
+                                        }
+                                    }
+                                }
+
+                            if expandedCommitId == commit.id {
+                                commitContentView(for: commit)
+                                    .padding(.leading, 14)
+                                    .padding(.top, 4)
+                                    .padding(.bottom, 8)
+                            }
                         }
                     }
                     .padding(.top, 8)
@@ -1215,62 +1584,137 @@ struct WorkspaceSheet: View {
     }
 
     @ViewBuilder
-    private func historyRow(action: SuggestedAction, timestamp: Date, isLast: Bool) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            // Timeline
-            VStack(spacing: 0) {
-                Circle()
-                    .fill(statusColor(for: action.status))
-                    .frame(width: 8, height: 8)
-                if !isLast {
-                    Rectangle()
-                        .fill(Color.gray.opacity(0.2))
-                        .frame(width: 1)
-                        .frame(maxHeight: .infinity)
-                }
+    private func commitContentView(for commit: Commit) -> some View {
+        if let content = expandedCommitContent {
+            commitSnapshotCard(content: content, commit: commit)
+        } else {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .scaleEffect(0.6)
+                Text("Loading...")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
+            .padding(.vertical, 4)
+        }
+    }
 
-            VStack(alignment: .leading, spacing: 2) {
+    private func commitSnapshotCard(content: CommitContent, commit: Commit) -> some View {
+        let tint: Color = commit.isAutoCommit ? .orange : .accentColor
+        let intentColor = IntentType(rawValue: content.note.intent)?.color ?? tint
+        let body = content.note.body.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return VStack(alignment: .leading, spacing: 8) {
+            if let title = content.note.title, !title.isEmpty {
                 HStack(spacing: 6) {
-                    Image(systemName: action.icon)
-                        .font(.caption2)
-                        .foregroundStyle(action.tintColor)
-                    Text(action.title)
-                        .font(.caption.weight(.medium))
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(intentColor)
+                        .frame(width: 3, height: 14)
+                    Text(title)
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(.primary)
-                        .lineLimit(1)
-                }
-
-                HStack(spacing: 4) {
-                    Text(statusLabel(for: action.status))
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(statusColor(for: action.status))
-                    Text("·")
-                        .foregroundStyle(.tertiary)
-                    Text(timestamp, style: .time)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
                 }
             }
-            .padding(.bottom, isLast ? 0 : 10)
+
+            if !body.isEmpty {
+                Text(body)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            ForEach(content.sections, id: \.id) { section in
+                commitSectionRow(section: section)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.white.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(tint.opacity(0.2), lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func commitSectionRow(section: CommitSectionSnapshot) -> some View {
+        let text = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sectionIntent = IntentType(rawValue: section.intent) ?? .idea
+
+        if section.contentType == "image" {
+            #if os(iOS)
+            let hashes = text.split(separator: ",").map { entry in
+                String(entry.split(separator: "|").first ?? "")
+            }
+            ImageNodeView(
+                imageHashes: hashes,
+                mediaRepository: appState.mediaRepository,
+                onTap: {}
+            )
+            .frame(height: 120)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            #endif
+        } else if section.contentType == "audio" {
+            #if os(iOS)
+            let parts = text.split(separator: "|")
+            let hash = String(parts.first ?? "")
+            let duration = TimeInterval(parts.count > 1 ? String(parts[1]) : "0") ?? 0
+            AudioNodeView(
+                audioHash: hash,
+                duration: duration,
+                mediaRepository: appState.mediaRepository
+            )
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 6).fill(sectionIntent.backgroundTint))
+            #endif
+        } else if !text.isEmpty {
+            if section.sectionType == "fold" {
+                VStack(alignment: .leading, spacing: 2) {
+                    if let handleId = section.handleId,
+                       let handle = HandleManager.shared.getHandle(id: handleId) {
+                        Text("@\(handle.displayName)")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(sectionIntent.color)
+                    }
+                    Text(text)
+                        .font(.caption2)
+                        .foregroundStyle(.primary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 6).fill(sectionIntent.backgroundTint))
+            } else {
+                HStack(alignment: .top, spacing: 4) {
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(sectionIntent.color.opacity(0.5))
+                        .frame(width: 2, height: 12)
+                        .padding(.top, 1)
+                    Text(text)
+                        .font(.caption2)
+                        .foregroundStyle(.primary)
+                }
+            }
         }
     }
 
-    private func statusColor(for status: ActionStatus) -> Color {
-        switch status {
-        case .accepted: return .green
-        case .dismissed: return .gray
-        case .failed: return .red
-        case .pending: return .yellow
-        }
-    }
-
-    private func statusLabel(for status: ActionStatus) -> String {
-        switch status {
-        case .accepted: return "Applied"
-        case .dismissed: return "Dismissed"
-        case .failed(let reason): return "Failed: \(reason)"
-        case .pending: return "Pending"
+    private func loadCommitContent(for commit: Commit) {
+        Task {
+            do {
+                let content = try appState.commitModule.getCommitContent(hash: commit.hash)
+                await MainActor.run {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        expandedCommitContent = content
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    expandedCommitId = nil
+                }
+            }
         }
     }
 
@@ -1400,7 +1844,7 @@ struct WorkspaceSheet: View {
 
     private var focusSelector: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("FOCUS")
+            Text("NARROW FOCUS")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
@@ -1408,15 +1852,28 @@ struct WorkspaceSheet: View {
                 ForEach(FocusMode.allCases, id: \.self) { mode in
                     Button {
                         withAnimation(.easeInOut(duration: 0.15)) {
-                            focusMode = mode
-                            selectedHandleIds.removeAll()
-                            selectedPageId = nil
-                            cachedPageSections = []
-                            editableContent = ""
-                            editingHandleId = nil
-                            contentHasUnsavedChanges = false
-                            interactionMode = nil
-                            messages.removeAll()
+                            if focusMode == mode {
+                                // Deselect — go back to project-wide
+                                focusMode = nil
+                                selectedHandleIds.removeAll()
+                                selectedPageId = nil
+                                cachedPageSections = []
+                                editableContent = ""
+                                editingHandleId = nil
+                                contentHasUnsavedChanges = false
+                                interactionMode = nil
+                                messages.removeAll()
+                            } else {
+                                focusMode = mode
+                                selectedHandleIds.removeAll()
+                                selectedPageId = nil
+                                cachedPageSections = []
+                                editableContent = ""
+                                editingHandleId = nil
+                                contentHasUnsavedChanges = false
+                                interactionMode = nil
+                                messages.removeAll()
+                            }
                         }
                     } label: {
                         HStack(spacing: 6) {
@@ -1427,8 +1884,8 @@ struct WorkspaceSheet: View {
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
-                        .foregroundColor(focusMode == mode ? .white : Color(.lightGray))
-                        .background(focusMode == mode ? Color.accentColor : Color(red: 0.06, green: 0.06, blue: 0.06))
+                        .foregroundColor(focusMode == mode ? .black : Color(.lightGray))
+                        .background(focusMode == mode ? Color.white : Color(red: 0.06, green: 0.06, blue: 0.06))
                         .overlay(
                             Capsule()
                                 .strokeBorder(focusMode == mode ? Color.clear : Color.gray.opacity(0.3), lineWidth: 1)
@@ -1499,6 +1956,7 @@ struct WorkspaceSheet: View {
                     messages.removeAll()
                     searchText = ""
                     loadSectionsForPage(note.id)
+                    loadCommits(for: note.id)
                 }
             }
         } label: {
@@ -1645,7 +2103,9 @@ struct WorkspaceSheet: View {
                         ActionCardView(
                             action: action,
                             onAccept: { acceptAction(messageIndex: messageIndex, actionIndex: actionIndex) },
-                            onDismiss: { dismissAction(messageIndex: messageIndex, actionIndex: actionIndex) }
+                            onDismiss: { dismissAction(messageIndex: messageIndex, actionIndex: actionIndex) },
+                            previewSections: cachedPageSections,
+                            mediaRepository: appState.mediaRepository
                         )
                     }
                 }
@@ -1669,7 +2129,7 @@ struct WorkspaceSheet: View {
     private var inputBar: some View {
         HStack(spacing: 10) {
             TextField(
-                interactionMode == .edit ? "Describe your changes..." : "Ask about this content...",
+                "",
                 text: $inputText,
                 axis: .vertical
             )
@@ -1680,6 +2140,14 @@ struct WorkspaceSheet: View {
                 RoundedRectangle(cornerRadius: 20)
                     .stroke(Color.gray.opacity(0.3), lineWidth: 1)
             )
+            .overlay(alignment: .leading) {
+                if inputText.isEmpty {
+                    Text(inputPlaceholder)
+                        .foregroundStyle(Color.gray)
+                        .padding(.leading, 14)
+                        .allowsHitTesting(false)
+                }
+            }
             .focused($isInputFocused)
             .lineLimit(1...4)
 
@@ -1688,9 +2156,9 @@ struct WorkspaceSheet: View {
             } label: {
                 Image(systemName: "paperplane.fill")
                     .font(.body)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(canSend ? .black : .white)
                     .frame(width: 36, height: 36)
-                    .background(canSend ? Color.accentColor : Color.gray.opacity(0.3))
+                    .background(canSend ? Color.white : Color.gray.opacity(0.3))
                     .clipShape(Circle())
             }
             .disabled(!canSend)
@@ -1722,43 +2190,6 @@ struct WorkspaceSheet: View {
             }.joined(separator: "\n\n---\n\n")
         }
 
-        // Build page context if a page is selected
-        let pageContext: String
-        if let pageId = selectedPageId,
-           let page = pages.first(where: { $0.id == pageId }) {
-            let body = page.body.trimmingCharacters(in: .whitespacesAndNewlines)
-            var parts: [String] = []
-            parts.append("Focused page (id: \(page.id)): \"\(page.displayTitle)\"")
-            parts.append("Body: \(body.isEmpty ? "(empty — user wants you to generate content here)" : String(body.prefix(500)))")
-
-            // Include section content for the focused page with IDs and types
-            let activeSections = cachedPageSections.filter { $0.deletedAt == nil }
-            let sectionTexts = activeSections
-                .prefix(20)
-                .compactMap { section -> String? in
-                    let cleaned = Self.cleanContentForAI(section.content)
-                    guard !cleaned.isEmpty else { return nil }
-                    let type = section.sectionType == .fold ? "node" : "line"
-                    let handleInfo: String
-                    if let hId = section.handleId,
-                       let h = HandleManager.shared.getHandle(id: hId) {
-                        handleInfo = ", loop: @\(h.displayName)"
-                    } else {
-                        handleInfo = ""
-                    }
-                    return "  Section (id: \(section.id), type: \(type)\(handleInfo)): \(cleaned)"
-                }
-            if !sectionTexts.isEmpty {
-                parts.append("Sections:\n\(sectionTexts.joined(separator: "\n"))")
-            } else if body.isEmpty {
-                parts.append("This page is completely blank. When the user asks you to write or create content, use the update_page_body tool with note_id \"\(page.id)\" and note_title \"\(page.displayTitle)\" to generate the content they request.")
-            }
-
-            pageContext = parts.joined(separator: "\n")
-        } else {
-            pageContext = ""
-        }
-
         messages.append(ChatMessage(role: .user, content: text))
         inputText = ""
         isLoading = true
@@ -1767,11 +2198,38 @@ struct WorkspaceSheet: View {
 
         Task {
             do {
+                // In project-wide Edit mode, auto-create a new page so the AI has a target
+                var autoCreatedPage: Note?
+                if isProjectWideMode && currentMode == .edit && selectedPageId == nil {
+                    let newPage = try await appState.noteRepository.createNote(
+                        moduleId: selectedModuleId
+                    )
+                    autoCreatedPage = newPage
+                    await MainActor.run {
+                        selectedPageId = newPage.id
+                        loadSectionsForPage(newPage.id)
+                        loadCommits(for: newPage.id)
+                    }
+                }
+
+                // Build structured page context as JSON
+                let pageContext: String
+                if let autoPage = autoCreatedPage {
+                    // Use the auto-created page directly — reactive `pages` may not have it yet
+                    pageContext = buildStructuredPageContext(page: autoPage)
+                } else if let pageId = selectedPageId,
+                          let page = pages.first(where: { $0.id == pageId }) {
+                    pageContext = buildStructuredPageContext(page: page)
+                } else {
+                    pageContext = ""
+                }
+
                 let apiMessages = buildAPIMessages()
-                let richContext = await buildRichContext(for: text)
 
                 var contextParts: [String] = []
-                contextParts.append(richContext)
+                // Always include rich project context in project-wide mode
+                let richContext = await buildRichContext(for: text)
+                if !richContext.isEmpty { contextParts.append(richContext) }
                 if !pageContext.isEmpty { contextParts.append(pageContext) }
                 if !loopContent.isEmpty { contextParts.append("Selected loop content:\n\n\(loopContent)") }
                 let context = contextParts.joined(separator: "\n\n")
@@ -1783,13 +2241,21 @@ struct WorkspaceSheet: View {
                         noteContext: context
                     )
 
-                    let content = response.text.isEmpty && !response.actions.isEmpty
-                        ? "Here's what I suggest:"
-                        : response.text
+                    // Coalesce multiple micro-actions into a single rewrite_page
+                    let finalActions = coalesceMicroActions(response.actions)
+
+                    let content: String
+                    if !response.text.isEmpty {
+                        content = response.text
+                    } else if !finalActions.isEmpty {
+                        content = "Here's what I suggest:"
+                    } else {
+                        content = "I wasn't able to generate a response. Try rephrasing your request."
+                    }
                     messages.append(ChatMessage(
                         role: .assistant,
                         content: content,
-                        actions: response.actions
+                        actions: finalActions
                     ))
 
                 case .chat:
@@ -1831,17 +2297,187 @@ struct WorkspaceSheet: View {
         }
     }
 
+    // MARK: - Action Coalescing
+
+    /// If the AI returns 2+ delete_section / update_section_content calls for the same page,
+    /// merge them into a single rewrite_page action so the user sees one preview card.
+    private func coalesceMicroActions(_ actions: [SuggestedAction]) -> [SuggestedAction] {
+        // Count section-level micro-actions (deletes + updates targeting sections)
+        var deleteIds: Set<String> = []
+        var sectionUpdates: [String: String] = [:] // sectionId -> newContent
+        var otherActions: [SuggestedAction] = []
+
+        for action in actions {
+            switch action.actionType {
+            case .deleteSection(let p):
+                deleteIds.insert(p.sectionId)
+            case .updateSectionContent(let p):
+                sectionUpdates[p.sectionId] = p.newContent
+            default:
+                otherActions.append(action)
+            }
+        }
+
+        // Only coalesce if there are 2+ micro-actions
+        let microCount = deleteIds.count + sectionUpdates.count
+        guard microCount >= 2, let pageId = selectedPageId else {
+            return actions
+        }
+
+        // Build keep_sections: all current sections that are NOT being deleted
+        let activeSections = cachedPageSections.filter { $0.deletedAt == nil }
+        var keepSections: [SuggestedAction.KeepSection] = []
+        for section in activeSections {
+            if deleteIds.contains(section.id) { continue }
+            let newContent = sectionUpdates[section.id]
+            keepSections.append(SuggestedAction.KeepSection(
+                sectionId: section.id,
+                newContent: newContent
+            ))
+        }
+
+        // Get current page info
+        let page = pages.first(where: { $0.id == pageId })
+        let noteTitle = page?.displayTitle ?? ""
+
+        // Check if there's an update_page_body in otherActions — pull its body out
+        var newBody = page?.body ?? ""
+        otherActions = otherActions.filter { action in
+            if case .updatePageBody(let p) = action.actionType, p.noteId == pageId {
+                newBody = p.newBody
+                return false // remove from otherActions, folded into rewrite
+            }
+            return true
+        }
+
+        // Build summary
+        var summaryParts: [String] = []
+        if deleteIds.count > 0 {
+            summaryParts.append("Removed \(deleteIds.count) section\(deleteIds.count == 1 ? "" : "s")")
+        }
+        if sectionUpdates.count > 0 {
+            summaryParts.append("Updated \(sectionUpdates.count) section\(sectionUpdates.count == 1 ? "" : "s")")
+        }
+        let summary = summaryParts.joined(separator: ", ")
+
+        // Build page preview showing what the page will look like after the edit
+        var previewParts: [String] = []
+        let trimmedBody = newBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedBody.isEmpty { previewParts.append(trimmedBody) }
+        for section in activeSections {
+            if deleteIds.contains(section.id) { continue }
+            // Use updated content if available, otherwise existing content
+            let content: String
+            if let updated = sectionUpdates[section.id] {
+                content = updated
+            } else {
+                content = section.content
+            }
+            if section.contentType == .image {
+                let count = content.split(separator: ",").count
+                let label = count > 1 ? "[\(count) Photos]" : "[Photo]"
+                let prefix = section.sectionType == .fold ? "▪ " : "│ "
+                previewParts.append("\(prefix)\(label)")
+            } else if section.contentType == .audio {
+                let parts = content.split(separator: "|")
+                let duration = TimeInterval(parts.count > 1 ? String(parts[1]) : "0") ?? 0
+                let mins = Int(duration) / 60
+                let secs = Int(duration) % 60
+                let label = "[Audio Recording \(String(format: "%d:%02d", mins, secs))]"
+                let prefix = section.sectionType == .fold ? "▪ " : "│ "
+                previewParts.append("\(prefix)\(label)")
+            } else {
+                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    let prefix = section.sectionType == .fold ? "▪ " : "│ "
+                    previewParts.append("\(prefix)\(trimmed)")
+                }
+            }
+        }
+        let pagePreview = previewParts.joined(separator: "\n\n")
+
+        let rewriteAction = SuggestedAction(
+            id: UUID().uuidString,
+            actionType: .rewritePage(SuggestedAction.RewritePageParams(
+                noteId: pageId,
+                noteTitle: noteTitle,
+                newBody: newBody,
+                keepSections: keepSections,
+                summary: summary,
+                pagePreview: pagePreview
+            ))
+        )
+
+        return [rewriteAction] + otherActions
+    }
+
     // MARK: - Context Builder
 
-    /// Strip non-readable content (base64 RTF, encoded data) from text
-    private static func cleanContentForAI(_ text: String) -> String {
+    /// Strip non-readable content (base64 RTF, encoded data) from text.
+    /// `truncate` limits to 300 chars for broad project summaries; false sends full content for the focused page.
+    private static func cleanContentForAI(_ text: String, truncate: Bool = true) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         // Skip base64-encoded RTF blobs
         if trimmed.hasPrefix("e]") || trimmed.hasPrefix("ew0") || trimmed.hasPrefix("eyJ") ||
            trimmed.contains("{\\rtf") || trimmed.contains("\\fonttbl") {
             return ""
         }
-        return String(trimmed.prefix(300))
+        return truncate ? String(trimmed.prefix(300)) : trimmed
+    }
+
+    /// Build a structured JSON representation of the focused page for AI context.
+    /// Sends full content (no truncation) so the AI can see everything it needs for restructuring.
+    private func buildStructuredPageContext(page: Note) -> String {
+        let activeSections = cachedPageSections.filter { $0.deletedAt == nil }
+
+        var sectionDicts: [[String: Any]] = []
+        for (index, section) in activeSections.prefix(50).enumerated() {
+            let content = Self.cleanContentForAI(section.content, truncate: false)
+            var dict: [String: Any] = [
+                "id": section.id,
+                "content": content,
+                "type": section.sectionType == .fold ? "node" : "line",
+                "content_type": section.contentType.rawValue,
+                "indent": section.indentLevel,
+                "intent": section.intent.rawValue,
+                "order": index
+            ]
+            if let hId = section.handleId,
+               let h = HandleManager.shared.getHandle(id: hId) {
+                dict["handle"] = "@\(h.displayName)"
+                dict["handle_id"] = hId
+            }
+            sectionDicts.append(dict)
+        }
+
+        // Build interstitial map — full content
+        var interstitials: [String: String] = [:]
+        for (key, value) in page.interstitialContent {
+            let content = Self.cleanContentForAI(value, truncate: false)
+            if !content.isEmpty {
+                interstitials[key] = content
+            }
+        }
+
+        let noteDict: [String: Any] = [
+            "id": page.id,
+            "title": page.displayTitle,
+            "intent": page.intent.rawValue,
+            "body": Self.cleanContentForAI(page.body, truncate: false),
+            "sections": sectionDicts,
+            "interstitial_content": interstitials,
+            "tags": page.tags + page.aiTags
+        ]
+
+        let wrapper: [String: Any] = ["focused_page": noteDict]
+
+        if let data = try? JSONSerialization.data(withJSONObject: wrapper, options: [.prettyPrinted, .sortedKeys]),
+           let json = String(data: data, encoding: .utf8) {
+            return json
+        }
+
+        // Fallback to flat text
+        return "Focused page (id: \(page.id)): \"\(page.displayTitle)\""
     }
 
     private func buildRichContext(for query: String) async -> String {
@@ -1968,16 +2604,36 @@ struct WorkspaceSheet: View {
                     contentHasUnsavedChanges = false
                 }
 
-                // If a section was deleted, refresh the cached sections
-                if case .deleteSection = action.actionType,
-                   let pageId = selectedPageId {
-                    loadSectionsForPage(pageId)
+                // Refresh cached sections and editable fields after any structural change
+                if let pageId = selectedPageId {
+                    switch action.actionType {
+                    case .deleteSection, .updateSectionContent, .addSection, .moveSection, .setSectionIntent:
+                        loadSectionsForPage(pageId)
+                    case .updatePageBody(let p) where p.noteId == pageId:
+                        await MainActor.run { editableBody = p.newBody }
+                    case .rewritePage(let p) where p.noteId == pageId:
+                        loadSectionsForPage(pageId)
+                        await MainActor.run { editableBody = p.newBody }
+                    default:
+                        break
+                    }
                 }
 
-                messages[messageIndex].actions[actionIndex] = action.withStatus(.accepted)
+                await MainActor.run {
+                    messages[messageIndex].actions[actionIndex] = action.withStatus(.accepted)
+                    isHistoryExpanded = true
+                }
+
+                // Auto-commit the change so it appears in page history
+                if let pageId = selectedPageId {
+                    autoCommitAction(action, noteId: pageId)
+                }
+
                 haptic(.success)
             } catch {
-                messages[messageIndex].actions[actionIndex] = action.withStatus(.failed(error.localizedDescription))
+                await MainActor.run {
+                    messages[messageIndex].actions[actionIndex] = action.withStatus(.failed(error.localizedDescription))
+                }
                 haptic(.error)
             }
         }
@@ -1996,12 +2652,12 @@ struct WorkspaceSheet: View {
 
     // MARK: - Haptics
 
-    private func haptic(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
-        UIImpactFeedbackGenerator(style: style).impactOccurred()
+    private func haptic(_ style: HapticFeedback.FeedbackStyle) {
+        HapticFeedback.impact(style)
     }
 
-    private func haptic(_ type: UINotificationFeedbackGenerator.FeedbackType) {
-        UINotificationFeedbackGenerator().notificationOccurred(type)
+    private func haptic(_ type: HapticFeedback.FeedbackType) {
+        HapticFeedback.notification(type)
     }
 }
 
@@ -2047,6 +2703,25 @@ struct FlowLayout: Layout {
         }
 
         return (CGSize(width: maxX, height: y + rowHeight), positions)
+    }
+}
+
+// MARK: - Empty State Pulse
+
+/// Separate view so SwiftUI destroys animation state when removed.
+private struct EmptyStatePulse: View {
+    @State private var pulse = false
+
+    var body: some View {
+        Image(systemName: "brain.head.profile")
+            .font(.system(size: 36))
+            .foregroundStyle(Color(white: 0.25))
+            .opacity(pulse ? 0.4 : 0.7)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 3).repeatForever(autoreverses: true)) {
+                    pulse = true
+                }
+            }
     }
 }
 

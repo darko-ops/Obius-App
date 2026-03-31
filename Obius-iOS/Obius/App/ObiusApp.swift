@@ -1,5 +1,9 @@
 import SwiftUI
 import UserNotifications
+import RevenueCat
+#if os(iOS)
+import BackgroundTasks
+#endif
 
 @main
 struct ObiusApp: App {
@@ -7,11 +11,21 @@ struct ObiusApp: App {
     @StateObject private var authManager = AuthManager.shared
     @StateObject private var deepLinkRouter = DeepLinkRouter.shared
     @StateObject private var appearanceManager = AppearanceManager.shared
+    @StateObject private var tierManager = TierManager.shared
     private let notificationDelegate = NotificationDelegate()
 
     init() {
         UNUserNotificationCenter.current().delegate = notificationDelegate
         InterFontRegistration.registerAsDefault()
+        #if os(iOS)
+        AutoCommitManager.registerBackgroundTask()
+        #endif
+
+        let rcKey = AppConfiguration.revenueCatAPIKey
+        if !rcKey.isEmpty {
+            Purchases.logLevel = AppConfiguration.environment.isDebug ? .debug : .error
+            Purchases.configure(withAPIKey: rcKey)
+        }
     }
 
     @Environment(\.scenePhase) private var scenePhase
@@ -24,25 +38,61 @@ struct ObiusApp: App {
                 .environmentObject(authManager)
                 .environmentObject(deepLinkRouter)
                 .environmentObject(appearanceManager)
+                .environmentObject(tierManager)
                 .preferredColorScheme(appearanceManager.currentMode.colorScheme)
                 .task {
+                    await TierManager.shared.initialize()
+                    await StoreManager.shared.initialize()
                     await appState.initialize()
+                }
+                .sheet(isPresented: $tierManager.showPaywall) {
+                    PaywallSheet()
                 }
                 .onChange(of: scenePhase) { phase in
                     if phase == .active {
                         Task {
                             await EchoManager.shared.checkForFiredEchoes()
                             await appState.autoCommitManager.checkAndAutoCommit()
+                            // Sync on every foreground (only if already initialized)
+                            if appState.isInitialized && AuthManager.shared.isAuthenticated && TierManager.shared.limits.cloudSync {
+                                await appState.triggerSync()
+                                await appState.syncEngine.subscribeRealtime()
+                            }
                         }
                         EchoManager.shared.scheduleNextCheck()
                     } else if phase == .background {
                         EchoManager.shared.stopPeriodicCheck()
+                        Task { await appState.syncEngine.unsubscribeRealtime() }
                     }
                 }
                 .onOpenURL { url in
                     deepLinkRouter.handleURL(url)
                 }
+                #if os(macOS)
+                .frame(minWidth: 800, minHeight: 500)
+                #endif
         }
+        #if os(macOS)
+        .defaultSize(width: 1100, height: 750)
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("New Note") {
+                    NotificationCenter.default.post(name: .createNewNote, object: nil)
+                }
+                .keyboardShortcut("n")
+            }
+        }
+        #endif
+
+        #if os(macOS)
+        Settings {
+            SettingsView()
+                .environmentObject(appState)
+                .environmentObject(authManager)
+                .environmentObject(tierManager)
+                .environmentObject(appearanceManager)
+        }
+        #endif
     }
 }
 
@@ -112,12 +162,14 @@ class AppState: ObservableObject {
             self.noteRepository = NoteRepository(database: database)
             self.sectionRepository = SectionRepository(database: database)
             self.handleRepository = HandleRepository(database: database)  // Handle Loop support
-            self.echoRepository = EchoRepository(database: database)    // Echo alert/reminder support
+            self.echoRepository = EchoRepository(database: database)      // Echo alert/reminder support
             self.shareLinkRepository = ShareLinkRepository(database: database)  // Share link support
             self.commentRepository = CommentRepository(database: database)      // Share comments support
             self.moduleRepository = ModuleRepository(database: database)        // Module (folder) support
             self.syncEngine = SyncEngine(database: database)
             self.syncLogger = SyncOperationLogger(database: database)
+            self.handleRepository.syncLogger = syncLogger  // Wire up handle cloud sync
+            self.echoRepository.syncLogger = syncLogger  // Wire up echo cloud sync
 
             // Initialize Split-Storage Engine
             self.coldStore = ColdStore.shared
@@ -158,6 +210,12 @@ class AppState: ObservableObject {
         await syncEngine.initialize()
         isInitialized = true
 
+        // Wire up sync logger to auto-push changes after operations are logged
+        syncLogger.onOperationLogged = { [weak self] in
+            guard let self else { return }
+            Task { await self.syncEngine.schedulePush() }
+        }
+
         // Initialize Echo notifications
         await EchoManager.shared.requestNotificationPermission()
         EchoManager.shared.rescheduleAllEchoes()
@@ -167,9 +225,18 @@ class AppState: ObservableObject {
         // Auto-commit check (creates commits for notes modified before today)
         await autoCommitManager.checkAndAutoCommit()
 
-        // Auto-sync if authenticated
-        if AuthManager.shared.isAuthenticated {
+        // Auto-sync if authenticated and tier allows it
+        let isAuthed = AuthManager.shared.isAuthenticated
+        let canSync = TierManager.shared.limits.cloudSync
+        print("[AppState] Sync gate: authenticated=\(isAuthed), cloudSync=\(canSync), tier=\(TierManager.shared.currentTier.rawValue)")
+        if isAuthed && canSync {
             await syncEngine.sync()
+            await syncEngine.subscribeRealtime()
+        }
+
+        // Sync profile images from cloud (downloads if they exist remotely but not locally)
+        if AuthManager.shared.isAuthenticated {
+            await ProfileImageManager.shared.syncFromCloud()
         }
 
         // Seed first-run demo note
@@ -222,12 +289,28 @@ class AppState: ObservableObject {
     }
 
     func triggerSync() async {
+        guard TierManager.shared.limits.cloudSync else { return }
         await syncEngine.sync()
     }
+
+    #if os(iOS)
+    // MARK: - Background Auto-Commit
+
+    /// Called from BGProcessingTask handler at midnight.
+    /// Creates a minimal AppState just to run auto-commits.
+    static func backgroundAutoCommit(task: BGProcessingTask) async {
+        do {
+            let appState = AppState()
+            await appState.autoCommitManager.checkAndAutoCommit()
+            task.setTaskCompleted(success: true)
+        }
+    }
+    #endif
 }
 
 // MARK: - Notification Names
 
 extension Notification.Name {
     static let echoNotificationTapped = Notification.Name("echoNotificationTapped")
+    static let createNewNote = Notification.Name("createNewNote")
 }

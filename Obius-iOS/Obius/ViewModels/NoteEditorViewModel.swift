@@ -13,6 +13,20 @@ final class NoteEditorViewModel: ObservableObject {
     // Handle Manager for real-time handle content
     private let handleManager = HandleManager.shared
 
+    // Debounced sync logging — fires after edits stop for 3 seconds
+    private var syncDebounceTask: Task<Void, Never>?
+    /// Call after any note/section mutation to schedule a debounced sync
+    var onContentChanged: (() -> Void)?
+
+    private func scheduleSyncLog() {
+        syncDebounceTask?.cancel()
+        syncDebounceTask = Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 second debounce
+            guard !Task.isCancelled else { return }
+            onContentChanged?()
+        }
+    }
+
     @Published var note: Note?
     @Published var sections: [Section] = []
     @Published var isLoading: Bool = true
@@ -198,12 +212,14 @@ final class NoteEditorViewModel: ObservableObject {
         try await noteRepository.updateNoteBody(noteId, body: body, richText: richText)
         syncHashtags()
         triggerEntityExtraction()
+        scheduleSyncLog()
     }
 
     func updateInterstitialContent(afterSectionId: String?, content: String, richText: String? = nil) async throws {
         try await noteRepository.updateInterstitialContent(noteId, afterSectionId: afterSectionId, content: content, richText: richText)
         syncHashtags()
         triggerEntityExtraction()
+        scheduleSyncLog()
     }
 
     func getInterstitialContent(afterSectionId: String?) -> String {
@@ -274,6 +290,7 @@ final class NoteEditorViewModel: ObservableObject {
 
     func updateSectionContent(_ sectionId: String, content: String, richText: String? = nil) async throws {
         try await sectionRepository.updateContent(sectionId, content: content, richText: richText)
+        scheduleSyncLog()
     }
 
     func deleteSection(_ sectionId: String) async throws {

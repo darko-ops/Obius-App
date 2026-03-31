@@ -5,6 +5,7 @@ import Combine
 @MainActor
 final class EchoRepository: ObservableObject {
     private let database: DatabaseManager
+    var syncLogger: SyncOperationLogger?
 
     @Published private(set) var activeEchoes: [Echo] = []
     private var cancellables = Set<AnyCancellable>()
@@ -41,7 +42,7 @@ final class EchoRepository: ObservableObject {
             return String(data: data, encoding: .utf8)
         }()
 
-        return try await database.write { db in
+        let echo = try await database.write { db in
             var echo = Echo(
                 handleId: handleId,
                 isRecurring: isRecurring,
@@ -52,6 +53,8 @@ final class EchoRepository: ObservableObject {
             try echo.insert(db)
             return echo
         }
+        syncLogger?.logEchoCreate(echo)
+        return echo
     }
 
     // MARK: - Read
@@ -83,21 +86,29 @@ final class EchoRepository: ObservableObject {
     // MARK: - Update
 
     func deactivateEcho(id: String) async throws {
-        try await database.write { db in
-            guard var echo = try Echo.fetchOne(db, key: id) else { return }
+        let updatedEcho = try await database.write { db -> Echo? in
+            guard var echo = try Echo.fetchOne(db, key: id) else { return nil }
             echo.deactivate()
             try echo.update(db)
 
             // Dismiss upcomingEcho insights for this echo's handle
             Self.dismissEchoInsights(handleId: echo.handleId, db: db)
+            return echo
+        }
+        if let echo = updatedEcho {
+            syncLogger?.logEchoUpdate(echo)
         }
     }
 
     func updateNextFireDate(id: String) async throws {
-        try await database.write { db in
-            guard var echo = try Echo.fetchOne(db, key: id) else { return }
+        let updatedEcho = try await database.write { db -> Echo? in
+            guard var echo = try Echo.fetchOne(db, key: id) else { return nil }
             echo.updateNextFireDate()
             try echo.update(db)
+            return echo
+        }
+        if let echo = updatedEcho {
+            syncLogger?.logEchoUpdate(echo)
         }
     }
 
@@ -113,29 +124,41 @@ final class EchoRepository: ObservableObject {
             return String(data: data, encoding: .utf8)
         }()
 
-        try await database.write { db in
-            guard var echo = try Echo.fetchOne(db, key: id) else { return }
+        let updatedEcho = try await database.write { db -> Echo? in
+            guard var echo = try Echo.fetchOne(db, key: id) else { return nil }
             echo.isRecurring = isRecurring
             echo.intervalsJSON = intervalsJSON
             echo.fireDate = fireDate
             echo.updateNextFireDate()
             try echo.update(db)
+            return echo
+        }
+        if let echo = updatedEcho {
+            syncLogger?.logEchoUpdate(echo)
         }
     }
 
     func acknowledgeEcho(id: String) async throws {
-        try await database.write { db in
-            guard var echo = try Echo.fetchOne(db, key: id) else { return }
+        let updatedEcho = try await database.write { db -> Echo? in
+            guard var echo = try Echo.fetchOne(db, key: id) else { return nil }
             echo.acknowledge()
             try echo.update(db)
+            return echo
+        }
+        if let echo = updatedEcho {
+            syncLogger?.logEchoUpdate(echo)
         }
     }
 
     func alertEcho(id: String) async throws {
-        try await database.write { db in
-            guard var echo = try Echo.fetchOne(db, key: id) else { return }
+        let updatedEcho = try await database.write { db -> Echo? in
+            guard var echo = try Echo.fetchOne(db, key: id) else { return nil }
             echo.alert()
             try echo.update(db)
+            return echo
+        }
+        if let echo = updatedEcho {
+            syncLogger?.logEchoUpdate(echo)
         }
     }
 
@@ -151,15 +174,24 @@ final class EchoRepository: ObservableObject {
                 Self.dismissEchoInsights(handleId: handleId, db: db)
             }
         }
+        syncLogger?.logEchoDelete(id)
     }
 
     func deleteEchoesForHandle(handleId: String) async throws {
-        try await database.write { db in
+        let echoIds = try await database.write { db -> [String] in
+            let ids = try Echo
+                .filter(Echo.Columns.handleId == handleId)
+                .fetchAll(db)
+                .map(\.id)
             try Echo
                 .filter(Echo.Columns.handleId == handleId)
                 .deleteAll(db)
 
             Self.dismissEchoInsights(handleId: handleId, db: db)
+            return ids
+        }
+        for echoId in echoIds {
+            syncLogger?.logEchoDelete(echoId)
         }
     }
 

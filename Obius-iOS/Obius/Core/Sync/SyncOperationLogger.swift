@@ -5,6 +5,9 @@ import GRDB
 final class SyncOperationLogger {
     private let database: DatabaseManager
 
+    /// Called after an operation is logged — use to trigger a debounced sync push
+    var onOperationLogged: (() -> Void)?
+
     init(database: DatabaseManager) {
         self.database = database
     }
@@ -12,6 +15,7 @@ final class SyncOperationLogger {
     // MARK: - Note Operations
 
     func logNoteCreate(_ note: Note) {
+        print("[SyncLogger] logNoteCreate called for \(note.id)")
         logOperation(
             entityType: "note",
             entityId: note.id,
@@ -21,11 +25,49 @@ final class SyncOperationLogger {
     }
 
     func logNoteUpdate(_ note: Note) {
+        print("[SyncLogger] logNoteUpdate called for \(note.id)")
         logOperation(
             entityType: "note",
             entityId: note.id,
             operationType: "update",
             payload: noteToPayload(note)
+        )
+    }
+
+    /// Synchronous version — awaitable, ensures the operation is written before returning
+    func logNoteUpdateSync(_ note: Note) async {
+        await logOperationSync(
+            entityType: "note",
+            entityId: note.id,
+            operationType: "update",
+            payload: noteToPayload(note)
+        )
+    }
+
+    func logNoteCreateSync(_ note: Note) async {
+        await logOperationSync(
+            entityType: "note",
+            entityId: note.id,
+            operationType: "create",
+            payload: noteToPayload(note)
+        )
+    }
+
+    func logSectionCreateSync(_ section: Section) async {
+        await logOperationSync(
+            entityType: "section",
+            entityId: section.id,
+            operationType: "create",
+            payload: sectionToPayload(section)
+        )
+    }
+
+    func logSectionUpdateSync(_ section: Section) async {
+        await logOperationSync(
+            entityType: "section",
+            entityId: section.id,
+            operationType: "update",
+            payload: sectionToPayload(section)
         )
     }
 
@@ -62,6 +104,64 @@ final class SyncOperationLogger {
         logOperation(
             entityType: "section",
             entityId: sectionId,
+            operationType: "delete",
+            payload: [:]
+        )
+    }
+
+    // MARK: - Handle Operations
+
+    func logHandleCreate(_ handle: Handle) {
+        logOperation(
+            entityType: "handle",
+            entityId: handle.id,
+            operationType: "create",
+            payload: handleToPayload(handle)
+        )
+    }
+
+    func logHandleUpdate(_ handle: Handle) {
+        logOperation(
+            entityType: "handle",
+            entityId: handle.id,
+            operationType: "update",
+            payload: handleToPayload(handle)
+        )
+    }
+
+    func logHandleDelete(_ handleId: String) {
+        logOperation(
+            entityType: "handle",
+            entityId: handleId,
+            operationType: "delete",
+            payload: [:]
+        )
+    }
+
+    // MARK: - Echo Operations
+
+    func logEchoCreate(_ echo: Echo) {
+        logOperation(
+            entityType: "echo",
+            entityId: echo.id,
+            operationType: "create",
+            payload: echoToPayload(echo)
+        )
+    }
+
+    func logEchoUpdate(_ echo: Echo) {
+        logOperation(
+            entityType: "echo",
+            entityId: echo.id,
+            operationType: "update",
+            payload: echoToPayload(echo)
+        )
+    }
+
+    func logEchoDelete(_ echoId: String) {
+        logOperation(
+            entityType: "echo",
+            entityId: echoId,
             operationType: "delete",
             payload: [:]
         )
@@ -105,41 +205,80 @@ final class SyncOperationLogger {
         payload: [String: Any]
     ) {
         Task {
-            do {
-                let payloadJson = try JSONSerialization.data(withJSONObject: payload)
-                let payloadString = String(data: payloadJson, encoding: .utf8) ?? "{}"
+            await logOperationSync(entityType: entityType, entityId: entityId, operationType: operationType, payload: payload)
+            onOperationLogged?()
+        }
+    }
 
-                try await database.write { db in
-                    try db.execute(sql: """
-                        INSERT INTO syncOperations (operationId, entityType, entityId, operationType, payload, timestamp, synced)
-                        VALUES (?, ?, ?, ?, ?, ?, 0)
-                    """, arguments: [
-                        UUID().uuidString,
-                        entityType,
-                        entityId,
-                        operationType,
-                        payloadString,
-                        Int64(Date().timeIntervalSince1970 * 1000)
-                    ])
-                }
-            } catch {
-                print("Failed to log sync operation: \(error)")
+    private func logOperationSync(
+        entityType: String,
+        entityId: String,
+        operationType: String,
+        payload: [String: Any]
+    ) async {
+        do {
+            let payloadJson = try JSONSerialization.data(withJSONObject: payload)
+            let payloadString = String(data: payloadJson, encoding: .utf8) ?? "{}"
+
+            try await database.write { db in
+                // Delete any existing unsynced op for this entity to avoid duplicates
+                try db.execute(sql: """
+                    DELETE FROM syncOperations WHERE entityId = ? AND synced = 0
+                """, arguments: [entityId])
+
+                try db.execute(sql: """
+                    INSERT INTO syncOperations (operationId, entityType, entityId, operationType, payload, timestamp, synced)
+                    VALUES (?, ?, ?, ?, ?, ?, 0)
+                """, arguments: [
+                    UUID().uuidString,
+                    entityType,
+                    entityId,
+                    operationType,
+                    payloadString,
+                    Int64(Date().timeIntervalSince1970 * 1000)
+                ])
             }
+            print("[SyncLogger] Wrote \(operationType) op for \(entityType)/\(entityId.prefix(8))")
+        } catch {
+            print("[SyncLogger] FAILED to log \(operationType) for \(entityType)/\(entityId.prefix(8)): \(error)")
         }
     }
 
     private func noteToPayload(_ note: Note) -> [String: Any] {
         var payload: [String: Any] = [
             "title": note.title as Any,
+            "body": note.body,
             "is_pinned": note.isPinned,
             "color_intent": note.intent.legacyValue,  // Use legacy value for server compatibility
             "created_at": formatTimestamp(note.createdAt),
             "updated_at": formatTimestamp(note.updatedAt)
         ]
 
+        if let groupName = note.groupName {
+            payload["group_name"] = groupName
+        }
+
+        if let moduleId = note.moduleId {
+            payload["module_id"] = moduleId
+            // Look up module name/icon for cross-device sync
+            if let moduleInfo = try? database.read({ db in
+                try Row.fetchOne(db, sql: "SELECT name, icon FROM modules WHERE id = ?", arguments: [moduleId])
+            }) {
+                if let name = moduleInfo["name"] as? String { payload["module_name"] = name }
+                if let icon = moduleInfo["icon"] as? String { payload["module_icon"] = icon }
+            }
+        }
+
         if let aiTitle = note.aiTitle {
             payload["ai_title"] = aiTitle
         }
+
+        if let bodyRichText = note.bodyRichText {
+            payload["body_rich_text"] = bodyRichText
+        }
+
+        payload["interstitial_content"] = note.interstitialContent
+        payload["interstitial_rich_content"] = note.interstitialRichContent
 
         if let deletedAt = note.deletedAt {
             payload["deleted_at"] = formatTimestamp(deletedAt)
@@ -198,6 +337,49 @@ final class SyncOperationLogger {
         }
         if let deletedAt = shareLink.deletedAt {
             payload["deleted_at"] = formatTimestamp(deletedAt)
+        }
+
+        return payload
+    }
+
+    private func handleToPayload(_ handle: Handle) -> [String: Any] {
+        var payload: [String: Any] = [
+            "name": handle.name,
+            "display_name": handle.displayName,
+            "content": handle.content,
+            "intent": handle.intent.legacyValue,
+            "created_at": formatTimestamp(handle.createdAt),
+            "updated_at": formatTimestamp(handle.updatedAt)
+        ]
+
+        if let deletedAt = handle.deletedAt {
+            payload["deleted_at"] = formatTimestamp(deletedAt)
+        }
+
+        return payload
+    }
+
+    private func echoToPayload(_ echo: Echo) -> [String: Any] {
+        var payload: [String: Any] = [
+            "handle_id": echo.handleId,
+            "is_recurring": echo.isRecurring,
+            "fire_date": echo.fireDate,
+            "is_active": echo.isActive,
+            "is_alerted": echo.isAlerted,
+            "created_at": formatTimestamp(echo.createdAt),
+            "updated_at": formatTimestamp(echo.updatedAt)
+        ]
+
+        if let intervalsJSON = echo.intervalsJSON {
+            payload["intervals_json"] = intervalsJSON
+        }
+
+        if let nextFireDate = echo.nextFireDate {
+            payload["next_fire_date"] = nextFireDate
+        }
+
+        if let lastAcknowledgedAt = echo.lastAcknowledgedAt {
+            payload["last_acknowledged_at"] = lastAcknowledgedAt
         }
 
         return payload

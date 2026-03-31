@@ -54,6 +54,7 @@ struct CommentThreadView: View {
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...4)
                 .focused($isCommentFocused)
+                #if os(iOS)
                 .toolbar {
                     ToolbarItemGroup(placement: .keyboard) {
                         Spacer()
@@ -64,6 +65,7 @@ struct CommentThreadView: View {
                         }
                     }
                 }
+                #endif
 
             Button {
                 Task {

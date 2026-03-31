@@ -6,13 +6,25 @@ final class SupabaseManager {
     static let shared = SupabaseManager()
 
     let client: SupabaseClient
-    
+
     /// Whether Supabase is properly configured
     let isConfigured: Bool
 
+    /// Resolve the keychain access group dynamically using the app's team ID prefix.
+    /// This ensures it works on both iOS and macOS regardless of sandbox/signing differences.
+    private static var keychainAccessGroup: String {
+        let fallback = "W276447S6T.app.obius.shared"
+        guard let bundlePrefix = Bundle.main.infoDictionary?["AppIdentifierPrefix"] as? String else {
+            // AppIdentifierPrefix not in Info.plist — try reading from entitlements at build time
+            // Fall back to the known team ID prefix
+            return fallback
+        }
+        return "\(bundlePrefix)app.obius.shared"
+    }
+
     private init() {
         self.isConfigured = AppConfiguration.isSupabaseConfigured
-        
+
         // Always create a client (even with placeholder values for offline testing)
         guard let url = URL(string: AppConfiguration.supabaseURL) else {
             // Fallback URL for testing
@@ -24,6 +36,11 @@ final class SupabaseManager {
             return
         }
 
+        let accessGroup = Self.keychainAccessGroup
+        #if DEBUG
+        print("[SupabaseManager] Using keychain access group: \(accessGroup)")
+        #endif
+
         self.client = SupabaseClient(
             supabaseURL: url,
             supabaseKey: AppConfiguration.supabaseAnonKey,
@@ -31,8 +48,9 @@ final class SupabaseManager {
                 auth: .init(
                     storage: KeychainLocalStorage(
                         service: "supabase.gotrue.swift",
-                        accessGroup: "W276447S6T.app.obius.shared"
-                    )
+                        accessGroup: accessGroup
+                    ),
+                    autoRefreshToken: true
                 )
             )
         )
@@ -78,22 +96,49 @@ final class SupabaseManager {
 
     // MARK: - Edge Function Helpers
 
+    /// Get a valid access token, refreshing if needed
+    private func validAccessToken() async -> String? {
+        // If current session is valid, use it
+        if let session = client.auth.currentSession,
+           session.expiresAt > Date().timeIntervalSince1970 + 30 { // 30s buffer
+            return session.accessToken
+        }
+        // Try refreshing
+        if let session = try? await client.auth.refreshSession() {
+            return session.accessToken
+        }
+        return client.auth.currentSession?.accessToken
+    }
+
     func invokeFunction<T: Decodable>(
         _ name: String,
         body: some Encodable
     ) async throws -> T {
-        let data: Data = try await client.functions.invoke(
+        // Ensure token is fresh — the SDK handles passing it via fetchWithAuth
+        _ = await validAccessToken()
+
+        #if DEBUG
+        if let session = client.auth.currentSession {
+            let prefix = String(session.accessToken.prefix(20))
+            print("[SupabaseManager] invokeFunction(\(name)) token: \(prefix)... expires: \(session.expiresAt)")
+        } else {
+            print("[SupabaseManager] invokeFunction(\(name)) — no session!")
+        }
+        #endif
+
+        let result: T = try await client.functions.invoke(
             name,
             options: .init(body: body)
         )
-        return try JSONDecoder().decode(T.self, from: data)
+        return result
     }
 
     func invokeFunction(
         _ name: String,
         body: some Encodable
     ) async throws {
-        let _: Data = try await client.functions.invoke(
+        _ = await validAccessToken()
+        try await client.functions.invoke(
             name,
             options: .init(body: body)
         )

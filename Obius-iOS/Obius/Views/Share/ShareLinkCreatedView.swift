@@ -27,7 +27,7 @@ struct ShareLinkCreatedView: View {
                 .foregroundStyle(shareLink.shareType == .live ? .blue : .purple)
 
             // Title
-            Text(shareLink.shareType == .live ? "Live Link Created" : "Commit Link Created")
+            Text(shareLink.shareType == .live ? "Live Link Created" : "Version Link Created")
                 .font(.title2.weight(.semibold))
 
             // URL display
@@ -43,7 +43,7 @@ struct ShareLinkCreatedView: View {
                 HStack(spacing: 16) {
                     // Copy button
                     Button {
-                        UIPasteboard.general.string = shareLink.url
+                        ClipboardHelper.copy(shareLink.url)
                         withAnimation { copied = true }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                             withAnimation { copied = false }

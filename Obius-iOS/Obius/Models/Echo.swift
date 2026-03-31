@@ -72,6 +72,9 @@ struct Echo: Codable, Identifiable, Hashable {
     var lastAcknowledgedAt: Int64?
     var createdAt: Int64
     var updatedAt: Int64
+    var localVersion: Int
+    var serverVersion: Int?
+    var syncStatus: SyncStatus
 
     init(
         id: String = UUID().uuidString,
@@ -84,7 +87,10 @@ struct Echo: Codable, Identifiable, Hashable {
         isAlerted: Bool = false,
         lastAcknowledgedAt: Int64? = nil,
         createdAt: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
-        updatedAt: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
+        updatedAt: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
+        localVersion: Int = 1,
+        serverVersion: Int? = nil,
+        syncStatus: SyncStatus = .pending
     ) {
         self.id = id
         self.handleId = handleId
@@ -97,6 +103,9 @@ struct Echo: Codable, Identifiable, Hashable {
         self.lastAcknowledgedAt = lastAcknowledgedAt
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.localVersion = localVersion
+        self.serverVersion = serverVersion
+        self.syncStatus = syncStatus
     }
 
     // MARK: - Computed Properties
@@ -231,6 +240,7 @@ extension Echo: FetchableRecord, PersistableRecord {
     enum Columns: String, ColumnExpression {
         case id, handleId, isRecurring, intervalsJSON
         case fireDate, isActive, nextFireDate, isAlerted, lastAcknowledgedAt, createdAt, updatedAt
+        case localVersion, serverVersion, syncStatus
     }
 
     // Relationship to handle
@@ -246,6 +256,8 @@ extension Echo: FetchableRecord, PersistableRecord {
 extension Echo {
     mutating func touch() {
         updatedAt = Int64(Date().timeIntervalSince1970 * 1000)
+        localVersion += 1
+        syncStatus = .pending
     }
 
     mutating func deactivate() {

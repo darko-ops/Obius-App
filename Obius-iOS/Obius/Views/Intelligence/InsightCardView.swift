@@ -135,9 +135,9 @@ struct CategoryDetailSheet: View {
                 .padding(.vertical)
             }
             .navigationTitle(insightType.label)
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }
@@ -189,7 +189,9 @@ struct TrackedInsightChip: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(insight.displayTint.color.opacity(0.3), lineWidth: 1)
         )
+        #if os(iOS)
         .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12))
+        #endif
         .contextMenu {
             Button {
                 onUntrack()
@@ -290,20 +292,15 @@ struct InsightDetailSheet: View {
     let onDismiss: (() -> Void)?
     let onUntrack: (() -> Void)?
     var onDeleteNote: (() -> Void)? = nil
+    var onDeleteLoop: (() -> Void)? = nil
     var onCreateBlock: ((String) -> Void)? = nil
     var references: [InsightReference] = []
     var onNavigate: ((InsightReference) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
-    @State private var showCreateEcho = false
-    @State private var echoCreated = false
     @State private var showBlockPicker = false
     @State private var showNewBlockDialog = false
     @State private var blockName = ""
-
-    private var isEchoSuggestion: Bool {
-        insight.insightType == .reminder && insight.sourceSectionId == "suggested_echo"
-    }
 
     private var isDormantLoop: Bool {
         insight.insightType == .cleanup && insight.sourceSectionId == "dormant_loop"
@@ -368,28 +365,10 @@ struct InsightDetailSheet: View {
                                     }
                                     .padding(.vertical, 10)
                                     .padding(.horizontal, 12)
-                                    .background(Color(UIColor.tertiarySystemGroupedBackground))
+                                    .background(Color.tertiarySystemGroupedBackground)
                                     .clipShape(RoundedRectangle(cornerRadius: 8))
                                 }
                             }
-                        }
-                    }
-
-                    // Create Echo button for echo suggestions
-                    if isEchoSuggestion {
-                        Button {
-                            showCreateEcho = true
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "bell.badge")
-                                Text("Create Echo")
-                            }
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.orange)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(Color.orange.opacity(0.12))
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
                         }
                     }
 
@@ -486,6 +465,26 @@ struct InsightDetailSheet: View {
                         }
                     }
 
+                    // Delete loop button for inactive loop insights
+                    if insight.insightType == .cleanup && insight.sourceSectionId == "inactive_loop",
+                       let onDeleteLoop {
+                        Button(role: .destructive) {
+                            onDeleteLoop()
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "trash")
+                                Text("Delete Loop")
+                            }
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.red)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.red.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
+
                     // Move to Block button for dormant loop insights
                     if isDormantLoop, onCreateBlock != nil {
                         Button {
@@ -507,25 +506,14 @@ struct InsightDetailSheet: View {
                 .padding()
             }
             .navigationTitle("Insight")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }
         }
         .presentationDetents([.medium])
-        .sheet(isPresented: $showCreateEcho) {
-            CreateEchoFromInsightSheet(insight: insight) {
-                echoCreated = true
-            }
-        }
-        .onChange(of: showCreateEcho) { _, isPresented in
-            if !isPresented && echoCreated {
-                onTrack?()
-                dismiss()
-            }
-        }
         .sheet(isPresented: $showBlockPicker) {
             BlockPickerSheet(
                 onSelectBlock: { name in
@@ -564,251 +552,6 @@ struct InsightDetailSheet: View {
     }
 }
 
-// MARK: - Create Echo From Insight
-
-struct CreateEchoFromInsightSheet: View {
-    let insight: Insight
-    let onCreated: () -> Void
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var useExistingHandle: Bool
-    @State private var selectedHandleId: String?
-    @State private var newHandleName: String
-    @State private var startDate: Date
-    @State private var isRecurring: Bool
-    @State private var intervals: [EchoInterval]
-    @State private var isCreating = false
-
-    private var handles: [Handle] {
-        HandleManager.shared.handles
-    }
-
-    private var trimmedHandleName: String {
-        newHandleName.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var canCreate: Bool {
-        if useExistingHandle {
-            return selectedHandleId != nil
-        } else {
-            return trimmedHandleName.count >= 2
-        }
-    }
-
-    init(insight: Insight, onCreated: @escaping () -> Void) {
-        self.insight = insight
-        self.onCreated = onCreated
-
-        let allHandles = HandleManager.shared.handles
-
-        // Defaults
-        var initUseExisting = !allHandles.isEmpty
-        var initHandleId: String?
-        var initHandleName = ""
-        var initDate = Date().addingTimeInterval(3600)
-        var initRecurring = false
-        var initIntervals = [EchoInterval(value: 1, unit: .days)]
-
-        // Pre-fill from AI suggestion config stored in relatedNoteId
-        if insight.insightType == .reminder && insight.sourceSectionId == "suggested_echo",
-           let json = insight.relatedNoteId,
-           let data = json.data(using: .utf8) {
-            do {
-                let s = try JSONDecoder().decode(ClaudeService.TemporalEchoSuggestion.self, from: data)
-                print("[EchoFromInsight] Decoded suggestion — handle: \(s.handleName), date: \(s.fireDateISO), recurring: \(s.isRecurring)")
-
-                // Handle
-                let existsInHandles = s.handleId != "new" && s.handleId != "none"
-                    && allHandles.contains(where: { $0.id == s.handleId })
-                if existsInHandles {
-                    initUseExisting = true
-                    initHandleId = s.handleId
-                } else {
-                    initUseExisting = false
-                    initHandleName = s.handleName
-                }
-
-                // Fire date
-                if let date = Self.parseISO8601(s.fireDateISO) {
-                    initDate = max(date, Date().addingTimeInterval(60))
-                    print("[EchoFromInsight] Parsed date: \(initDate)")
-                } else {
-                    print("[EchoFromInsight] Failed to parse date: \(s.fireDateISO)")
-                }
-
-                // Recurrence
-                initRecurring = s.isRecurring
-                if s.isRecurring, let unit = EchoIntervalUnit(rawValue: s.intervalUnit) {
-                    initIntervals = [EchoInterval(value: max(1, s.intervalValue), unit: unit)]
-                }
-            } catch {
-                print("[EchoFromInsight] JSON decode failed: \(error)\nRaw: \(json)")
-            }
-        }
-
-        _useExistingHandle = State(initialValue: initUseExisting)
-        _selectedHandleId = State(initialValue: initHandleId)
-        _newHandleName = State(initialValue: initHandleName)
-        _startDate = State(initialValue: initDate)
-        _isRecurring = State(initialValue: initRecurring)
-        _intervals = State(initialValue: initIntervals)
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                // Context from the AI suggestion
-                SwiftUI.Section {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(insight.title)
-                            .font(.subheadline.weight(.medium))
-                        if !insight.body.isEmpty {
-                            Text(insight.body)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                // Handle
-                SwiftUI.Section("Loop") {
-                    if !handles.isEmpty {
-                        Picker("", selection: $useExistingHandle) {
-                            Text("Existing").tag(true)
-                            Text("New").tag(false)
-                        }
-                        .pickerStyle(.segmented)
-                        .listRowSeparator(.hidden)
-                    }
-
-                    if useExistingHandle && !handles.isEmpty {
-                        Picker("Loop", selection: $selectedHandleId) {
-                            Text("Select a loop...").tag(nil as String?)
-                            ForEach(handles) { handle in
-                                Text("@\(handle.displayName)").tag(handle.id as String?)
-                            }
-                        }
-                    } else {
-                        TextField("Loop name", text: $newHandleName)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                        if !trimmedHandleName.isEmpty && trimmedHandleName.count < 2 {
-                            Text("Name must be at least 2 characters")
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                        }
-                    }
-                }
-
-                // Schedule
-                SwiftUI.Section("Schedule") {
-                    DatePicker(
-                        "Fire Date",
-                        selection: $startDate,
-                        in: Date()...,
-                        displayedComponents: [.date, .hourAndMinute]
-                    )
-
-                    Toggle("Recurring", isOn: $isRecurring)
-
-                    if isRecurring {
-                        ForEach($intervals) { $interval in
-                            HStack {
-                                Text("Every")
-                                    .font(.subheadline)
-                                Stepper(value: $interval.value, in: 1...999) {
-                                    Text("\(interval.value)")
-                                        .font(.title3.monospacedDigit().weight(.semibold))
-                                        .frame(minWidth: 32)
-                                }
-                                Picker("Unit", selection: $interval.unit) {
-                                    ForEach(EchoIntervalUnit.allCases, id: \.self) { unit in
-                                        Text(interval.value == 1 ? unit.singularName : unit.displayName)
-                                            .tag(unit)
-                                    }
-                                }
-                                .labelsHidden()
-                            }
-                        }
-
-                        if intervals.count < 5 {
-                            Button {
-                                withAnimation {
-                                    intervals.append(EchoInterval(value: 1, unit: .hours))
-                                }
-                            } label: {
-                                Label("Add Cadence", systemImage: "plus.circle.fill")
-                                    .font(.subheadline.weight(.medium))
-                            }
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Create Echo")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Create") { createEcho() }
-                        .fontWeight(.semibold)
-                        .disabled(!canCreate || isCreating)
-                }
-            }
-        }
-        .presentationDetents([.large])
-    }
-
-    private static func parseISO8601(_ string: String) -> Date? {
-        let formatter = ISO8601DateFormatter()
-
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: string) { return date }
-
-        formatter.formatOptions = [.withInternetDateTime]
-        if let date = formatter.date(from: string) { return date }
-
-        formatter.formatOptions = [.withFullDate]
-        if let date = formatter.date(from: string) { return date }
-
-        let fallback = DateFormatter()
-        fallback.locale = Locale(identifier: "en_US_POSIX")
-        fallback.timeZone = TimeZone.current
-        for fmt in ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd HH:mm"] {
-            fallback.dateFormat = fmt
-            if let date = fallback.date(from: string) { return date }
-        }
-
-        return nil
-    }
-
-    private func createEcho() {
-        isCreating = true
-        Task {
-            do {
-                let handleId: String
-                if useExistingHandle, let existing = selectedHandleId {
-                    handleId = existing
-                } else {
-                    let handle = try await HandleManager.shared.createHandle(name: trimmedHandleName)
-                    handleId = handle.id
-                }
-                _ = try await EchoManager.shared.createEcho(
-                    handleId: handleId,
-                    isRecurring: isRecurring,
-                    intervals: isRecurring ? intervals : [],
-                    fireDate: startDate
-                )
-                onCreated()
-                dismiss()
-            } catch {
-                isCreating = false
-            }
-        }
-    }
-}
-
 // MARK: - Create Insight Sheet
 
 struct CreateInsightSheet: View {
@@ -831,12 +574,12 @@ struct CreateInsightSheet: View {
                 }
             }
             .navigationTitle("New Insight")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
                         onCreate(title, details)
                         dismiss()
@@ -902,9 +645,9 @@ struct BlockPickerSheet: View {
                 }
             }
             .navigationTitle("Move to Block")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Cancel") { dismiss() }
                 }
             }

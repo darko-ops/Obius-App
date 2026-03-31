@@ -55,6 +55,16 @@ enum AppConfiguration {
         return key
     }
 
+    // MARK: - RevenueCat
+
+    static var revenueCatAPIKey: String {
+        guard let key = Bundle.main.infoDictionary?["REVENUECAT_API_KEY"] as? String,
+              !key.isEmpty, !key.hasPrefix("$(") else {
+            return ""
+        }
+        return key
+    }
+
     // MARK: - API
 
     static var apiBaseURL: String {
@@ -123,13 +133,7 @@ enum AppConfiguration {
         true
     }
 
-    static var maxNotesForFreeUser: Int {
-        100
-    }
-
-    static var maxSectionsPerNote: Int {
-        500
-    }
+    // Note and section limits are now managed by TierManager.TierLimits
 
     // MARK: - Sync Configuration
 

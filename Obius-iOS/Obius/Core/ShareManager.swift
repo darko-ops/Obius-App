@@ -58,6 +58,11 @@ final class ShareManager: ObservableObject {
     // MARK: - Create Live Share
 
     func createLiveShare(noteId: String, note: Note, sections: [Section]) async throws -> ShareLink {
+        guard TierManager.shared.limits.shareLinks else {
+            TierManager.shared.paywallFeature = .shareLinks
+            TierManager.shared.showPaywall = true
+            throw ShareError.notAuthenticated
+        }
         guard supabase.isAuthenticated, let userId = supabase.currentUser?.id.uuidString.lowercased() else {
             throw ShareError.notAuthenticated
         }
@@ -163,6 +168,11 @@ final class ShareManager: ObservableObject {
     // MARK: - Create Commit Share
 
     func createCommitShare(commitHash: String, commitName: String?, commitShortId: String? = nil, commitContent: String) async throws -> ShareLink {
+        guard TierManager.shared.limits.shareLinks else {
+            TierManager.shared.paywallFeature = .shareLinks
+            TierManager.shared.showPaywall = true
+            throw ShareError.notAuthenticated
+        }
         guard supabase.isAuthenticated, let userId = supabase.currentUser?.id.uuidString.lowercased() else {
             throw ShareError.notAuthenticated
         }

@@ -47,6 +47,10 @@ private struct NotesListContent: View {
     @State private var showingGroupDialog = false
     @State private var newGroupName = ""
     @State private var selectedBlockName: String?
+    @State private var longPressedBlockName: String?
+    @State private var blockToDelete: String?
+    @State private var blockToRename: String?
+    @State private var renameBlockText: String = ""
     @AppStorage("trackedBlockNames") private var trackedBlockNamesData: String = "[]"
 
     private var trackedBlockNames: [String] {
@@ -106,15 +110,14 @@ private struct NotesListContent: View {
             RoundedSearchBar(text: $searchQuery, placeholder: "Search")
                 .padding(.horizontal)
                 .padding(.vertical, 8)
-                .background(Color(.systemBackground))
+                .background(Color.systemBackground)
 
             notesList
         }
-        .background(Color(.systemBackground))
+        .background(Color.systemBackground)
         .navigationTitle("")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(Color(.systemBackground), for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
+        .inlineNavigationTitle()
+        .platformToolbarBackground(.black)
         .toolbar { toolbarContent }
         .confirmationDialog(
             "Delete \(selectedNoteIds.count) pages?",
@@ -272,7 +275,7 @@ private struct NotesListContent: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
+        ToolbarItem(placement: .cancellationAction) {
             if let module = selectedModule {
                 StorageTypeBadge(storageType: module.storageType)
             }
@@ -285,10 +288,10 @@ private struct NotesListContent: View {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.white)
                     Text(selectedModuleName)
                         .font(.headline)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(.white)
                 }
             }
             .buttonStyle(.plain)
@@ -319,10 +322,12 @@ private struct NotesListContent: View {
 
             if !isSelectionMode {
                 Button {
+                    guard TierManager.shared.requireNoteCreation(currentCount: noteRepository.notes.count) else { return }
                     Task {
                         do {
                             let note = try await noteRepository.createNote(moduleId: selectedModuleId)
-                            syncLogger.logNoteCreate(note)
+                            // Don't logNoteCreate here — the editor's onDisappear handles sync
+                            // so we don't push an empty note to other devices
                             selectedNote = note
                         } catch {
                             print("Failed to create note: \(error)")
@@ -334,14 +339,16 @@ private struct NotesListContent: View {
             }
         }
 
+        #if os(iOS)
         ToolbarItemGroup(placement: .keyboard) {
             Spacer()
             Button {
-                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                KeyboardHelper.dismiss()
             } label: {
                 Image(systemName: "keyboard.chevron.compact.down")
             }
         }
+        #endif
     }
 
     @ViewBuilder
@@ -352,15 +359,26 @@ private struct NotesListContent: View {
             } description: {
                 Text("Tap + to create your first note")
             } actions: {
-                Button("Create Note") {
+                Button {
+                    guard TierManager.shared.requireNoteCreation(currentCount: noteRepository.notes.count) else { return }
                     Task {
                         if let note = try? await noteRepository.createNote(moduleId: selectedModuleId) {
-                            syncLogger.logNoteCreate(note)
                             selectedNote = note
                         }
                     }
+                } label: {
+                    Text("Create Note")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .background(Color(white: 0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color(white: 0.3), lineWidth: 1)
+                        )
                 }
-                .buttonStyle(.borderedProminent)
             }
         } else if !searchQuery.isEmpty && filteredNotes.isEmpty {
             ContentUnavailableView.search(text: searchQuery)
@@ -375,12 +393,113 @@ private struct NotesListContent: View {
         List {
             if !pinnedNotes.isEmpty || !activeTrackedBlocks.isEmpty {
                 SwiftUI.Section {
-                    trackingRow
+                    ForEach(activeTrackedBlocks, id: \.self) { blockName in
+                        TrackedBlockRow(
+                            blockName: blockName,
+                            onTap: { selectedBlockName = blockName },
+                            onUntrack: {
+                                var names = trackedBlockNames
+                                names.removeAll { $0 == blockName }
+                                setTrackedBlockNames(names)
+                            }
+                        )
+                    }
+
+                    ForEach(pinnedNotes) { note in
+                        TrackedPageRow(
+                            title: autoTitles[note.id] ?? note.displayTitle,
+                            preview: pagePreviewText(for: note),
+                            intent: note.intent,
+                            onTap: { selectedNote = note }
+                        )
+                        .contextMenu {
+                            Button {
+                                Task {
+                                    try? await noteRepository.togglePinned(note.id)
+                                    if let updated = try? await noteRepository.getNote(id: note.id) {
+                                        syncLogger.logNoteUpdate(updated)
+                                    }
+                                }
+                            } label: {
+                                Label("Untrack", systemImage: "location.slash")
+                            }
+
+                            Menu {
+                                ForEach(IntentType.allCases, id: \.self) { intent in
+                                    Button {
+                                        Task {
+                                            try? await noteRepository.setIntent(note.id, intent: intent)
+                                            if let updated = try? await noteRepository.getNote(id: note.id) {
+                                                syncLogger.logNoteUpdate(updated)
+                                            }
+                                        }
+                                    } label: {
+                                        HStack {
+                                            Image(systemName: intent.icon)
+                                            Text(intent.displayName)
+                                            if note.intent == intent {
+                                                Image(systemName: "checkmark")
+                                            }
+                                        }
+                                    }
+                                }
+                            } label: {
+                                Label("Status", systemImage: "paintpalette")
+                            }
+
+                            Divider()
+
+                            Button {
+                                guard TierManager.shared.requireFeature(.commits) else { return }
+                                pageCommitItem = PageCommitItem(noteId: note.id, pageTitle: note.title ?? "")
+                            } label: {
+                                Label("Save Version", systemImage: "arrow.down.doc")
+                            }
+
+                            Button {
+                                Task {
+                                    await createPageShareLink(for: note)
+                                }
+                            } label: {
+                                Label("Share", systemImage: "square.and.arrow.up")
+                            }
+
+                            if moduleRepository.modules.count > 1 {
+                                Menu {
+                                    ForEach(moduleRepository.modules.filter { $0.id != note.moduleId }) { module in
+                                        Button {
+                                            Task {
+                                                try? await noteRepository.setModuleId(noteId: note.id, moduleId: module.id)
+                                            }
+                                        } label: {
+                                            Label(module.name, systemImage: module.icon)
+                                        }
+                                    }
+                                } label: {
+                                    Label("Move to Project", systemImage: "folder")
+                                }
+                            }
+
+                            Divider()
+
+                            Button(role: .destructive) {
+                                Task {
+                                    try? await noteRepository.deleteNote(note.id)
+                                    syncLogger.logNoteDelete(note.id)
+                                }
+                            } label: {
+                                Label("Delete Page", systemImage: "trash")
+                            }
+                        }
+                    }
                 } header: {
                     Text("TRACKING")
                         .font(.caption.weight(.semibold))
-                        .foregroundColor(Color(.secondaryLabel))
+                        .foregroundColor(.secondary)
                         .textCase(nil)
+                        #if os(macOS)
+                        .listRowBackground(Color.black)
+                        #endif
                 }
             }
 
@@ -391,78 +510,92 @@ private struct NotesListContent: View {
             } header: {
                 Text("RECENTS")
                     .font(.caption.weight(.semibold))
-                    .foregroundColor(Color(.secondaryLabel))
+                    .foregroundColor(.secondary)
                     .textCase(nil)
+                    #if os(macOS)
+                    .listRowBackground(Color.black)
+                    #endif
             }
 
             blocksSection
         }
         #if os(iOS)
         .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
+        #else
+        .listStyle(.plain)
+        .listRowBackground(Color.systemBackground)
         #endif
-    }
-
-    private var trackingRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(activeTrackedBlocks, id: \.self) { blockName in
-                    Button {
-                        selectedBlockName = blockName
-                    } label: {
-                        VStack(spacing: 4) {
-                            Image(systemName: "cube.transparent")
-                                .font(.system(size: 24))
-                                .foregroundStyle(Color.white.opacity(0.85))
-
-                            Text(blockName)
-                                .font(.caption2.weight(.medium))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                        }
-                        .frame(width: 64, height: 80)
+        .scrollContentBackground(.hidden)
+        .confirmationDialog(
+            longPressedBlockName ?? "",
+            isPresented: Binding(
+                get: { longPressedBlockName != nil },
+                set: { if !$0 { longPressedBlockName = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let name = longPressedBlockName {
+                if trackedBlockNames.contains(name) {
+                    Button("Untrack") {
+                        var names = trackedBlockNames
+                        names.removeAll { $0 == name }
+                        setTrackedBlockNames(names)
                     }
-                    .buttonStyle(.plain)
+                } else {
+                    Button("Track") {
+                        var names = trackedBlockNames
+                        names.append(name)
+                        setTrackedBlockNames(names)
+                    }
                 }
 
-                ForEach(pinnedNotes) { note in
-                    Button {
-                        selectedNote = note
-                    } label: {
-                        trackedPageCard(note: note)
-                    }
-                    .buttonStyle(.plain)
+                Button("Rename") {
+                    renameBlockText = name
+                    blockToRename = name
+                }
+
+                Button("Unblock") {
+                    Task { await unblockNotes(blockName: name) }
+                }
+
+                Button("Delete Block", role: .destructive) {
+                    blockToDelete = name
+                }
+                Button("Cancel", role: .cancel) {}
+            }
+        }
+        .alert(
+            "Delete \"\(blockToDelete ?? "")\"?",
+            isPresented: Binding(
+                get: { blockToDelete != nil },
+                set: { if !$0 { blockToDelete = nil } }
+            )
+        ) {
+            Button("Delete", role: .destructive) {
+                if let name = blockToDelete {
+                    Task { await deleteBlock(name: name) }
                 }
             }
-            .padding(.vertical, 4)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            let count = groupedNotes[blockToDelete ?? ""]?.count ?? 0
+            Text("This will permanently delete the block and all \(count) page\(count == 1 ? "" : "s") inside it.")
         }
-        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-        .listRowBackground(Color.clear)
-        .listRowSeparator(.hidden)
-    }
-
-    private func trackedPageCard(note: Note) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(autoTitles[note.id] ?? note.displayTitle)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-
-            if let preview = pagePreviewText(for: note) {
-                Text(preview)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
+        .alert("Rename Block", isPresented: Binding(
+            get: { blockToRename != nil },
+            set: { if !$0 { blockToRename = nil } }
+        )) {
+            TextField("Block name", text: $renameBlockText)
+            Button("Rename") {
+                if let oldName = blockToRename {
+                    Task { await renameBlock(from: oldName, to: renameBlockText) }
+                }
             }
+            Button("Cancel", role: .cancel) {}
         }
-        .padding(10)
-        .frame(width: 140, height: 80, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemGray6))
-        )
     }
+
+
 
     private func pagePreviewText(for note: Note) -> String? {
         let body = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -480,17 +613,10 @@ private struct NotesListContent: View {
                         BlockCellView(
                             groupName: groupName,
                             count: groupedNotes[groupName]?.count ?? 0,
-                            isTracked: trackedBlockNames.contains(groupName),
                             onTap: { selectedBlockName = groupName },
-                            onTrack: {
-                                var names = trackedBlockNames
-                                names.append(groupName)
-                                setTrackedBlockNames(names)
-                            },
-                            onUntrack: {
-                                var names = trackedBlockNames
-                                names.removeAll { $0 == groupName }
-                                setTrackedBlockNames(names)
+                            onLongPress: {
+                                HapticFeedback.impact(.medium)
+                                longPressedBlockName = groupName
                             }
                         )
                     }
@@ -501,8 +627,11 @@ private struct NotesListContent: View {
             } header: {
                 Text("BLOCKS")
                     .font(.caption.weight(.semibold))
-                    .foregroundColor(Color(.secondaryLabel))
+                    .foregroundColor(.secondary)
                     .textCase(nil)
+                    #if os(macOS)
+                    .listRowBackground(Color.black)
+                    #endif
             }
         }
     }
@@ -520,7 +649,7 @@ private struct NotesListContent: View {
             NoteRowView(note: note, sectionContent: sectionPreviews[note.id], autoTitle: autoTitles[note.id])
         }
         .contentShape(Rectangle())
-        .listRowBackground(Color(.systemBackground))
+        .listRowBackground(Color.systemBackground)
         .onTapGesture {
             if isSelectionMode {
                 withAnimation(.easeInOut(duration: 0.15)) {
@@ -550,7 +679,7 @@ private struct NotesListContent: View {
                         }
                     }
                 } label: {
-                    Label(note.isPinned ? "Unpin" : "Pin", systemImage: note.isPinned ? "pin.slash" : "pin")
+                    Label(note.isPinned ? "Untrack" : "Track", systemImage: note.isPinned ? "location.slash" : "location")
                 }
 
                 // Intent submenu
@@ -583,7 +712,7 @@ private struct NotesListContent: View {
                 Button {
                     pageCommitItem = PageCommitItem(noteId: note.id, pageTitle: note.title ?? "")
                 } label: {
-                    Label("Commit Page", systemImage: "arrow.down.doc")
+                    Label("Save Version", systemImage: "arrow.down.doc")
                 }
 
                 // Share
@@ -643,7 +772,7 @@ private struct NotesListContent: View {
                         }
                     }
                 } label: {
-                    Label(note.isPinned ? "Unpin" : "Pin", systemImage: note.isPinned ? "pin.slash" : "pin")
+                    Label(note.isPinned ? "Untrack" : "Track", systemImage: note.isPinned ? "location.slash" : "location")
                 }
                 .tint(.orange)
             }
@@ -763,6 +892,67 @@ private struct NotesListContent: View {
         }
     }
 
+    private func deleteBlock(name: String) async {
+        // Remove from tracked list if tracked
+        if trackedBlockNames.contains(name) {
+            var names = trackedBlockNames
+            names.removeAll { $0 == name }
+            setTrackedBlockNames(names)
+        }
+        // Delete all notes in the block
+        let notes = groupedNotes[name] ?? []
+        for note in notes {
+            do {
+                try await noteRepository.deleteNote(note.id)
+                syncLogger.logNoteDelete(note.id)
+            } catch {
+                print("Failed to delete note \(note.id): \(error)")
+            }
+        }
+    }
+
+    private func unblockNotes(blockName: String) async {
+        // Remove from tracked list if tracked
+        if trackedBlockNames.contains(blockName) {
+            var names = trackedBlockNames
+            names.removeAll { $0 == blockName }
+            setTrackedBlockNames(names)
+        }
+        // Clear group name from all notes — they return to the main list
+        let notes = groupedNotes[blockName] ?? []
+        for note in notes {
+            do {
+                try await noteRepository.setGroupName(noteId: note.id, groupName: nil)
+            } catch {
+                print("Failed to unblock note \(note.id): \(error)")
+            }
+        }
+    }
+
+    private func renameBlock(from oldName: String, to newName: String) async {
+        let trimmed = newName.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, trimmed != oldName else { return }
+
+        // Update group name on all notes in the block
+        let notes = groupedNotes[oldName] ?? []
+        for note in notes {
+            do {
+                try await noteRepository.setGroupName(noteId: note.id, groupName: trimmed)
+            } catch {
+                print("Failed to rename note \(note.id) block: \(error)")
+            }
+        }
+
+        // Update tracked list if tracked
+        if trackedBlockNames.contains(oldName) {
+            var names = trackedBlockNames
+            if let index = names.firstIndex(of: oldName) {
+                names[index] = trimmed
+            }
+            setTrackedBlockNames(names)
+        }
+    }
+
     private func groupSelectedNotes(groupName: String) async {
         guard !groupName.trimmingCharacters(in: .whitespaces).isEmpty else { return }
 
@@ -853,6 +1043,8 @@ struct RoundedSearchBar: View {
                 .focused($isFocused)
                 #if os(iOS)
                 .textInputAutocapitalization(.never)
+                #else
+                .textFieldStyle(.plain)
                 #endif
                 .autocorrectionDisabled()
 
@@ -880,39 +1072,104 @@ struct RoundedSearchBar: View {
 private struct BlockCellView: View {
     let groupName: String
     let count: Int
-    let isTracked: Bool
     let onTap: () -> Void
-    let onTrack: () -> Void
+    let onLongPress: () -> Void
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "cube.transparent")
+                .font(.system(size: 32))
+                .foregroundStyle(Color.white.opacity(0.85))
+
+            Text(groupName)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .onTapGesture { onTap() }
+        .onLongPressGesture(minimumDuration: 0.5) { onLongPress() }
+    }
+}
+
+// MARK: - Tracked Block Row (separate struct for independent context menus)
+
+private struct TrackedBlockRow: View {
+    let blockName: String
+    let onTap: () -> Void
     let onUntrack: () -> Void
 
     var body: some View {
-        Button(action: onTap) {
-            VStack(spacing: 6) {
-                Image(systemName: "cube.transparent")
-                    .font(.system(size: 32))
-                    .foregroundStyle(Color.white.opacity(0.85))
+        HStack(spacing: 12) {
+            Image(systemName: "cube.transparent")
+                .font(.system(size: 20))
+                .foregroundStyle(Color.white.opacity(0.85))
+                .frame(width: 28)
 
-                Text(groupName)
-                    .font(.caption.weight(.medium))
+            Text(blockName)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            Spacer()
+
+            Image(systemName: "location.fill")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .listRowBackground(Color(red: 0.06, green: 0.06, blue: 0.06))
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
+        .contextMenu {
+            Button {
+                onUntrack()
+            } label: {
+                Label("Untrack", systemImage: "location.slash")
+            }
+        }
+    }
+}
+
+// MARK: - Tracked Page Row (separate struct for independent context menus)
+
+private struct TrackedPageRow: View {
+    let title: String
+    let preview: String?
+    let intent: IntentType
+    let onTap: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(intent.color)
+                .frame(width: 4, height: 24)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12))
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            if isTracked {
-                Button(action: onUntrack) {
-                    Label("Untrack", systemImage: "eye.slash")
-                }
-            } else {
-                Button(action: onTrack) {
-                    Label("Track", systemImage: "eye")
+
+                if let preview {
+                    Text(preview)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
+            .padding(.leading, 10)
+
+            Spacer()
+
+            Image(systemName: "location.fill")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
+        .listRowBackground(Color(red: 0.06, green: 0.06, blue: 0.06))
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
     }
 }
 

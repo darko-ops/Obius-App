@@ -15,6 +15,7 @@ import type {
   SemanticSearchResponse,
   SemanticSearchResult,
 } from '../_shared/types.ts';
+import { requireFeature } from '../_shared/entitlements.ts';
 
 const DEFAULT_LIMIT = 20;
 const DEFAULT_THRESHOLD = 0.7;
@@ -30,6 +31,10 @@ serve(async (req: Request) => {
     // Verify authentication
     const { userId } = await verifyAuth(req);
     const supabase = createServiceClient();
+
+    // Require Pro for semantic search
+    const blocked = await requireFeature(supabase, userId, 'semanticSearch');
+    if (blocked) return blocked;
 
     // Parse request
     const body: SemanticSearchRequest = await req.json();

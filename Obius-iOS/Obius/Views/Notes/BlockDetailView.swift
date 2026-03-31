@@ -18,7 +18,7 @@ struct BlockDetailView: View {
         List {
             ForEach(notes) { note in
                 NoteRowView(note: note, sectionContent: sectionPreviews[note.id], autoTitle: autoTitles[note.id])
-                    .listRowBackground(Color(.systemBackground))
+                    .listRowBackground(Color.systemBackground)
                     .contentShape(Rectangle())
                     .onTapGesture {
                         selectedNote = note
@@ -46,9 +46,10 @@ struct BlockDetailView: View {
                         Divider()
 
                         Button {
+                            guard TierManager.shared.requireFeature(.commits) else { return }
                             pageCommitItem = PageCommitItem(noteId: note.id, pageTitle: note.title ?? "")
                         } label: {
-                            Label("Commit Page", systemImage: "arrow.down.doc")
+                            Label("Save Version", systemImage: "arrow.down.doc")
                         }
 
                         if moduleRepository.modules.count > 1 {
@@ -104,9 +105,9 @@ struct BlockDetailView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         #endif
-        .background(Color(.systemBackground))
+        .background(Color.systemBackground)
         .navigationTitle(blockName)
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavigationTitle()
         .navigationDestination(item: $selectedNote) { note in
             NoteEditorView(noteId: note.id)
         }

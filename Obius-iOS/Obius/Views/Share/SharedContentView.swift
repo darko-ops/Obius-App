@@ -23,9 +23,9 @@ struct SharedContentView: View {
                     contentView
                 }
             }
-            .background(Color(.systemBackground))
+            .background(Color.systemBackground)
             .navigationTitle("")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Image("ObiusLogo")
@@ -52,7 +52,7 @@ struct SharedContentView: View {
                 // Title (centered)
                 if let title = viewModel.title, !title.isEmpty {
                     Button {
-                        UIPasteboard.general.string = title
+                        ClipboardHelper.copy(title)
                         copiedField = "badge_title"
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                             if copiedField == "badge_title" { copiedField = nil }
@@ -76,7 +76,7 @@ struct SharedContentView: View {
 
                     if viewModel.shareType == .commit, let shortId = viewModel.commitShortId ?? viewModel.commitHash.map({ commitShortId(from: $0) }) {
                         Button {
-                            UIPasteboard.general.string = shortId
+                            ClipboardHelper.copy(shortId)
                             copiedField = "nav_title"
                             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                                 if copiedField == "nav_title" { copiedField = nil }
@@ -120,7 +120,7 @@ struct SharedContentView: View {
                     Spacer()
                     Button {
                         let allText = buildFullContentText()
-                        UIPasteboard.general.string = allText
+                        ClipboardHelper.copy(allText)
                         copiedField = "copy_all"
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                             if copiedField == "copy_all" { copiedField = nil }
@@ -153,7 +153,7 @@ struct SharedContentView: View {
                   : "doc.zipper")
                 .font(.caption2)
 
-            Text(viewModel.shareType == .live ? "Live" : "Commit")
+            Text(viewModel.shareType == .live ? "Live" : "Version")
                 .font(.caption2.weight(.medium))
         }
         .padding(.horizontal, 10)
@@ -232,7 +232,7 @@ struct SharedContentView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(UIColor.secondarySystemBackground))
+        .background(Color.secondarySystemBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
@@ -329,7 +329,7 @@ struct SharedContentView: View {
 
     private func copyableRow<S: ShapeStyle>(label: String, value: String, field: String, valueFont: Font, valueColor: S) -> some View {
         Button {
-            UIPasteboard.general.string = value
+            ClipboardHelper.copy(value)
             copiedField = field
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 if copiedField == field { copiedField = nil }

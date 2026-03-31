@@ -57,6 +57,7 @@ private struct NoteEditorContent: View {
     @State private var editingTitle = false
     @State private var titleText = ""
     @State private var bodyText = ""
+    @State private var isExternalBodyUpdate = false
     @State private var showingTagInput = false
     @State private var newTagText = ""
     @FocusState private var tagFieldFocused: Bool
@@ -104,14 +105,39 @@ private struct NoteEditorContent: View {
         ))
     }
 
+    /// Log sync operations for any locally-modified (pending) note and sections.
+    /// Awaitable — ensures all operations are written to DB before returning.
+    private func syncPendingEntitiesAsync(viewModel: NoteEditorViewModel) async {
+        let totalSections = viewModel.sections.count
+        let pendingSections = viewModel.sections.filter { $0.syncStatus == .pending }.count
+        print("[Sync] syncPendingEntities: note=\(viewModel.note?.syncStatus.rawValue ?? "nil") sections=\(totalSections) (pending=\(pendingSections))")
+        if let note = viewModel.note, note.syncStatus == .pending {
+            if note.serverVersion == nil {
+                await appState.syncLogger.logNoteCreateSync(note)
+            } else {
+                await appState.syncLogger.logNoteUpdateSync(note)
+            }
+        }
+        var pendingSectionCount = 0
+        for section in viewModel.sections {
+            guard section.syncStatus == .pending else { continue }
+            pendingSectionCount += 1
+            if section.serverVersion == nil {
+                await appState.syncLogger.logSectionCreateSync(section)
+            } else {
+                await appState.syncLogger.logSectionUpdateSync(section)
+            }
+        }
+        if pendingSectionCount > 0 {
+            print("[Sync] Logged \(pendingSectionCount) pending section(s)")
+        }
+    }
+
     var body: some View {
         mainContent
             .navigationTitle("")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbarBackground(Color.black, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .inlineNavigationTitle()
+            .platformToolbarBackground(.black)
             .toolbar { toolbarContent }
             .onChange(of: viewModel.focusedSectionId) { _, newValue in
                 focusedSectionId = newValue
@@ -132,11 +158,33 @@ private struct NoteEditorContent: View {
                     viewModel.focusedSectionId = newValue
                 }
             }
+            .onChange(of: viewModel.isLoading) { _, isLoading in
+                // Sync bodyText when the ViewModel finishes loading from DB
+                if !isLoading, let body = viewModel.note?.body, body != bodyText {
+                    bodyText = body
+                }
+            }
+            .onAppear {
+                // Wire up debounced sync logging — fires after edits stop for 2 seconds
+                viewModel.onContentChanged = { [weak viewModel] in
+                    guard let viewModel else { return }
+                    Task {
+                        print("[Sync] Content changed — logging pending entities and scheduling push")
+                        await syncPendingEntitiesAsync(viewModel: viewModel)
+                        await appState.syncEngine.schedulePush()
+                    }
+                }
+            }
             .onDisappear {
                 viewModel.generateAITitleIfNeeded()
                 viewModel.generateAITagsIfNeeded()
                 Task {
+                    // Log pending operations with await — guarantees DB writes complete
+                    // before sync() reads the syncOperations table.
+                    await syncPendingEntitiesAsync(viewModel: viewModel)
                     await viewModel.cleanupEmptyNoteIfNeeded()
+                    // Trigger immediate sync so changes push before app backgrounds.
+                    await appState.syncEngine.sync()
                 }
             }
             .task {
@@ -212,12 +260,14 @@ private struct NoteEditorContent: View {
                     NodeShareSheet(url: url, title: shareTitle, preview: sharePreview)
                 }
             }
+            #if os(iOS)
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
                 if pendingShare {
                     pendingShare = false
                     showingNativeShare = true
                 }
             }
+            #endif
             .alert("Unable to Share", isPresented: Binding(
                 get: { shareError != nil },
                 set: { if !$0 { shareError = nil } }
@@ -256,7 +306,6 @@ private struct NoteEditorContent: View {
                     }
                 )
             }
-            #if os(iOS)
             .sheet(isPresented: $showingAudioRecorder) {
                 AudioRecorderView(
                     onSave: { data, duration in
@@ -283,6 +332,7 @@ private struct NoteEditorContent: View {
                     audioRecorderTargetSectionId = nil
                 }
             }
+            #if os(iOS)
             .sheet(isPresented: $showingImagePicker) {
                 ImagePickerView(
                     preselectedAssetIdentifiers: imagePickerPreselectedAssetIds,
@@ -296,7 +346,8 @@ private struct NoteEditorContent: View {
                 )
                 .id(imagePickerID)
             }
-            .fullScreenCover(item: $fullscreenImageItem) { item in
+            #endif
+            .platformFullScreenCover(item: $fullscreenImageItem) { item in
                 let entries = parseImageEntries(from: viewModel.getSection(item.sectionId)?.content ?? "")
                 FullscreenImageViewer(
                     imageEntries: entries,
@@ -308,9 +359,8 @@ private struct NoteEditorContent: View {
                     }
                 )
             }
-            #endif
-            .overlay(alignment: .bottomTrailing) {
-                pageFAB
+            .overlay {
+                WorkspaceFAB { showWorkspaceSheet = true }
             }
             .sheet(isPresented: $showWorkspaceSheet) {
                 WorkspaceSheet(handles: handleManager.handles, preselectedPageId: noteId)
@@ -329,30 +379,7 @@ private struct NoteEditorContent: View {
             }
     }
 
-    // MARK: - FAB
-
-    private var pageFAB: some View {
-        Button {
-            showWorkspaceSheet = true
-        } label: {
-            Image("MobiusStrip")
-                .renderingMode(.template)
-                .resizable()
-                .scaledToFit()
-                .frame(width: 85, height: 85)
-                .foregroundStyle(.white)
-                .frame(width: 56, height: 56)
-                .background(Color(red: 0.08, green: 0.08, blue: 0.08))
-                .clipShape(Circle())
-                .overlay(
-                    Circle()
-                        .stroke(Color.white, lineWidth: 1)
-                )
-                .shadow(color: .white.opacity(0.2), radius: 10)
-        }
-        .padding(.trailing, 20)
-        .padding(.bottom, 20)
-    }
+    // MARK: - FAB (moved to shared WorkspaceFAB component)
 
     // MARK: - Main Content
 
@@ -614,9 +641,19 @@ private struct NoteEditorContent: View {
             Task {
                 let lastSection = visibleSections.last
                 if let section = try? await viewModel.addImageSection(after: lastSection?.id) {
+                    #if os(iOS)
                     imagePickerTargetSectionId = section.id
                     imagePickerPreselectedAssetIds = []
                     showingImagePicker = true
+                    #else
+                    let results = MacImagePicker.pick()
+                    if !results.isEmpty {
+                        await savePickedImages(results, toSectionId: section.id)
+                    } else {
+                        // User cancelled — delete the empty image section
+                        try? await viewModel.deleteSection(section.id)
+                    }
+                    #endif
                 }
             }
         })
@@ -643,9 +680,11 @@ private struct NoteEditorContent: View {
             primaryToolbarItems
         }
 
+        #if os(iOS)
         ToolbarItemGroup(placement: .keyboard) {
             keyboardToolbarItems
         }
+        #endif
     }
 
     @ViewBuilder
@@ -680,9 +719,10 @@ private struct NoteEditorContent: View {
             Divider()
 
             Button {
+                guard TierManager.shared.requireFeature(.commits) else { return }
                 pageCommitItem = PageCommitItem(noteId: noteId, pageTitle: titleText)
             } label: {
-                Label("Commit Page", systemImage: "arrow.down.doc")
+                Label("Save Version", systemImage: "arrow.down.doc")
             }
 
             Button {
@@ -820,7 +860,7 @@ private struct NoteEditorContent: View {
         }
 
         pendingShare = true
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        KeyboardHelper.dismiss()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             if pendingShare {
                 pendingShare = false
@@ -842,10 +882,10 @@ private struct NoteEditorContent: View {
                 }
                 .filter { !$0.isEmpty }
 
-            var images: [UIImage] = []
+            var images: [PlatformImage] = []
             for hash in hashes {
                 if let data = try? appState.mediaRepository.getMediaData(hash: hash),
-                   let image = UIImage(data: data) {
+                   let image = PlatformImage(data: data) {
                     images.append(image)
                 }
             }
@@ -858,7 +898,7 @@ private struct NoteEditorContent: View {
             shareItems = images
 
             pendingShare = true
-            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            KeyboardHelper.dismiss()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 if pendingShare {
                     pendingShare = false
@@ -892,7 +932,7 @@ private struct NoteEditorContent: View {
             shareItems = [tempURL]
 
             pendingShare = true
-            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            KeyboardHelper.dismiss()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 if pendingShare {
                     pendingShare = false
@@ -938,7 +978,7 @@ private struct NoteEditorContent: View {
 
         // Dismiss keyboard first, then present share sheet
         pendingShare = true
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        KeyboardHelper.dismiss()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             if pendingShare {
                 pendingShare = false
@@ -998,11 +1038,9 @@ private struct NoteEditorContent: View {
         }
     }
 
-    #if os(iOS)
-    /// Compute preselected asset IDs and show the picker.
-    /// PHPicker runs out-of-process and handles its own photo library access,
-    /// so no app-level authorization is needed for preselection.
+    /// Show the image picker (PHPicker on iOS, NSOpenPanel on macOS).
     private func prepareAndShowImagePicker(for sectionId: String) {
+        #if os(iOS)
         if let section = viewModel.getSection(sectionId) {
             let ids = parseImageEntries(from: section.content)
                 .compactMap { $0.assetId.isEmpty ? nil : $0.assetId }
@@ -1011,10 +1049,16 @@ private struct NoteEditorContent: View {
         } else {
             imagePickerPreselectedAssetIds = []
         }
-
-        // Force a fresh PHPickerViewController so makeUIViewController runs with new config
         imagePickerID = UUID()
         showingImagePicker = true
+        #else
+        // macOS: run NSOpenPanel synchronously, no sheet needed
+        let results = MacImagePicker.pick()
+        guard !results.isEmpty else { return }
+        Task {
+            await savePickedImages(results, toSectionId: sectionId)
+        }
+        #endif
     }
 
     /// Extract just the image hashes for a section (for fullscreen viewer).
@@ -1041,7 +1085,7 @@ private struct NoteEditorContent: View {
             .filter { !$0.hash.isEmpty }
     }
 
-    private func savePickedImages(_ results: [(UIImage, String?)], toSectionId sectionId: String) async {
+    private func savePickedImages(_ results: [(PlatformImage, String?)], toSectionId sectionId: String) async {
         // Keep all existing entries, then append genuinely new picks
         let existingEntries = parseImageEntries(
             from: viewModel.getSection(sectionId)?.content ?? ""
@@ -1099,7 +1143,7 @@ private struct NoteEditorContent: View {
     }
 
     /// Save after edit sheet — keeps selected existing entries and stores new picks.
-    private func saveEditedImages(keptEntries: [(hash: String, assetId: String)], newPicks: [(UIImage, String?)], sectionId: String) async {
+    private func saveEditedImages(keptEntries: [(hash: String, assetId: String)], newPicks: [(PlatformImage, String?)], sectionId: String) async {
         var allEntries = keptEntries
 
         for (image, assetId) in newPicks {
@@ -1125,6 +1169,7 @@ private struct NoteEditorContent: View {
             .joined(separator: ",")
         try? await viewModel.updateSectionContent(sectionId, content: content)
     }
+
     private func saveRecordedAudio(_ data: Data, duration: TimeInterval, toSectionId sectionId: String) async {
         do {
             let media = try await appState.mediaRepository.addMedia(
@@ -1143,7 +1188,6 @@ private struct NoteEditorContent: View {
             print("Failed to save audio: \(error)")
         }
     }
-    #endif
 
     @ViewBuilder
     private var titleView: some View {
@@ -1349,6 +1393,10 @@ private struct NoteEditorContent: View {
             richText: viewModel.note?.bodyRichText,
             minHeight: isPageEmpty ? 100 : 44,
             onContentChange: { newValue, richText in
+                guard !isExternalBodyUpdate else {
+                    isExternalBodyUpdate = false
+                    return
+                }
                 Task {
                     try? await viewModel.updateBody(newValue, richText: richText)
                 }
@@ -1369,9 +1417,11 @@ private struct NoteEditorContent: View {
         .onAppear {
             bodyText = viewModel.note?.body ?? ""
         }
-        .onChange(of: viewModel.note?.body) { _, newBody in
-            if let newBody = newBody, newBody != bodyText {
-                bodyText = newBody
+        .onReceive(viewModel.$note) { note in
+            if let body = note?.body, body != bodyText {
+                print("[Sync] Editor body updated from observation: \(body.prefix(50))")
+                isExternalBodyUpdate = true
+                bodyText = body
             }
         }
         #else
@@ -1393,6 +1443,10 @@ private struct NoteEditorContent: View {
                 }
             }
             .onChange(of: bodyText) { _, newValue in
+                guard !isExternalBodyUpdate else {
+                    isExternalBodyUpdate = false
+                    return
+                }
                 Task {
                     try? await viewModel.updateBody(newValue)
                 }
@@ -1402,6 +1456,7 @@ private struct NoteEditorContent: View {
             }
             .onChange(of: viewModel.note?.body) { _, newBody in
                 if let newBody = newBody, newBody != bodyText {
+                    print("[Sync] Editor body updated from observation: \(newBody.prefix(50))")
                     bodyText = newBody
                 }
             }
@@ -1752,13 +1807,21 @@ struct BodyTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: SelfSizingTextView, context: Context) {
-        if !textView.isFirstResponder, textView.text != text {
+        if textView.text != text {
+            // Update text even when focused — needed for sync updates from other devices.
+            // Preserve cursor position as best we can.
+            let selectedRange = textView.selectedRange
             if let richText = richText,
                let attrText = RichTextHelper.deserialize(richText) {
                 textView.attributedText = attrText
             } else {
                 textView.text = text
             }
+            // Restore cursor if still valid
+            if selectedRange.location + selectedRange.length <= (textView.text?.count ?? 0) {
+                textView.selectedRange = selectedRange
+            }
+            HashtagHelper.applyHighlighting(to: textView)
         }
         textView.invalidateIntrinsicContentSize()
 
@@ -1853,7 +1916,7 @@ struct PageCommitSheet: View {
 
                 Spacer()
 
-                Text("Commit Page")
+                Text("Save Version")
                     .font(.headline)
 
                 Spacer()
@@ -1869,7 +1932,7 @@ struct PageCommitSheet: View {
 
             // Title input
             VStack(alignment: .leading, spacing: 4) {
-                Text("Commit Title")
+                Text("Version Title")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
@@ -1969,7 +2032,7 @@ struct AddContentBar: View {
                     } label: {
                         Image(systemName: "waveform")
                             .font(.title3)
-                            .foregroundStyle(Color(.systemBackground))
+                            .foregroundStyle(Color.systemBackground)
                             .frame(width: 44, height: 44)
                             .background(Color.gray.opacity(0.5))
                             .clipShape(Circle())
@@ -1981,7 +2044,7 @@ struct AddContentBar: View {
                     } label: {
                         Image(systemName: "character.textbox")
                             .font(.title3)
-                            .foregroundStyle(Color(.systemBackground))
+                            .foregroundStyle(Color.systemBackground)
                             .frame(width: 44, height: 44)
                             .background(Color.gray.opacity(0.5))
                             .clipShape(Circle())
@@ -1993,7 +2056,7 @@ struct AddContentBar: View {
                     } label: {
                         Image(systemName: "photo")
                             .font(.title3)
-                            .foregroundStyle(Color(.systemBackground))
+                            .foregroundStyle(Color.systemBackground)
                             .frame(width: 44, height: 44)
                             .background(Color.gray.opacity(0.5))
                             .clipShape(Circle())
@@ -2006,7 +2069,7 @@ struct AddContentBar: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color(.systemBackground))
+                        .foregroundStyle(Color.systemBackground)
                         .frame(width: 28, height: 28)
                         .background(Color.gray.opacity(0.5))
                         .clipShape(Circle())
@@ -2016,11 +2079,13 @@ struct AddContentBar: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 4)
+        #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
             if isExpanded {
                 withAnimation(.easeOut(duration: 0.2)) { isExpanded = false }
             }
         }
+        #endif
     }
 }
 
@@ -2054,7 +2119,7 @@ struct PageHistorySheet: View {
                         Text("No History")
                             .font(.headline)
                             .foregroundStyle(.secondary)
-                        Text("Commits for this page will appear here.")
+                        Text("Versions for this page will appear here.")
                             .font(.subheadline)
                             .foregroundStyle(.tertiary)
                     }
@@ -2062,8 +2127,8 @@ struct PageHistorySheet: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 8) {
-                            ForEach(commits) { commit in
-                                CommitRowView(commit: commit, noteName: noteName)
+                            ForEach(Array(commits.enumerated()), id: \.element.id) { index, commit in
+                                CommitRowView(commit: commit, noteName: noteName, isFirst: index == 0, isLast: index == commits.count - 1)
                                     .padding(.horizontal)
                                     .padding(.vertical, 6)
                                     .contentShape(Rectangle())
@@ -2072,13 +2137,13 @@ struct PageHistorySheet: View {
                                     }
                                     .contextMenu {
                                         Button {
-                                            UIPasteboard.general.string = commit.shortId
+                                            ClipboardHelper.copy(commit.shortId)
                                         } label: {
                                             Label("Copy ID", systemImage: "doc.on.doc")
                                         }
 
                                         Button {
-                                            UIPasteboard.general.string = commit.hash
+                                            ClipboardHelper.copy(commit.hash)
                                         } label: {
                                             Label("Copy Hash", systemImage: "number")
                                         }
@@ -2100,11 +2165,11 @@ struct PageHistorySheet: View {
             }
             .background(Color.black)
             .navigationTitle("History")
+            .inlineNavigationTitle()
             #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
             .toolbarBackground(Color.black, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }

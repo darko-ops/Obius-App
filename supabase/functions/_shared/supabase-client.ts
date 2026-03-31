@@ -49,8 +49,13 @@ export async function verifyAuth(req: Request): Promise<{ userId: string; client
     throw new AuthError('Missing Authorization header');
   }
 
+  // Extract the bare JWT token
+  const token = authHeader.replace('Bearer ', '');
+
   const client = createUserClient(authHeader);
-  const { data: { user }, error } = await client.auth.getUser();
+  // Pass token directly — client.auth.getUser() without a token argument
+  // ignores global headers in Supabase JS SDK v2
+  const { data: { user }, error } = await client.auth.getUser(token);
 
   if (error || !user) {
     throw new AuthError('Invalid or expired token');

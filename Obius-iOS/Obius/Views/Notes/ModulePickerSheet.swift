@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ModulePickerSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var appState: AppState
     @ObservedObject var moduleRepository: ModuleRepository
     @Binding var selectedModuleId: String?
 
@@ -16,11 +17,9 @@ struct ModulePickerSheet: View {
     var body: some View {
         NavigationStack {
             moduleList
-                .background(Color(.systemBackground))
+                .background(Color.systemBackground)
                 .navigationTitle("Projects")
-                #if os(iOS)
-                .navigationBarTitleDisplayMode(.inline)
-                #endif
+                .inlineNavigationTitle()
                 .toolbar { toolbarContent }
                 .alert("New Project", isPresented: $showingAddModule) {
                     addModuleAlertContent
@@ -57,13 +56,24 @@ struct ModulePickerSheet: View {
                     Text("Notes in this project will be moved to Local.")
                 }
         }
+        #if os(iOS)
         .presentationDetents([.medium])
+        #else
+        .frame(minWidth: 350, minHeight: 400)
+        #endif
     }
 
     // MARK: - Subviews
 
     private var moduleList: some View {
         List {
+            if moduleRepository.modules.isEmpty {
+                Text("No projects found")
+                    .foregroundStyle(.secondary)
+                    .onAppear {
+                        print("[ModulePicker] modules array is empty")
+                    }
+            }
             ForEach(moduleRepository.modules) { module in
                 moduleRow(module)
             }
@@ -75,8 +85,8 @@ struct ModulePickerSheet: View {
                 }
             }
         }
-        .environment(\.editMode, .constant(.active))
         #if os(iOS)
+        .environment(\.editMode, .constant(.active))
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         #endif
@@ -90,16 +100,16 @@ struct ModulePickerSheet: View {
             moduleRowLabel(module)
         }
         .buttonStyle(.plain)
-        .listRowBackground(Color(.secondarySystemBackground))
+        .listRowBackground(Color.secondarySystemBackground)
         .contextMenu {
-            if !module.isDefault {
-                Button {
-                    renameText = module.name
-                    moduleToRename = module
-                } label: {
-                    Label("Rename Project", systemImage: "pencil")
-                }
+            Button {
+                renameText = module.name
+                moduleToRename = module
+            } label: {
+                Label("Rename Project", systemImage: "pencil")
+            }
 
+            if moduleRepository.modules.filter({ $0.deletedAt == nil }).count > 1 {
                 Button(role: .destructive) {
                     moduleToDelete = module
                     showingDeleteConfirmation = true
@@ -181,7 +191,17 @@ struct ModulePickerSheet: View {
                     selectedModuleId = moduleRepository.getLocalModule()?.id
                 }
                 Task {
-                    try? await moduleRepository.deleteModule(id: module.id)
+                    let movedNoteIds = (try? await moduleRepository.deleteModule(id: module.id)) ?? []
+                    // Log sync updates for moved notes directly in the database
+                    // (can't use syncLogger.logNoteUpdate because it spawns async tasks)
+                    for noteId in movedNoteIds {
+                        if let note = try? await appState.noteRepository.getNote(id: noteId) {
+                            await appState.syncLogger.logNoteUpdateSync(note)
+                        }
+                    }
+                    // Small delay to ensure DB writes complete, then sync
+                    try? await Task.sleep(for: .milliseconds(200))
+                    await appState.triggerSync()
                 }
             }
             moduleToDelete = nil

@@ -14,7 +14,7 @@ struct LibraryView: View {
 
     enum LibrarySection: String, CaseIterable {
         case loops = "Loops"
-        case commits = "Commits"
+        case commits = "Versions"
 
         var icon: String {
             switch self {
@@ -39,7 +39,6 @@ struct LibraryView: View {
 
                 // Section filter
                 HStack(spacing: 20) {
-                    Spacer()
                     ForEach(LibrarySection.allCases, id: \.self) { section in
                         let isSelected = selectedSection == section
                         Button {
@@ -73,22 +72,28 @@ struct LibraryView: View {
             }
             .padding(.bottom)
         }
-        .background(Color(.systemBackground))
+        .background(Color.systemBackground)
         .ignoresSafeArea(.container, edges: .top)
+        #if os(iOS)
         .navigationBarHidden(true)
+        #else
+        .toolbar(.hidden, for: .windowToolbar)
+        #endif
         .onChange(of: selectedSection) { _, _ in
             searchQuery = ""
         }
+        #if os(iOS)
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
                 Button {
-                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    KeyboardHelper.dismiss()
                 } label: {
                     Image(systemName: "keyboard.chevron.compact.down")
                 }
             }
         }
+        #endif
         .sheet(isPresented: $showingEditProfile) {
             EditProfileView()
                 .environmentObject(authManager)
@@ -118,7 +123,7 @@ struct LibraryView: View {
                     let extraHeight = max(minY, 0)
 
                     if let banner = profileImages.bannerImage {
-                        Image(uiImage: banner)
+                        platformImage(banner)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
                             .frame(width: geo.size.width, height: 160 + extraHeight)
@@ -175,17 +180,17 @@ struct LibraryView: View {
     private var profileAvatar: some View {
         ZStack {
             if let avatar = profileImages.profileImage {
-                Image(uiImage: avatar)
+                platformImage(avatar)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(width: 80, height: 80)
                     .clipShape(Circle())
-                    .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 3))
+                    .overlay(Circle().stroke(Color.systemBackground, lineWidth: 3))
             } else {
                 Circle()
                     .fill(Color.accentColor.opacity(0.15))
                     .frame(width: 80, height: 80)
-                    .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 3))
+                    .overlay(Circle().stroke(Color.systemBackground, lineWidth: 3))
                     .overlay {
                         if authManager.isAuthenticated {
                             Text(userInitials)
@@ -216,6 +221,7 @@ struct LibraryView: View {
 // MARK: - Loops List View
 
 struct LoopsListView: View {
+    @EnvironmentObject var appState: AppState
     @StateObject private var handleManager = HandleManager.shared
     @State private var showingCreateSheet = false
     @State private var selectedHandle: Handle?
@@ -233,21 +239,29 @@ struct LoopsListView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            // Header with add button
-            HStack {
-                Image(systemName: "infinity")
-                    .font(.title2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                Spacer()
+            // Create loop pill (matches commit filter bar style)
+            HStack(spacing: 4) {
                 Button {
                     showingCreateSheet = true
                 } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(.gray)
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("New Loop")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule()
+                            .fill(Color.orange.opacity(0.12))
+                    )
                 }
+                .buttonStyle(.plain)
+
+                Spacer()
             }
-            .padding(.horizontal)
 
             if handleManager.handles.isEmpty {
                 emptyState
@@ -286,7 +300,7 @@ struct LoopsListView: View {
                 LoopRowView(handle: handle)
                     .padding(.horizontal)
                     .padding(.vertical, 6)
-                    .background(Color(.systemBackground))
+                    .background(Color.systemBackground)
                     .cornerRadius(12)
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -310,6 +324,10 @@ struct LoopRowView: View {
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 
+    private var hasEcho: Bool {
+        EchoManager.shared.activeEchoes.contains { $0.handleId == handle.id && $0.isActive }
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             // Spine: 4px wide, intent-colored
@@ -318,11 +336,24 @@ struct LoopRowView: View {
                 .frame(width: 4)
 
             VStack(alignment: .leading, spacing: 3) {
-                // Row 1: Name + time
+                // Row 1: Name + echo tag + time
                 HStack(spacing: 6) {
                     Text(handle.formattedName)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
+
+                    if hasEcho {
+                        HStack(spacing: 2) {
+                            Image(systemName: "dot.radiowaves.left.and.right")
+                                .font(.system(size: 7))
+                            Text("echo")
+                                .font(.system(size: 8, weight: .medium))
+                        }
+                        .foregroundStyle(.yellow)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.yellow.opacity(0.12)))
+                    }
 
                     Spacer()
 
@@ -400,9 +431,7 @@ struct CreateLoopSheet: View {
                 }
             }
             .navigationTitle("Create Loop")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -436,11 +465,13 @@ struct CreateLoopSheet: View {
 
 struct LoopDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var appState: AppState
     let handle: Handle
 
     @StateObject private var handleManager = HandleManager.shared
     @State private var content: String
     @State private var intent: IntentType
+    @State private var references: [(note: Note, section: Section)] = []
 
     init(handle: Handle) {
         self.handle = handle
@@ -471,6 +502,23 @@ struct LoopDetailSheet: View {
                     .pickerStyle(.menu)
                 }
 
+                SwiftUI.Section("Appears In") {
+                    if references.isEmpty {
+                        Text("Not referenced in any pages")
+                            .font(.subheadline)
+                            .foregroundStyle(.tertiary)
+                    } else {
+                        ForEach(references, id: \.section.id) { ref in
+                            NavigationLink {
+                                NoteEditorView(noteId: ref.note.id, targetSectionId: ref.section.id)
+                                    .environmentObject(appState)
+                            } label: {
+                                loopReferenceRow(note: ref.note, section: ref.section)
+                            }
+                        }
+                    }
+                }
+
                 SwiftUI.Section("Actions") {
                     Button(role: .destructive) {
                         deleteLoop()
@@ -480,9 +528,7 @@ struct LoopDetailSheet: View {
                 }
             }
             .navigationTitle("Edit Loop")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -496,6 +542,65 @@ struct LoopDetailSheet: View {
                     }
                 }
             }
+            .task {
+                await loadReferences()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func loopReferenceRow(note: Note, section: Section) -> some View {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(note.intent.color)
+                .frame(width: 4, height: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(note.displayTitle)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                let preview = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !preview.isEmpty {
+                    Text(String(preview.prefix(60)))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            Text(relativeTime(for: section.updatedAt))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func relativeTime(for timestamp: Int64) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        let date = Date(timeIntervalSince1970: Double(timestamp) / 1000)
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private func loadReferences() async {
+        guard let sections = try? await appState.handleRepository.getSectionsWithHandle(handleId: handle.id) else { return }
+
+        let notes = appState.noteRepository.notes
+        var refs: [(note: Note, section: Section)] = []
+        var seenNoteIds: Set<String> = []
+
+        for section in sections {
+            guard !seenNoteIds.contains(section.noteId),
+                  let note = notes.first(where: { $0.id == section.noteId }) else { continue }
+            seenNoteIds.insert(section.noteId)
+            refs.append((note: note, section: section))
+        }
+
+        await MainActor.run {
+            references = refs
         }
     }
 
@@ -525,12 +630,38 @@ struct CommitListItem: Identifiable {
     var createdAt: Int64 { commit.createdAt }
 }
 
+enum CommitFilter: String, CaseIterable {
+    case all
+    case manual
+    case auto
+    case ai
+
+    var icon: String {
+        switch self {
+        case .all: return "line.3.horizontal.decrease.circle"
+        case .manual: return "arrow.trianglehead.branch"
+        case .auto: return "clock.fill"
+        case .ai: return "sparkles"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .all: return .white
+        case .manual: return .accentColor
+        case .auto: return .orange
+        case .ai: return .purple
+        }
+    }
+}
+
 struct CommitsListView: View {
     @EnvironmentObject var appState: AppState
     @State private var commits: [Commit] = []
     @State private var noteNames: [String: String] = [:]
     @State private var isLoading = true
     @State private var selectedCommit: Commit?
+    @State private var selectedFilter: CommitFilter = .all
 @State private var shareSheetLink: ShareLink?
     @State private var sharePreview: String = ""
     @State private var shareError: String?
@@ -540,29 +671,40 @@ struct CommitsListView: View {
 
     private var allItems: [CommitListItem] {
         commits
-            .map { CommitListItem(commit: $0, noteName: noteNames[$0.noteId] ?? $0.name ?? "Archived Commit") }
+            .map { CommitListItem(commit: $0, noteName: noteNames[$0.noteId] ?? $0.name ?? "Archived Version") }
             .sorted { $0.createdAt > $1.createdAt }
     }
 
     private var filteredItems: [CommitListItem] {
-        if searchQuery.isEmpty { return allItems }
-        return allItems.filter { item in
-            (item.commit.name ?? "").localizedCaseInsensitiveContains(searchQuery) ||
-                item.noteName.localizedCaseInsensitiveContains(searchQuery) ||
-                item.commit.shortId.localizedCaseInsensitiveContains(searchQuery)
+        var items = allItems
+
+        switch selectedFilter {
+        case .all:
+            break
+        case .ai:
+            items = items.filter { $0.commit.name?.hasPrefix("AI:") ?? false }
+        case .auto:
+            items = items.filter { $0.commit.isAutoCommit && !($0.commit.name?.hasPrefix("AI:") ?? false) }
+        case .manual:
+            items = items.filter { !$0.commit.isAutoCommit && !($0.commit.name?.hasPrefix("AI:") ?? false) }
         }
+
+        if !searchQuery.isEmpty {
+            items = items.filter { item in
+                (item.commit.name ?? "").localizedCaseInsensitiveContains(searchQuery) ||
+                    item.noteName.localizedCaseInsensitiveContains(searchQuery) ||
+                    item.commit.shortId.localizedCaseInsensitiveContains(searchQuery)
+            }
+        }
+
+        return items
     }
 
     var body: some View {
         VStack(spacing: 12) {
-            // Header with stats
-            HStack {
-                Image(systemName: "square.stack.3d.up")
-                    .font(.title2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-            .padding(.horizontal)
+
+            // Filter bar
+            commitFilterBar
 
             if isLoading {
                 ProgressView()
@@ -585,7 +727,7 @@ struct CommitsListView: View {
         .sheet(item: $shareSheetLink) { link in
             NodeShareSheet(
                 url: URL(string: link.url)!,
-                title: link.commitName ?? "Commit Snapshot",
+                title: link.commitName ?? "Version Snapshot",
                 preview: sharePreview
             )
         }
@@ -599,14 +741,44 @@ struct CommitsListView: View {
         }
     }
 
+    private var commitFilterBar: some View {
+        HStack(spacing: 4) {
+            ForEach(CommitFilter.allCases, id: \.self) { filter in
+                let isSelected = selectedFilter == filter
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selectedFilter = filter
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: filter.icon)
+                            .font(.system(size: 9))
+                        if isSelected {
+                            Text(filter.rawValue.capitalized)
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                    }
+                    .foregroundStyle(isSelected ? filter.tint : .secondary)
+                    .padding(.horizontal, isSelected ? 10 : 8)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule()
+                            .fill(isSelected ? filter.tint.opacity(0.12) : Color.clear)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "clock.arrow.circlepath")
                 .font(.largeTitle)
                 .foregroundStyle(.secondary)
-            Text("No Commits")
+            Text("No Versions")
                 .font(.headline)
-            Text("Commits save snapshots of your notes")
+            Text("Versions save snapshots of your notes")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -616,11 +788,11 @@ struct CommitsListView: View {
 
     private var commitsList: some View {
         LazyVStack(spacing: 8) {
-            ForEach(filteredItems) { item in
-                CommitRowView(commit: item.commit, noteName: item.noteName, viewCount: commitViewCounts[item.commit.hash] ?? 0)
+            ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
+                CommitRowView(commit: item.commit, noteName: item.noteName, viewCount: commitViewCounts[item.commit.hash] ?? 0, isFirst: index == 0, isLast: index == filteredItems.count - 1)
                     .padding(.horizontal)
                     .padding(.vertical, 6)
-                    .background(Color(.systemBackground))
+                    .background(Color.systemBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -634,13 +806,13 @@ struct CommitsListView: View {
                         }
 
                         Button {
-                            UIPasteboard.general.string = item.commit.shortId
+                            ClipboardHelper.copy(item.commit.shortId)
                         } label: {
                             Label("Copy ID", systemImage: "doc.on.doc")
                         }
 
                         Button {
-                            UIPasteboard.general.string = item.commit.hash
+                            ClipboardHelper.copy(item.commit.hash)
                         } label: {
                             Label("Copy Hash", systemImage: "number")
                         }
@@ -729,7 +901,7 @@ struct CommitsListView: View {
             let payload = MessageSharePayload(
                 slug: link.slug,
                 shareType: "commit",
-                title: commit.name ?? noteNames[commit.noteId] ?? "Commit Snapshot",
+                title: commit.name ?? noteNames[commit.noteId] ?? "Version Snapshot",
                 creatorName: SupabaseManager.shared.currentUser?.displayName,
                 commitShortId: commit.shortId,
                 sectionPreviews: Array(sectionPreviews),
@@ -755,6 +927,8 @@ struct CommitRowView: View {
     let commit: Commit
     let noteName: String
     var viewCount: Int = 0
+    var isFirst: Bool = false
+    var isLast: Bool = false
 
     private var relativeTime: String {
         let formatter = RelativeDateTimeFormatter()
@@ -763,45 +937,55 @@ struct CommitRowView: View {
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 
-    /// Spine color: accent for manual, orange for auto
-    private var spineColor: Color {
-        commit.isAutoCommit ? .orange : .accentColor
+    private var isAI: Bool {
+        commit.name?.hasPrefix("AI:") ?? false
+    }
+
+    private var tint: Color {
+        isAI ? .purple : (commit.isAutoCommit ? .orange : .accentColor)
+    }
+
+    private var icon: String {
+        isAI ? "sparkles" : (commit.isAutoCommit ? "clock.fill" : "arrow.trianglehead.branch")
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Auto label sits to the left of the spine
-            if commit.isAutoCommit {
-                Text("Auto")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.orange.opacity(0.12))
-                    .clipShape(Capsule())
-            }
-
-            // Spine: 4px wide
-            RoundedRectangle(cornerRadius: 2)
-                .fill(spineColor)
-                .frame(width: 4)
+        HStack(spacing: 10) {
+            // Icon
+            Image(systemName: icon)
+                .font(.system(size: 10))
+                .foregroundStyle(tint)
+                .frame(width: 20, height: 20)
+                .background(tint.opacity(0.15))
+                .clipShape(Circle())
 
             VStack(alignment: .leading, spacing: 3) {
                 // Row 1: Name + pills + time
                 HStack(spacing: 6) {
+                    if isAI {
+                        Text("AI")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.purple)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.purple.opacity(0.12))
+                            .clipShape(Capsule())
+                    } else if commit.isAutoCommit {
+                        Text("Auto")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
+
                     Text(commit.name ?? noteName)
-                        .font(.subheadline.weight(commit.isAutoCommit ? .regular : .semibold))
+                        .font(.subheadline.weight(commit.isAutoCommit && !isAI ? .regular : .semibold))
+                        .foregroundStyle(.primary)
                         .lineLimit(1)
 
                     Spacer()
-
-                    Text("#\(commit.shortId)")
-                        .font(.system(size: 10))
-                        .foregroundStyle(spineColor)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(spineColor.opacity(0.12))
-                        .clipShape(Capsule())
 
                     if viewCount > 0 {
                         Label("\(viewCount)", systemImage: "eye")
@@ -822,9 +1006,8 @@ struct CommitRowView: View {
                         .lineLimit(1)
                 }
             }
-            .padding(.leading, 10)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 2)
     }
 }
 
@@ -868,15 +1051,13 @@ struct CommitDetailSheet: View {
                 } else if let content = content {
                     commitContentView(content)
                 } else {
-                    Text("Failed to load commit")
+                    Text("Failed to load version")
                         .foregroundStyle(.secondary)
                 }
             }
-            .background(Color(.systemBackground))
+            .background(Color.systemBackground)
             .navigationTitle("")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
@@ -899,7 +1080,7 @@ struct CommitDetailSheet: View {
                 await loadContent()
                 await loadComments()
             }
-            .fullScreenCover(isPresented: $showingShareSheet) {
+            .platformFullScreenCover(isPresented: $showingShareSheet) {
                 if let url = shareURL {
                     NodeShareSheet(
                         url: url,
@@ -918,7 +1099,7 @@ struct CommitDetailSheet: View {
                 // Title
                 if let title = content.note.title, !title.isEmpty {
                     Button {
-                        UIPasteboard.general.string = title
+                        ClipboardHelper.copy(title)
                         copiedField = "badge_title"
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                             if copiedField == "badge_title" { copiedField = nil }
@@ -939,7 +1120,7 @@ struct CommitDetailSheet: View {
                         HStack(spacing: 6) {
                             Image(systemName: "doc.zipper")
                                 .font(.caption2)
-                            Text("Commit")
+                            Text("Version")
                                 .font(.caption2.weight(.medium))
                         }
                         .padding(.horizontal, 10)
@@ -950,7 +1131,7 @@ struct CommitDetailSheet: View {
                     }
 
                     Button {
-                        UIPasteboard.general.string = commit.shortId
+                        ClipboardHelper.copy(commit.shortId)
                         copiedField = "nav_title"
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                             if copiedField == "nav_title" { copiedField = nil }
@@ -1006,7 +1187,7 @@ struct CommitDetailSheet: View {
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(UIColor.secondarySystemBackground))
+                .background(Color.secondarySystemBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
 
                 // Dot divider
@@ -1062,7 +1243,7 @@ struct CommitDetailSheet: View {
                     Spacer()
                     Button {
                         let allText = buildFullContentText(content)
-                        UIPasteboard.general.string = allText
+                        ClipboardHelper.copy(allText)
                         copiedField = "copy_all"
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                             if copiedField == "copy_all" { copiedField = nil }
@@ -1103,7 +1284,7 @@ struct CommitDetailSheet: View {
 
     private func copyableRow<S: ShapeStyle>(label: String, value: String, field: String, valueFont: Font, valueColor: S) -> some View {
         Button {
-            UIPasteboard.general.string = value
+            ClipboardHelper.copy(value)
             copiedField = field
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 if copiedField == field { copiedField = nil }
@@ -1180,7 +1361,7 @@ struct CommitDetailSheet: View {
     private func addComment(body: String) async {
         do {
             // Find or create share link for this commit
-            var links = try await ShareManager.shared.getShareLinks(commitHash: commit.hash)
+            let links = try await ShareManager.shared.getShareLinks(commitHash: commit.hash)
             let link: ShareLink
             if let existing = links.first {
                 link = existing
@@ -1231,7 +1412,7 @@ struct CommitDetailSheet: View {
             let payload = MessageSharePayload(
                 slug: link.slug,
                 shareType: "commit",
-                title: commit.name ?? noteName ?? "Commit Snapshot",
+                title: commit.name ?? noteName ?? "Version Snapshot",
                 creatorName: SupabaseManager.shared.currentUser?.displayName,
                 commitShortId: commit.shortId,
                 sectionPreviews: Array(sectionPreviews),
@@ -1241,7 +1422,7 @@ struct CommitDetailSheet: View {
             payload.writeToSharedDefaults()
 
             shareURL = URL(string: link.url)
-            shareTitle = commit.name ?? noteName ?? "Commit Snapshot"
+            shareTitle = commit.name ?? noteName ?? "Version Snapshot"
             sharePreview = content.sections.first.map { String($0.content.prefix(200)) } ?? ""
             showingShareSheet = true
         } catch {
@@ -1282,7 +1463,7 @@ struct CommitNodePreview: View {
     let sectionType: String
     let mediaRepository: MediaRepository?
 
-    @State private var loadedImages: [String: UIImage] = [:]
+    @State private var loadedImages: [String: PlatformImage] = [:]
 
     /// Parse image hashes from "hash|assetId,hash|assetId,..." format
     private var imageHashes: [String] {
@@ -1312,13 +1493,13 @@ struct CommitNodePreview: View {
             VStack(spacing: 8) {
                 ForEach(imageHashes, id: \.self) { hash in
                     if let image = loadedImages[hash] {
-                        Image(uiImage: image)
+                        platformImage(image)
                             .resizable()
                             .scaledToFit()
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                     } else {
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(Color(.systemGray5))
+                            .fill(Color.systemGray5)
                             .frame(height: 160)
                             .overlay {
                                 Image(systemName: "photo")
@@ -1360,7 +1541,7 @@ struct CommitNodePreview: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
-                .background(Color(UIColor.secondarySystemBackground))
+                .background(Color.secondarySystemBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .padding(.leading, CGFloat(indentLevel) * 20)
         }
@@ -1370,7 +1551,7 @@ struct CommitNodePreview: View {
         guard let mediaRepository else { return }
         for hash in imageHashes where loadedImages[hash] == nil {
             if let data = try? mediaRepository.getMediaData(hash: hash),
-               let image = UIImage(data: data) {
+               let image = PlatformImage(data: data) {
                 loadedImages[hash] = image
             }
         }

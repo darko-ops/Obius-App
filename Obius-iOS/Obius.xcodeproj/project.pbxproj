@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B8A1D0200000000000000090 /* TierManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0200000000000000090 /* TierManager.swift */; };
+		B8A1D0200000000000000091 /* StoreManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0200000000000000091 /* StoreManager.swift */; };
+		B8A1D0200000000000000094 /* SubscriptionAnalytics.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0200000000000000094 /* SubscriptionAnalytics.swift */; };
+		B8A1D0200000000000000092 /* PaywallSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0200000000000000092 /* PaywallSheet.swift */; };
+		B8A1D0200000000000000093 /* SubscriptionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0200000000000000093 /* SubscriptionView.swift */; };
 		B8A1D0010000000000000001 /* ObiusApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000001 /* ObiusApp.swift */; };
 		B8A1D0010000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000002 /* ContentView.swift */; };
 		B8A1D0010000000000000003 /* PreviewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000003 /* PreviewApp.swift */; };
@@ -64,6 +69,7 @@
 		B8A1D0010000000000000057 /* EchoRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000057 /* EchoRepository.swift */; };
 		B8A1D0010000000000000058 /* EchoManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000058 /* EchoManager.swift */; };
 		B8A1D0010000000000000059 /* EchoConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000059 /* EchoConfigSheet.swift */; };
+		B8A1D0010000000000000300 /* WorkspaceFAB.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000300 /* WorkspaceFAB.swift */; };
 		B8A1D0010000000000000060 /* ImageNodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000060 /* ImageNodeView.swift */; };
 		B8A1D0010000000000000061 /* ImagePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000061 /* ImagePickerView.swift */; };
 		B8A1D0030000000000000001 /* ActivityViewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0030000000000000001 /* ActivityViewSheet.swift */; };
@@ -104,6 +110,8 @@
 		B8A1D0070000000000000001 /* OBXManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0070000000000000001 /* OBXManifest.swift */; };
 		B8A1D0070000000000000002 /* OBXArchiver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0070000000000000002 /* OBXArchiver.swift */; };
 		B8A1D0070000000000000003 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = B8A1E0070000000000000001 /* ZIPFoundation */; };
+		B8A1D0300000000000000001 /* RevenueCat in Frameworks */ = {isa = PBXBuildFile; productRef = B8A1E0300000000000000001 /* RevenueCat */; };
+		B8A1D0300000000000000002 /* RevenueCatUI in Frameworks */ = {isa = PBXBuildFile; productRef = B8A1E0300000000000000002 /* RevenueCatUI */; };
 		B8A1D0080000000000000001 /* Module.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0080000000000000001 /* Module.swift */; };
 		B8A1D0080000000000000002 /* ModuleRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0080000000000000002 /* ModuleRepository.swift */; };
 		B8A1D0080000000000000003 /* ModulePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0080000000000000003 /* ModulePickerSheet.swift */; };
@@ -116,11 +124,22 @@
 		B8A1D0090000000000000032 /* ExtractedEntity.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0090000000000000032 /* ExtractedEntity.swift */; };
 		B8A1D0090000000000000033 /* EntitySuggestionBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0090000000000000033 /* EntitySuggestionBanner.swift */; };
 		B8A1D0090000000000000034 /* EchoContextCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0090000000000000034 /* EchoContextCard.swift */; };
+		B8A1D00A0000000000000001 /* PlatformTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F00A0000000000000001 /* PlatformTypes.swift */; };
+		B8A1D00A0000000000000002 /* PlatformImage+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F00A0000000000000002 /* PlatformImage+Extensions.swift */; };
+		B8A1D00A0000000000000003 /* ClipboardHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F00A0000000000000003 /* ClipboardHelper.swift */; };
+		B8A1D00A0000000000000004 /* KeyboardHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F00A0000000000000004 /* KeyboardHelper.swift */; };
+		B8A1D00A0000000000000005 /* View+Platform.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F00A0000000000000005 /* View+Platform.swift */; };
+		B8A1D00A0000000000000008 /* WindowAccessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F00A0000000000000008 /* WindowAccessor.swift */; };
 /* End PBXBuildFile section */
 
 
 /* Begin PBXFileReference section */
 		B8A1A0010000000000000000 /* Obius.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Obius.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B8A1F0200000000000000090 /* TierManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TierManager.swift; sourceTree = "<group>"; };
+		B8A1F0200000000000000091 /* StoreManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreManager.swift; sourceTree = "<group>"; };
+		B8A1F0200000000000000094 /* SubscriptionAnalytics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionAnalytics.swift; sourceTree = "<group>"; };
+		B8A1F0200000000000000092 /* PaywallSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaywallSheet.swift; sourceTree = "<group>"; };
+		B8A1F0200000000000000093 /* SubscriptionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000001 /* ObiusApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObiusApp.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000003 /* PreviewApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewApp.swift; sourceTree = "<group>"; };
@@ -133,6 +152,13 @@
 		B8A1F0010000000000000095 /* AutoCommitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoCommitManager.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000102 /* InterFont.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterFont.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000103 /* HashtagHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HashtagHelper.swift; sourceTree = "<group>"; };
+		B8A1F00A0000000000000001 /* PlatformTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformTypes.swift; sourceTree = "<group>"; };
+		B8A1F00A0000000000000002 /* PlatformImage+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "PlatformImage+Extensions.swift"; path = "PlatformImage+Extensions.swift"; sourceTree = "<group>"; };
+		B8A1F00A0000000000000003 /* ClipboardHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardHelper.swift; sourceTree = "<group>"; };
+		B8A1F00A0000000000000004 /* KeyboardHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardHelper.swift; sourceTree = "<group>"; };
+		B8A1F00A0000000000000005 /* View+Platform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "View+Platform.swift"; path = "View+Platform.swift"; sourceTree = "<group>"; };
+		B8A1F00A0000000000000008 /* WindowAccessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowAccessor.swift; sourceTree = "<group>"; };
+		B8A1F00A0000000000000006 /* Obius-macOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Obius-macOS.entitlements"; sourceTree = "<group>"; };
 		B8A1F0010000000000000009 /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000010 /* SupabaseClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseClient.swift; sourceTree = "<group>"; };
 		B8A1F0100000000000000001 /* ClaudeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeService.swift; sourceTree = "<group>"; };
@@ -182,6 +208,7 @@
 		B8A1F0010000000000000057 /* EchoRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoRepository.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000058 /* EchoManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoManager.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000059 /* EchoConfigSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoConfigSheet.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000300 /* WorkspaceFAB.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFAB.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000060 /* ImageNodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageNodeView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000061 /* ImagePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePickerView.swift; sourceTree = "<group>"; };
 		B8A1F0030000000000000001 /* ActivityViewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityViewSheet.swift; sourceTree = "<group>"; };
@@ -241,6 +268,8 @@
 				B8A1D0010000000000000091 /* GRDB in Frameworks */,
 				B8A1D0010000000000000092 /* Supabase in Frameworks */,
 				B8A1D0070000000000000003 /* ZIPFoundation in Frameworks */,
+				B8A1D0300000000000000001 /* RevenueCat in Frameworks */,
+				B8A1D0300000000000000002 /* RevenueCatUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -268,6 +297,7 @@
 				B8A1G0010000000000000014 /* Views */,
 				B8A1G0010000000000000020 /* Resources */,
 				B8A1F0050000000000000001 /* Obius.entitlements */,
+				B8A1F00A0000000000000006 /* Obius-macOS.entitlements */,
 			);
 			path = Obius;
 			sourceTree = "<group>";
@@ -310,6 +340,9 @@
 				B8A1G0010000000000000009 /* Sync */,
 				B8A1G0010000000000000010 /* Utilities */,
 				B8A1F0090000000000000003 /* InsightEngine.swift */,
+				B8A1F0200000000000000090 /* TierManager.swift */,
+				B8A1F0200000000000000091 /* StoreManager.swift */,
+				B8A1F0200000000000000094 /* SubscriptionAnalytics.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -369,8 +402,14 @@
 				B8A1F0010000000000000017 /* Debouncer.swift */,
 				B8A1F0010000000000000018 /* ErrorHandling.swift */,
 				B8A1F0010000000000000019 /* FractionalIndex.swift */,
+				B8A1F00A0000000000000003 /* ClipboardHelper.swift */,
 				B8A1F0010000000000000103 /* HashtagHelper.swift */,
 				B8A1F0010000000000000102 /* InterFont.swift */,
+				B8A1F00A0000000000000004 /* KeyboardHelper.swift */,
+				B8A1F00A0000000000000002 /* PlatformImage+Extensions.swift */,
+				B8A1F00A0000000000000001 /* PlatformTypes.swift */,
+				B8A1F00A0000000000000005 /* View+Platform.swift */,
+				B8A1F00A0000000000000008 /* WindowAccessor.swift */,
 			);
 			path = Utilities;
 			sourceTree = "<group>";
@@ -469,6 +508,8 @@
 				B8A1F0010000000000000045 /* SyncStatusView.swift */,
 				B8A1F0090000000000000033 /* EntitySuggestionBanner.swift */,
 				B8A1F0090000000000000034 /* EchoContextCard.swift */,
+				B8A1F0010000000000000300 /* WorkspaceFAB.swift */,
+				B8A1F0200000000000000092 /* PaywallSheet.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -544,6 +585,7 @@
 			isa = PBXGroup;
 			children = (
 				B8A1F0010000000000000053 /* SettingsView.swift */,
+				B8A1F0200000000000000093 /* SubscriptionView.swift */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
@@ -633,6 +675,7 @@
 				B8A1I0010000000000000091 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 				B8A1I0010000000000000092 /* XCRemoteSwiftPackageReference "supabase-swift" */,
 				B8A1I0070000000000000001 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
+				B8A1I0300000000000000001 /* XCRemoteSwiftPackageReference "purchases-ios-spm" */,
 			);
 			productRefGroup = B8A1G0010000000000000099 /* Products */;
 			projectDirPath = "";
@@ -673,10 +716,21 @@
 				B8A1D0010000000000000007 /* DatabaseManager.swift in Sources */,
 				B8A1D0060000000000000001 /* DatabaseMigrationHelper.swift in Sources */,
 				B8A1D0010000000000000008 /* HandleManager.swift in Sources */,
+				B8A1D0200000000000000090 /* TierManager.swift in Sources */,
+				B8A1D0200000000000000091 /* StoreManager.swift in Sources */,
+				B8A1D0200000000000000094 /* SubscriptionAnalytics.swift in Sources */,
+				B8A1D0200000000000000092 /* PaywallSheet.swift in Sources */,
+				B8A1D0200000000000000093 /* SubscriptionView.swift in Sources */,
 				B8A1D0010000000000000093 /* ProfileImageManager.swift in Sources */,
 				B8A1D0010000000000000095 /* AutoCommitManager.swift in Sources */,
 				B8A1D0010000000000000102 /* InterFont.swift in Sources */,
 				B8A1D0010000000000000103 /* HashtagHelper.swift in Sources */,
+				B8A1D00A0000000000000001 /* PlatformTypes.swift in Sources */,
+				B8A1D00A0000000000000002 /* PlatformImage+Extensions.swift in Sources */,
+				B8A1D00A0000000000000003 /* ClipboardHelper.swift in Sources */,
+				B8A1D00A0000000000000004 /* KeyboardHelper.swift in Sources */,
+				B8A1D00A0000000000000005 /* View+Platform.swift in Sources */,
+				B8A1D00A0000000000000008 /* WindowAccessor.swift in Sources */,
 				B8A1D0040000000000000001 /* AppearanceManager.swift in Sources */,
 				B8A1D0010000000000000009 /* NetworkMonitor.swift in Sources */,
 				B8A1D0010000000000000010 /* SupabaseClient.swift in Sources */,
@@ -732,6 +786,7 @@
 				B8A1D0010000000000000057 /* EchoRepository.swift in Sources */,
 				B8A1D0010000000000000058 /* EchoManager.swift in Sources */,
 				B8A1D0010000000000000059 /* EchoConfigSheet.swift in Sources */,
+				B8A1D0010000000000000300 /* WorkspaceFAB.swift in Sources */,
 				B8A1D0020000000000000001 /* ShareLink.swift in Sources */,
 				B8A1D0020000000000000002 /* Comment.swift in Sources */,
 				B8A1D0020000000000000003 /* ShareLinkRepository.swift in Sources */,
@@ -825,10 +880,12 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
-				SDKROOT = iphoneos;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -883,9 +940,11 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
-				SDKROOT = iphoneos;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
 			};
@@ -898,6 +957,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Obius/Obius.entitlements;
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "Obius/Obius-macOS.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = W276447S6T;
@@ -918,6 +978,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.obius.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -931,6 +992,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Obius/Obius.entitlements;
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "Obius/Obius-macOS.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = W276447S6T;
@@ -951,6 +1013,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.obius.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -1005,6 +1068,14 @@
 				minimumVersion = 0.9.19;
 			};
 		};
+		B8A1I0300000000000000001 /* XCRemoteSwiftPackageReference "purchases-ios-spm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/RevenueCat/purchases-ios-spm.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 5.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1022,6 +1093,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = B8A1I0070000000000000001 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
 			productName = ZIPFoundation;
+		};
+		B8A1E0300000000000000001 /* RevenueCat */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B8A1I0300000000000000001 /* XCRemoteSwiftPackageReference "purchases-ios-spm" */;
+			productName = RevenueCat;
+		};
+		B8A1E0300000000000000002 /* RevenueCatUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B8A1I0300000000000000001 /* XCRemoteSwiftPackageReference "purchases-ios-spm" */;
+			productName = RevenueCatUI;
 		};
 /* End XCSwiftPackageProductDependency section */
 
