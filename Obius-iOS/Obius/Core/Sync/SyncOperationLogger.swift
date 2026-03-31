@@ -109,6 +109,64 @@ final class SyncOperationLogger {
         )
     }
 
+    // MARK: - Handle Operations
+
+    func logHandleCreate(_ handle: Handle) {
+        logOperation(
+            entityType: "handle",
+            entityId: handle.id,
+            operationType: "create",
+            payload: handleToPayload(handle)
+        )
+    }
+
+    func logHandleUpdate(_ handle: Handle) {
+        logOperation(
+            entityType: "handle",
+            entityId: handle.id,
+            operationType: "update",
+            payload: handleToPayload(handle)
+        )
+    }
+
+    func logHandleDelete(_ handleId: String) {
+        logOperation(
+            entityType: "handle",
+            entityId: handleId,
+            operationType: "delete",
+            payload: [:]
+        )
+    }
+
+    // MARK: - Echo Operations
+
+    func logEchoCreate(_ echo: Echo) {
+        logOperation(
+            entityType: "echo",
+            entityId: echo.id,
+            operationType: "create",
+            payload: echoToPayload(echo)
+        )
+    }
+
+    func logEchoUpdate(_ echo: Echo) {
+        logOperation(
+            entityType: "echo",
+            entityId: echo.id,
+            operationType: "update",
+            payload: echoToPayload(echo)
+        )
+    }
+
+    func logEchoDelete(_ echoId: String) {
+        logOperation(
+            entityType: "echo",
+            entityId: echoId,
+            operationType: "delete",
+            payload: [:]
+        )
+    }
+
     // MARK: - ShareLink Operations
 
     func logShareLinkCreate(_ shareLink: ShareLink) {
@@ -279,6 +337,49 @@ final class SyncOperationLogger {
         }
         if let deletedAt = shareLink.deletedAt {
             payload["deleted_at"] = formatTimestamp(deletedAt)
+        }
+
+        return payload
+    }
+
+    private func handleToPayload(_ handle: Handle) -> [String: Any] {
+        var payload: [String: Any] = [
+            "name": handle.name,
+            "display_name": handle.displayName,
+            "content": handle.content,
+            "intent": handle.intent.legacyValue,
+            "created_at": formatTimestamp(handle.createdAt),
+            "updated_at": formatTimestamp(handle.updatedAt)
+        ]
+
+        if let deletedAt = handle.deletedAt {
+            payload["deleted_at"] = formatTimestamp(deletedAt)
+        }
+
+        return payload
+    }
+
+    private func echoToPayload(_ echo: Echo) -> [String: Any] {
+        var payload: [String: Any] = [
+            "handle_id": echo.handleId,
+            "is_recurring": echo.isRecurring,
+            "fire_date": echo.fireDate,
+            "is_active": echo.isActive,
+            "is_alerted": echo.isAlerted,
+            "created_at": formatTimestamp(echo.createdAt),
+            "updated_at": formatTimestamp(echo.updatedAt)
+        ]
+
+        if let intervalsJSON = echo.intervalsJSON {
+            payload["intervals_json"] = intervalsJSON
+        }
+
+        if let nextFireDate = echo.nextFireDate {
+            payload["next_fire_date"] = nextFireDate
+        }
+
+        if let lastAcknowledgedAt = echo.lastAcknowledgedAt {
+            payload["last_acknowledged_at"] = lastAcknowledgedAt
         }
 
         return payload

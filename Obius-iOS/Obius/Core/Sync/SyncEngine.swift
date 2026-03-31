@@ -82,7 +82,7 @@ actor SyncEngine {
             }
 
             // Nuclear reset: delete all old syncOperations and re-enqueue everything.
-            let resetKey = "hasResetSyncOps_v17"
+            let resetKey = "hasResetSyncOps_v23"
             if !UserDefaults.standard.bool(forKey: resetKey) {
                 // Delete sync operations in its own transaction
                 try? await database.write { db in
@@ -97,6 +97,15 @@ actor SyncEngine {
                     // Add column if missing, then clear it
                     try? db.execute(sql: "ALTER TABLE syncMetadata ADD COLUMN lastSyncTimestamp TEXT")
                     try db.execute(sql: "UPDATE syncMetadata SET lastSyncTimestamp = NULL")
+                }
+                // Clear inflated serverVersion values — they were incorrectly set from localVersion
+                // instead of the server's actual version. The pull will set them correctly.
+                try? await database.write { db in
+                    try db.execute(sql: "UPDATE notes SET serverVersion = NULL WHERE serverVersion > 0")
+                    try db.execute(sql: "UPDATE sections SET serverVersion = NULL WHERE serverVersion > 0")
+                    try db.execute(sql: "UPDATE handles SET serverVersion = NULL WHERE serverVersion > 0")
+                    try db.execute(sql: "UPDATE echoes SET serverVersion = NULL WHERE serverVersion > 0")
+                    print("[Sync] Cleared inflated serverVersion values — pull will set correct versions")
                 }
                 lastSyncTimestamp = nil
                 UserDefaults.standard.set(true, forKey: resetKey)
@@ -220,10 +229,114 @@ actor SyncEngine {
                     """, arguments: [UUID().uuidString, sectionId, payloadString, timestamp])
                 }
 
+                // Find ALL handles that don't have a pending or completed syncOperation
+                let unsyncedHandles = try Row.fetchAll(db, sql: """
+                    SELECT h.id, h.name, h.displayName, h.content, h.intent,
+                           h.createdAt, h.updatedAt
+                    FROM handles h
+                    WHERE h.deletedAt IS NULL
+                    AND h.syncStatus != 'synced'
+                    AND NOT EXISTS (
+                        SELECT 1 FROM syncOperations so
+                        WHERE so.entityId = h.id
+                    )
+                """)
+
+                for handle in unsyncedHandles {
+                    let handleId = handle["id"] as? String ?? ""
+                    let timestamp = handle["updatedAt"] as? Int64 ?? Int64(Date().timeIntervalSince1970 * 1000)
+
+                    let payload: [String: Any] = [
+                        "name": handle["name"] as? String ?? "",
+                        "display_name": handle["displayName"] as? String ?? "",
+                        "content": handle["content"] as? String ?? "",
+                        "intent": handle["intent"] as? String ?? "idea",
+                        "created_at": formatter.string(from: Date(timeIntervalSince1970: Double(handle["createdAt"] as? Int64 ?? 0) / 1000)),
+                        "updated_at": formatter.string(from: Date(timeIntervalSince1970: Double(timestamp) / 1000)),
+                    ]
+
+                    let payloadData = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
+                    let payloadString = String(data: payloadData, encoding: .utf8) ?? "{}"
+
+                    try db.execute(sql: """
+                        INSERT OR IGNORE INTO syncOperations (operationId, entityType, entityId, operationType, payload, timestamp, synced)
+                        VALUES (?, 'handle', ?, 'create', ?, ?, 0)
+                    """, arguments: [UUID().uuidString, handleId, payloadString, timestamp])
+                }
+
+                // Find ALL echoes that don't have a pending or completed syncOperation
+                let unsyncedEchoes = try Row.fetchAll(db, sql: """
+                    SELECT e.id, e.handleId, e.isRecurring, e.intervalsJSON,
+                           e.fireDate, e.isActive, e.nextFireDate, e.isAlerted,
+                           e.lastAcknowledgedAt, e.createdAt, e.updatedAt
+                    FROM echoes e
+                    WHERE e.syncStatus != 'synced'
+                    AND NOT EXISTS (
+                        SELECT 1 FROM syncOperations so
+                        WHERE so.entityId = e.id
+                    )
+                """)
+
+                for echo in unsyncedEchoes {
+                    let echoId = echo["id"] as? String ?? ""
+                    let timestamp = echo["updatedAt"] as? Int64 ?? Int64(Date().timeIntervalSince1970 * 1000)
+
+                    let isRecurring: Bool = {
+                        if let b = echo["isRecurring"] as? Bool { return b }
+                        if let i = echo["isRecurring"] as? Int64 { return i != 0 }
+                        if let i = echo["isRecurring"] as? Int { return i != 0 }
+                        return false
+                    }()
+
+                    let isActive: Bool = {
+                        if let b = echo["isActive"] as? Bool { return b }
+                        if let i = echo["isActive"] as? Int64 { return i != 0 }
+                        if let i = echo["isActive"] as? Int { return i != 0 }
+                        return true
+                    }()
+
+                    let isAlerted: Bool = {
+                        if let b = echo["isAlerted"] as? Bool { return b }
+                        if let i = echo["isAlerted"] as? Int64 { return i != 0 }
+                        if let i = echo["isAlerted"] as? Int { return i != 0 }
+                        return false
+                    }()
+
+                    var payload: [String: Any] = [
+                        "handle_id": echo["handleId"] as? String ?? "",
+                        "is_recurring": isRecurring,
+                        "fire_date": echo["fireDate"] as? Int64 ?? 0,
+                        "is_active": isActive,
+                        "is_alerted": isAlerted,
+                        "created_at": formatter.string(from: Date(timeIntervalSince1970: Double(echo["createdAt"] as? Int64 ?? 0) / 1000)),
+                        "updated_at": formatter.string(from: Date(timeIntervalSince1970: Double(timestamp) / 1000)),
+                    ]
+
+                    if let intervalsJSON = echo["intervalsJSON"] as? String {
+                        payload["intervals_json"] = intervalsJSON
+                    }
+                    if let nextFireDate = echo["nextFireDate"] as? Int64 {
+                        payload["next_fire_date"] = nextFireDate
+                    }
+                    if let lastAck = echo["lastAcknowledgedAt"] as? Int64 {
+                        payload["last_acknowledged_at"] = lastAck
+                    }
+
+                    let payloadData = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
+                    let payloadString = String(data: payloadData, encoding: .utf8) ?? "{}"
+
+                    try db.execute(sql: """
+                        INSERT OR IGNORE INTO syncOperations (operationId, entityType, entityId, operationType, payload, timestamp, synced)
+                        VALUES (?, 'echo', ?, 'create', ?, ?, 0)
+                    """, arguments: [UUID().uuidString, echoId, payloadString, timestamp])
+                }
+
                 let noteCount = unsyncedNotes.count
                 let sectionCount = unsyncedSections.count
-                if noteCount > 0 || sectionCount > 0 {
-                    print("[Sync] Enqueued \(noteCount) notes and \(sectionCount) sections for initial sync")
+                let handleCount = unsyncedHandles.count
+                let echoCount = unsyncedEchoes.count
+                if noteCount > 0 || sectionCount > 0 || handleCount > 0 || echoCount > 0 {
+                    print("[Sync] Enqueued \(noteCount) notes, \(sectionCount) sections, \(handleCount) handles, and \(echoCount) echoes for initial sync")
                 }
             }
         } catch {
@@ -367,6 +480,7 @@ actor SyncEngine {
         let timestamp = lastSyncTimestamp ?? Date(timeIntervalSince1970: 0)
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        print("[Sync] Pulling changes since \(formatter.string(from: timestamp))")
 
         let request = SyncPullRequest(
             deviceId: deviceId,
@@ -439,6 +553,7 @@ actor SyncEngine {
             }
 
             // Apply note updates/creates — create missing modules from synced metadata
+            print("[Sync] Pull received \(response.notes.count) notes, \(response.sections.count) sections, \((response.handles ?? []).count) handles, \((response.echoes ?? []).count) echoes")
             for remoteNote in response.notes {
                 let localNote = remoteNote.toLocal()
 
@@ -453,7 +568,9 @@ actor SyncEngine {
                         mergedNote.aiTags = existing.aiTags
                         mergedNote.viewCount = existing.viewCount
                         try mergedNote.update(db)
-                        print("[Sync] Updated note \(localNote.id.prefix(8)) (v\(existing.serverVersion ?? 0) → v\(localNote.localVersion))")
+                        print("[Sync] Updated note \(localNote.id.prefix(8)) (v\(existing.serverVersion ?? 0) → v\(localNote.localVersion)) body=\(localNote.body.prefix(50))")
+                    } else {
+                        print("[Sync] Skipped note \(localNote.id.prefix(8)) (local v\(existing.serverVersion ?? 0) >= remote v\(localNote.localVersion)) body=\(localNote.body.prefix(50))")
                     }
                 } else {
                     // INSERT path — new note from another device
@@ -503,6 +620,27 @@ actor SyncEngine {
                 }
             }
 
+            // Apply echo updates/creates (Echo cloud sync)
+            if let remoteEchoes = response.echoes {
+                for remoteEcho in remoteEchoes {
+                    let localEcho = remoteEcho.toLocal()
+
+                    do {
+                        if let existing = try Echo.fetchOne(db, key: localEcho.id) {
+                            if (existing.serverVersion ?? 0) < localEcho.localVersion {
+                                try localEcho.update(db)
+                                print("[Sync] Updated echo \(localEcho.id.prefix(8))")
+                            }
+                        } else {
+                            try localEcho.insert(db)
+                            print("[Sync] Inserted new echo \(localEcho.id.prefix(8))")
+                        }
+                    } catch {
+                        print("[Sync] Skipping echo \(localEcho.id): \(error.localizedDescription)")
+                    }
+                }
+            }
+
             // Apply section updates/creates (skip individual failures)
             for remoteSection in response.sections {
                 let localSection = remoteSection.toLocal()
@@ -526,7 +664,8 @@ actor SyncEngine {
             let pulledNoteIds = response.notes.map { $0.id.uppercased() }
             let pulledSectionIds = response.sections.map { $0.id.uppercased() }
             let pulledHandleIds = (response.handles ?? []).map { $0.id.uppercased() }
-            let allPulledIds = pulledNoteIds + pulledSectionIds + pulledHandleIds
+            let pulledEchoIds = (response.echoes ?? []).map { $0.id.uppercased() }
+            let allPulledIds = pulledNoteIds + pulledSectionIds + pulledHandleIds + pulledEchoIds
             if !allPulledIds.isEmpty {
                 let placeholders = allPulledIds.map { _ in "?" }.joined(separator: ",")
                 let deletedOps = try Int.fetchOne(db, sql: """
@@ -574,6 +713,15 @@ actor SyncEngine {
                 }
             }
 
+            // Apply echo deletions (Echo cloud sync)
+            if let deletedEchoIds = response.deletedEchoIds {
+                for echoId in deletedEchoIds {
+                    let normalizedId = echoId.uppercased()
+                    // Hard delete echoes (they don't have soft-delete semantics locally)
+                    try db.execute(sql: "DELETE FROM echoes WHERE id = ?", arguments: [normalizedId])
+                }
+            }
+
             // Clean up empty modules — when notes get reassigned on another device,
             // the old module becomes empty and should be removed.
             // Only clean modules older than 5 minutes to avoid deleting newly created empty ones.
@@ -596,7 +744,7 @@ actor SyncEngine {
             try SyncOperationRecord.fetchAll(db, sql: """
                 SELECT * FROM syncOperations
                 WHERE synced = 0
-                ORDER BY CASE entityType WHEN 'note' THEN 0 WHEN 'handle' THEN 1 ELSE 2 END, timestamp
+                ORDER BY CASE entityType WHEN 'note' THEN 0 WHEN 'handle' THEN 1 WHEN 'echo' THEN 2 ELSE 3 END, timestamp
                 LIMIT 10
             """)
         }
@@ -611,7 +759,7 @@ actor SyncEngine {
         let entityVersions = try await database.read { db -> [String: Int] in
             var versions: [String: Int] = [:]
             for op in operations {
-                let table = op.entityType == "note" ? "notes" : (op.entityType == "handle" ? "handles" : "sections")
+                let table = op.entityType == "note" ? "notes" : (op.entityType == "handle" ? "handles" : (op.entityType == "echo" ? "echoes" : "sections"))
                 if let version = try Int.fetchOne(db, sql: "SELECT COALESCE(serverVersion, localVersion, 1) FROM \(table) WHERE id = ?", arguments: [op.entityId]) {
                     versions[op.entityId] = version
                 }
@@ -666,20 +814,23 @@ actor SyncEngine {
                 """, arguments: [operationId])
             }
 
-            // Update entities that were synced
+            // Update entities that were synced — mark as synced but don't set serverVersion.
+            // The subsequent pull will set serverVersion from the server's actual version.
+            // Setting it from localVersion caused bugs where localVersion (e.g. 36 from edits)
+            // was far higher than the server's version (1), blocking all future pull updates.
             for operationId in response.accepted {
                 if let op = operations.first(where: { $0.operationId == operationId }) {
                     let table: String
                     switch op.entityType {
                     case "note": table = "notes"
                     case "section": table = "sections"
-                    case "handle": table = "handles"  // Handle Loop support
+                    case "handle": table = "handles"
+                    case "echo": table = "echoes"
                     default: table = "sections"
                     }
-                    let pushedVersion = entityVersions[op.entityId] ?? 1
                     try db.execute(sql: """
-                        UPDATE \(table) SET syncStatus = 'synced', serverVersion = ? WHERE id = ?
-                    """, arguments: [pushedVersion, op.entityId])
+                        UPDATE \(table) SET syncStatus = 'synced' WHERE id = ?
+                    """, arguments: [op.entityId])
                 }
             }
         }
@@ -717,7 +868,8 @@ actor SyncEngine {
             switch conflict.entityType {
             case "note": table = "notes"
             case "section": table = "sections"
-            case "handle": table = "handles"  // Handle Loop support
+            case "handle": table = "handles"
+            case "echo": table = "echoes"
             default: table = "sections"
             }
             try db.execute(sql: """
@@ -783,6 +935,12 @@ actor SyncEngine {
         let sectionChanges = channel.postgresChange(
             AnyAction.self, schema: "public", table: "sections"
         )
+        let handleChanges = channel.postgresChange(
+            AnyAction.self, schema: "public", table: "handles"
+        )
+        let echoChanges = channel.postgresChange(
+            AnyAction.self, schema: "public", table: "echoes"
+        )
 
         realtimeTask = Task {
             async let noteLoop: Void = {
@@ -795,7 +953,17 @@ actor SyncEngine {
                     await self.scheduleRealtimeSync()
                 }
             }()
-            _ = await (noteLoop, sectionLoop)
+            async let handleLoop: Void = {
+                for await _ in handleChanges {
+                    await self.scheduleRealtimeSync()
+                }
+            }()
+            async let echoLoop: Void = {
+                for await _ in echoChanges {
+                    await self.scheduleRealtimeSync()
+                }
+            }()
+            _ = await (noteLoop, sectionLoop, handleLoop, echoLoop)
         }
 
         await channel.subscribe()
@@ -819,8 +987,8 @@ actor SyncEngine {
     /// Debounced sync trigger — waits for quiet before syncing
     /// Skips if we just pushed (self-echo) or if already syncing
     private func scheduleRealtimeSync() {
-        // Ignore Realtime events within 5 seconds of our own push (self-echo)
-        if Date().timeIntervalSince(lastPushTime) < 5.0 { return }
+        // Ignore Realtime events within 2 seconds of our own push (self-echo)
+        if Date().timeIntervalSince(lastPushTime) < 2.0 { return }
         // Don't queue if already syncing
         guard !isSyncing else { return }
         debouncedSyncTask?.cancel()
@@ -836,13 +1004,11 @@ actor SyncEngine {
     private var debouncedPushTask: Task<Void, Never>?
 
     func schedulePush() {
-        // Don't schedule if already syncing — it'll pick up pending ops
-        guard !isSyncing else { return }
         debouncedPushTask?.cancel()
         debouncedPushTask = Task {
             try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 second debounce
             guard !Task.isCancelled else { return }
-            guard !isSyncing else { return } // double-check before firing
+            // sync() handles isSyncing internally via pendingSync flag
             await sync()
         }
     }

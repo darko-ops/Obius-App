@@ -162,12 +162,14 @@ class AppState: ObservableObject {
             self.noteRepository = NoteRepository(database: database)
             self.sectionRepository = SectionRepository(database: database)
             self.handleRepository = HandleRepository(database: database)  // Handle Loop support
-            self.echoRepository = EchoRepository(database: database)    // Echo alert/reminder support
+            self.echoRepository = EchoRepository(database: database)      // Echo alert/reminder support
             self.shareLinkRepository = ShareLinkRepository(database: database)  // Share link support
             self.commentRepository = CommentRepository(database: database)      // Share comments support
             self.moduleRepository = ModuleRepository(database: database)        // Module (folder) support
             self.syncEngine = SyncEngine(database: database)
             self.syncLogger = SyncOperationLogger(database: database)
+            self.handleRepository.syncLogger = syncLogger  // Wire up handle cloud sync
+            self.echoRepository.syncLogger = syncLogger  // Wire up echo cloud sync
 
             // Initialize Split-Storage Engine
             self.coldStore = ColdStore.shared

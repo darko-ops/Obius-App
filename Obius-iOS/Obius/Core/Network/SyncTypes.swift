@@ -18,17 +18,20 @@ struct SyncPullResponse: Decodable {
     let notes: [RemoteNote]
     let sections: [RemoteSection]
     let handles: [RemoteHandle]?  // Handle Loop support
+    let echoes: [RemoteEcho]?  // Echo cloud sync
     let deletedNoteIds: [String]
     let deletedSectionIds: [String]
     let deletedHandleIds: [String]?  // Handle Loop support
+    let deletedEchoIds: [String]?  // Echo cloud sync
     let serverTimestamp: String
     let hasMore: Bool
 
     enum CodingKeys: String, CodingKey {
-        case notes, sections, handles
+        case notes, sections, handles, echoes
         case deletedNoteIds = "deleted_note_ids"
         case deletedSectionIds = "deleted_section_ids"
         case deletedHandleIds = "deleted_handle_ids"
+        case deletedEchoIds = "deleted_echo_ids"
         case serverTimestamp = "server_timestamp"
         case hasMore = "has_more"
     }
@@ -246,6 +249,61 @@ struct RemoteSection: Decodable {
             createdAt: parseTimestamp(createdAt),
             updatedAt: parseTimestamp(updatedAt),
             deletedAt: deletedAt.flatMap { parseTimestamp($0) },
+            localVersion: version,
+            serverVersion: version,
+            syncStatus: .synced
+        )
+    }
+}
+
+// MARK: - Remote Echo (Cloud Sync)
+
+struct RemoteEcho: Decodable {
+    let id: String
+    let userId: String
+    let handleId: String
+    let isRecurring: FlexBool
+    let intervalsJson: String?
+    let fireDate: Int64
+    let isActive: FlexBool
+    let nextFireDate: Int64?
+    let isAlerted: FlexBool
+    let lastAcknowledgedAt: Int64?
+    let createdAt: String
+    let updatedAt: String
+    let deletedAt: String?
+    let version: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case handleId = "handle_id"
+        case isRecurring = "is_recurring"
+        case intervalsJson = "intervals_json"
+        case fireDate = "fire_date"
+        case isActive = "is_active"
+        case nextFireDate = "next_fire_date"
+        case isAlerted = "is_alerted"
+        case lastAcknowledgedAt = "last_acknowledged_at"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case deletedAt = "deleted_at"
+        case version
+    }
+
+    func toLocal() -> Echo {
+        Echo(
+            id: id.uppercased(),
+            handleId: handleId.uppercased(),
+            isRecurring: isRecurring.value,
+            intervalsJSON: intervalsJson,
+            fireDate: fireDate,
+            isActive: isActive.value,
+            nextFireDate: nextFireDate,
+            isAlerted: isAlerted.value,
+            lastAcknowledgedAt: lastAcknowledgedAt,
+            createdAt: parseTimestamp(createdAt),
+            updatedAt: parseTimestamp(updatedAt),
             localVersion: version,
             serverVersion: version,
             syncStatus: .synced

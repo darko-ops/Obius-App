@@ -16,6 +16,8 @@ import type {
   ConflictInfo,
   Note,
   Section,
+  Handle,
+  Echo,
 } from '../_shared/types.ts';
 import { requireFeature, requireEntityCreate } from '../_shared/entitlements.ts';
 
@@ -112,10 +114,11 @@ async function processOperation(
   deviceId: string,
   op: SyncOperation
 ): Promise<ProcessResult> {
-  const table = op.entity_type === 'note' ? 'notes' : 'sections';
+  const tableMap: Record<string, string> = { note: 'notes', section: 'sections', echo: 'echoes', handle: 'handles' };
+  const table = tableMap[op.entity_type] || 'sections';
 
   // Sanitize boolean fields that may arrive as strings from older clients
-  const boolFields = ['is_pinned', 'is_collapsed'];
+  const boolFields = ['is_pinned', 'is_collapsed', 'is_recurring', 'is_active', 'is_alerted'];
   for (const field of boolFields) {
     if (typeof op.payload[field] === 'string') {
       op.payload[field] = op.payload[field] === 'true' || op.payload[field] === '1';
@@ -133,7 +136,10 @@ async function processOperation(
   // Strip fields that don't exist in Supabase tables to prevent insert errors
   const noteFields = new Set(['title', 'ai_title', 'ai_summary', 'body', 'body_rich_text', 'interstitial_content', 'interstitial_rich_content', 'is_pinned', 'color_intent', 'module_id', 'module_name', 'module_icon', 'group_name', 'created_at', 'updated_at', 'deleted_at']);
   const sectionFields = new Set(['note_id', 'content', 'content_type', 'parent_section_id', 'order_key', 'indent_level', 'is_collapsed', 'color_intent', 'handle_id', 'created_at', 'updated_at', 'deleted_at']);
-  const allowedFields = op.entity_type === 'note' ? noteFields : sectionFields;
+  const handleFields = new Set(['name', 'display_name', 'content', 'intent', 'created_at', 'updated_at', 'deleted_at']);
+  const echoFields = new Set(['handle_id', 'is_recurring', 'intervals_json', 'fire_date', 'is_active', 'next_fire_date', 'is_alerted', 'last_acknowledged_at', 'created_at', 'updated_at', 'deleted_at']);
+  const fieldMap: Record<string, Set<string>> = { note: noteFields, section: sectionFields, handle: handleFields, echo: echoFields };
+  const allowedFields = fieldMap[op.entity_type] || sectionFields;
   for (const key of Object.keys(op.payload)) {
     if (!allowedFields.has(key)) {
       delete op.payload[key];
@@ -254,7 +260,7 @@ async function processOperation(
             server_version: existing.version,
             client_version: op.client_version,
             resolution: 'server_wins',
-            merged_entity: existing as Note | Section,
+            merged_entity: existing as Note | Section | Handle | Echo,
           },
         };
       }

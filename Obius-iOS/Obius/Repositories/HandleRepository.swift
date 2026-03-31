@@ -5,6 +5,7 @@ import Combine
 @MainActor
 final class HandleRepository: ObservableObject {
     private let database: DatabaseManager
+    var syncLogger: SyncOperationLogger?
 
     @Published private(set) var handles: [Handle] = []
     private var cancellables = Set<AnyCancellable>()
@@ -54,7 +55,7 @@ final class HandleRepository: ObservableObject {
 
         let normalizedName = Handle.normalizeName(name)
 
-        return try await database.write { db in
+        let handle = try await database.write { db in
             // Check if name already exists (active)
             let existingActive = try Handle
                 .filter(Handle.Columns.name == normalizedName)
@@ -88,6 +89,8 @@ final class HandleRepository: ObservableObject {
             try handle.insert(db)
             return handle
         }
+        syncLogger?.logHandleCreate(handle)
+        return handle
     }
 
     // MARK: - Read
@@ -138,7 +141,7 @@ final class HandleRepository: ObservableObject {
     // MARK: - Update
 
     func updateHandleContent(id: String, content: String, richText: String? = nil) async throws {
-        try await database.write { db in
+        let updatedHandle = try await database.write { db -> Handle? in
             guard var handle = try Handle.fetchOne(db, key: id) else {
                 throw HandleError.notFound(id)
             }
@@ -152,16 +155,24 @@ final class HandleRepository: ObservableObject {
                 UPDATE sections SET content = ?, richContent = ?, updatedAt = ?, localVersion = localVersion + 1, syncStatus = 'pending'
                 WHERE handleId = ? AND deletedAt IS NULL
             """, arguments: [content, richText, now, id])
+            return handle
+        }
+        if let handle = updatedHandle {
+            syncLogger?.logHandleUpdate(handle)
         }
     }
 
     func updateHandleIntent(id: String, intent: IntentType) async throws {
-        try await database.write { db in
+        let updatedHandle = try await database.write { db -> Handle? in
             guard var handle = try Handle.fetchOne(db, key: id) else {
                 throw HandleError.notFound(id)
             }
             handle.setIntent(intent)
             try handle.update(db)
+            return handle
+        }
+        if let handle = updatedHandle {
+            syncLogger?.logHandleUpdate(handle)
         }
     }
 
@@ -173,7 +184,7 @@ final class HandleRepository: ObservableObject {
 
         let normalizedName = Handle.normalizeName(newName)
 
-        try await database.write { db in
+        let updatedHandle = try await database.write { db -> Handle? in
             // Check if new name already exists (excluding this handle)
             let existingCount = try Handle
                 .filter(Handle.Columns.name == normalizedName)
@@ -193,6 +204,10 @@ final class HandleRepository: ObservableObject {
             handle.displayName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
             handle.touch()
             try handle.update(db)
+            return handle
+        }
+        if let handle = updatedHandle {
+            syncLogger?.logHandleUpdate(handle)
         }
     }
 
@@ -212,6 +227,7 @@ final class HandleRepository: ObservableObject {
                 WHERE handleId = ?
             """, arguments: [Int64(Date().timeIntervalSince1970 * 1000), id])
         }
+        syncLogger?.logHandleDelete(id)
     }
 
     func permanentlyDelete(id: String) async throws {

@@ -5,7 +5,7 @@ import Combine
 final class DatabaseManager {
     private let migrator: DatabaseMigrator
 
-    static let schemaVersion = 33
+    static let schemaVersion = 36
 
     /// The App Group container path for the shared database
     static var appGroupDatabaseURL: URL? {
@@ -845,6 +845,57 @@ final class DatabaseManager {
             }
 
             try db.execute(sql: "UPDATE syncMetadata SET schemaVersion = 34")
+        }
+
+        // v35: Add sync columns to echoes table for cloud sync
+        migrator.registerMigration("v35_echo_sync_fields") { db in
+            try db.execute(sql: "ALTER TABLE echoes ADD COLUMN localVersion INTEGER NOT NULL DEFAULT 1")
+            try db.execute(sql: "ALTER TABLE echoes ADD COLUMN serverVersion INTEGER")
+            try db.execute(sql: "ALTER TABLE echoes ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'pending'")
+
+            try db.execute(sql: "UPDATE syncMetadata SET schemaVersion = 35")
+        }
+
+        // v36: Recreate echoes table without FK constraint on handleId.
+        // Handles don't fully sync to cloud, so the FK causes echo inserts
+        // to fail on devices where the handle doesn't exist locally yet.
+        migrator.registerMigration("v36_echo_drop_handle_fk") { db in
+            // Preserve existing data
+            try db.execute(sql: "ALTER TABLE echoes RENAME TO echoes_old")
+
+            // Recreate without FK reference
+            try db.create(table: "echoes") { t in
+                t.column("id", .text).primaryKey()
+                t.column("handleId", .text).notNull()
+                t.column("isRecurring", .boolean).notNull().defaults(to: false)
+                t.column("intervalsJSON", .text)
+                t.column("fireDate", .integer).notNull()
+                t.column("isActive", .boolean).notNull().defaults(to: true)
+                t.column("nextFireDate", .integer)
+                t.column("isAlerted", .boolean).notNull().defaults(to: false)
+                t.column("lastAcknowledgedAt", .integer)
+                t.column("createdAt", .integer).notNull()
+                t.column("updatedAt", .integer).notNull()
+                t.column("localVersion", .integer).notNull().defaults(to: 1)
+                t.column("serverVersion", .integer)
+                t.column("syncStatus", .text).notNull().defaults(to: "pending")
+            }
+
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            try db.execute(sql: """
+                INSERT INTO echoes (id, handleId, isRecurring, intervalsJSON, fireDate, isActive, nextFireDate, isAlerted, lastAcknowledgedAt, createdAt, updatedAt, localVersion, serverVersion, syncStatus)
+                SELECT id, handleId, isRecurring, intervalsJSON, fireDate, isActive, nextFireDate, isAlerted, lastAcknowledgedAt,
+                       COALESCE(createdAt, ?), COALESCE(updatedAt, ?),
+                       COALESCE(localVersion, 1), serverVersion, COALESCE(syncStatus, 'pending')
+                FROM echoes_old
+            """, arguments: [now, now])
+            try db.execute(sql: "DROP TABLE echoes_old")
+
+            try db.create(index: "idx_echoes_handle", on: "echoes", columns: ["handleId"])
+            try db.create(index: "idx_echoes_active", on: "echoes", columns: ["isActive"])
+            try db.create(index: "idx_echoes_next_fire", on: "echoes", columns: ["nextFireDate"])
+
+            try db.execute(sql: "UPDATE syncMetadata SET schemaVersion = 36")
         }
 
         self.migrator = migrator

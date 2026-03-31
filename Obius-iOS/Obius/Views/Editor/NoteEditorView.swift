@@ -57,6 +57,7 @@ private struct NoteEditorContent: View {
     @State private var editingTitle = false
     @State private var titleText = ""
     @State private var bodyText = ""
+    @State private var isExternalBodyUpdate = false
     @State private var showingTagInput = false
     @State private var newTagText = ""
     @FocusState private var tagFieldFocused: Bool
@@ -107,6 +108,9 @@ private struct NoteEditorContent: View {
     /// Log sync operations for any locally-modified (pending) note and sections.
     /// Awaitable — ensures all operations are written to DB before returning.
     private func syncPendingEntitiesAsync(viewModel: NoteEditorViewModel) async {
+        let totalSections = viewModel.sections.count
+        let pendingSections = viewModel.sections.filter { $0.syncStatus == .pending }.count
+        print("[Sync] syncPendingEntities: note=\(viewModel.note?.syncStatus.rawValue ?? "nil") sections=\(totalSections) (pending=\(pendingSections))")
         if let note = viewModel.note, note.syncStatus == .pending {
             if note.serverVersion == nil {
                 await appState.syncLogger.logNoteCreateSync(note)
@@ -114,13 +118,18 @@ private struct NoteEditorContent: View {
                 await appState.syncLogger.logNoteUpdateSync(note)
             }
         }
+        var pendingSectionCount = 0
         for section in viewModel.sections {
             guard section.syncStatus == .pending else { continue }
+            pendingSectionCount += 1
             if section.serverVersion == nil {
                 await appState.syncLogger.logSectionCreateSync(section)
             } else {
                 await appState.syncLogger.logSectionUpdateSync(section)
             }
+        }
+        if pendingSectionCount > 0 {
+            print("[Sync] Logged \(pendingSectionCount) pending section(s)")
         }
     }
 
@@ -149,12 +158,20 @@ private struct NoteEditorContent: View {
                     viewModel.focusedSectionId = newValue
                 }
             }
+            .onChange(of: viewModel.isLoading) { _, isLoading in
+                // Sync bodyText when the ViewModel finishes loading from DB
+                if !isLoading, let body = viewModel.note?.body, body != bodyText {
+                    bodyText = body
+                }
+            }
             .onAppear {
                 // Wire up debounced sync logging — fires after edits stop for 2 seconds
                 viewModel.onContentChanged = { [weak viewModel] in
                     guard let viewModel else { return }
-                    Task { @MainActor in
+                    Task {
+                        print("[Sync] Content changed — logging pending entities and scheduling push")
                         await syncPendingEntitiesAsync(viewModel: viewModel)
+                        await appState.syncEngine.schedulePush()
                     }
                 }
             }
@@ -1376,6 +1393,10 @@ private struct NoteEditorContent: View {
             richText: viewModel.note?.bodyRichText,
             minHeight: isPageEmpty ? 100 : 44,
             onContentChange: { newValue, richText in
+                guard !isExternalBodyUpdate else {
+                    isExternalBodyUpdate = false
+                    return
+                }
                 Task {
                     try? await viewModel.updateBody(newValue, richText: richText)
                 }
@@ -1396,9 +1417,11 @@ private struct NoteEditorContent: View {
         .onAppear {
             bodyText = viewModel.note?.body ?? ""
         }
-        .onChange(of: viewModel.note?.body) { _, newBody in
-            if let newBody = newBody, newBody != bodyText {
-                bodyText = newBody
+        .onReceive(viewModel.$note) { note in
+            if let body = note?.body, body != bodyText {
+                print("[Sync] Editor body updated from observation: \(body.prefix(50))")
+                isExternalBodyUpdate = true
+                bodyText = body
             }
         }
         #else
@@ -1420,6 +1443,10 @@ private struct NoteEditorContent: View {
                 }
             }
             .onChange(of: bodyText) { _, newValue in
+                guard !isExternalBodyUpdate else {
+                    isExternalBodyUpdate = false
+                    return
+                }
                 Task {
                     try? await viewModel.updateBody(newValue)
                 }
@@ -1429,6 +1456,7 @@ private struct NoteEditorContent: View {
             }
             .onChange(of: viewModel.note?.body) { _, newBody in
                 if let newBody = newBody, newBody != bodyText {
+                    print("[Sync] Editor body updated from observation: \(newBody.prefix(50))")
                     bodyText = newBody
                 }
             }
@@ -1779,13 +1807,21 @@ struct BodyTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: SelfSizingTextView, context: Context) {
-        if !textView.isFirstResponder, textView.text != text {
+        if textView.text != text {
+            // Update text even when focused — needed for sync updates from other devices.
+            // Preserve cursor position as best we can.
+            let selectedRange = textView.selectedRange
             if let richText = richText,
                let attrText = RichTextHelper.deserialize(richText) {
                 textView.attributedText = attrText
             } else {
                 textView.text = text
             }
+            // Restore cursor if still valid
+            if selectedRange.location + selectedRange.length <= (textView.text?.count ?? 0) {
+                textView.selectedRange = selectedRange
+            }
+            HashtagHelper.applyHighlighting(to: textView)
         }
         textView.invalidateIntrinsicContentSize()
 
