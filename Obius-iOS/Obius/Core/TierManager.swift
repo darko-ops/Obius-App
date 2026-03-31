@@ -15,7 +15,7 @@ enum Tier: String, CaseIterable {
 struct TierLimits {
     let maxNotes: Int?          // nil = unlimited
     let maxSectionsPerNote: Int?
-    let maxAIActionsPerDay: Int
+    let maxTokensPerDay: Int
     let cloudSync: Bool
     let commits: Bool
     let shareLinks: Bool
@@ -27,7 +27,7 @@ struct TierLimits {
     static let free = TierLimits(
         maxNotes: 50,
         maxSectionsPerNote: nil,
-        maxAIActionsPerDay: 10,
+        maxTokensPerDay: 50_000,
         cloudSync: false,
         commits: false,
         shareLinks: false,
@@ -40,7 +40,7 @@ struct TierLimits {
     static let pro = TierLimits(
         maxNotes: nil,
         maxSectionsPerNote: nil,
-        maxAIActionsPerDay: 100,
+        maxTokensPerDay: 500_000,
         cloudSync: true,
         commits: true,
         shareLinks: true,
@@ -53,7 +53,7 @@ struct TierLimits {
     static let founding = TierLimits(
         maxNotes: nil,
         maxSectionsPerNote: nil,
-        maxAIActionsPerDay: 100,
+        maxTokensPerDay: 500_000,
         cloudSync: true,
         commits: true,
         shareLinks: true,
@@ -78,7 +78,7 @@ enum GatedFeature: String, CaseIterable {
     var displayName: String {
         switch self {
         case .notes: return "Notes"
-        case .aiActions: return "AI Actions"
+        case .aiActions: return "AI Tokens"
         case .aiWorkspace: return "AI Workspace"
         case .cloudSync: return "Cloud Sync"
         case .commits: return "Versions"
@@ -91,7 +91,7 @@ enum GatedFeature: String, CaseIterable {
     var upgradeMessage: String {
         switch self {
         case .notes: return "You've reached the free limit of 50 notes. Upgrade to create unlimited notes."
-        case .aiActions: return "You've used all your AI actions for today. Upgrade for more."
+        case .aiActions: return "You've used all your AI tokens for today. Upgrade for more."
         case .aiWorkspace: return "The AI workspace is available on paid plans. Upgrade to unlock it."
         case .cloudSync: return "Multi-device sync is available on paid plans. Upgrade to sync everywhere."
         case .commits: return "Version history is available on paid plans. Upgrade to track your note history."
@@ -127,7 +127,7 @@ final class TierManager: ObservableObject {
     @Published private(set) var currentTier: Tier = .free
     @Published var showPaywall = false
     @Published var paywallFeature: GatedFeature?
-    @Published private(set) var aiActionsUsedToday: Int = 0
+    @Published private(set) var tokensUsedToday: Int = 0
     @Published var isFoundingMember: Bool = false
     @Published private(set) var foundersSpotsTaken: Int = 0
 
@@ -153,8 +153,8 @@ final class TierManager: ObservableObject {
     private enum Keys {
         static let tier = "obius_tier"
         static let isFoundingMember = "obius_is_founding_member"
-        static let aiActionsToday = "obius_ai_actions_today"
-        static let aiActionsDate = "obius_ai_actions_date"
+        static let tokensToday = "obius_tokens_today"
+        static let tokensDate = "obius_tokens_date"
     }
 
     private init() {
@@ -182,6 +182,9 @@ final class TierManager: ObservableObject {
         await StoreManager.shared.refreshCustomerInfo()
 
         await fetchFoundersSpotsCount()
+
+        // Sync token usage from the server
+        await syncTokenUsage()
     }
 
     private func loadPersistedState() {
@@ -190,7 +193,7 @@ final class TierManager: ObservableObject {
             currentTier = tier
         }
         isFoundingMember = UserDefaults.standard.bool(forKey: Keys.isFoundingMember)
-        aiActionsUsedToday = UserDefaults.standard.integer(forKey: Keys.aiActionsToday)
+        tokensUsedToday = UserDefaults.standard.integer(forKey: Keys.tokensToday)
     }
 
     // MARK: - Tier Updates
@@ -285,7 +288,7 @@ final class TierManager: ObservableObject {
 
     func canUseAI() -> Bool {
         resetIfNewDay()
-        return aiActionsUsedToday < limits.maxAIActionsPerDay
+        return tokensUsedToday < limits.maxTokensPerDay
     }
 
     func canUseFeature(_ feature: GatedFeature) -> Bool {
@@ -324,30 +327,75 @@ final class TierManager: ObservableObject {
         return false
     }
 
-    // MARK: - AI Action Counting
+    // MARK: - Token Counting
 
-    func recordAIAction() {
+    func recordTokenUsage(_ tokens: Int) {
         resetIfNewDay()
-        aiActionsUsedToday += 1
-        UserDefaults.standard.set(aiActionsUsedToday, forKey: Keys.aiActionsToday)
+        tokensUsedToday += tokens
+        UserDefaults.standard.set(tokensUsedToday, forKey: Keys.tokensToday)
     }
 
     func resetIfNewDay() {
         let today = Calendar.current.startOfDay(for: Date())
         let todayString = ISO8601DateFormatter().string(from: today)
 
-        let storedDate = UserDefaults.standard.string(forKey: Keys.aiActionsDate) ?? ""
+        let storedDate = UserDefaults.standard.string(forKey: Keys.tokensDate) ?? ""
         if storedDate != todayString {
-            aiActionsUsedToday = 0
-            UserDefaults.standard.set(0, forKey: Keys.aiActionsToday)
-            UserDefaults.standard.set(todayString, forKey: Keys.aiActionsDate)
+            tokensUsedToday = 0
+            UserDefaults.standard.set(0, forKey: Keys.tokensToday)
+            UserDefaults.standard.set(todayString, forKey: Keys.tokensDate)
+        }
+    }
+
+    /// Sync token usage from the server (usage_log table)
+    func syncTokenUsage() async {
+        guard SupabaseManager.shared.isAuthenticated,
+              let userId = SupabaseManager.shared.currentUser?.id.uuidString.lowercased() else { return }
+
+        resetIfNewDay()
+
+        let todayStart = Calendar.current.startOfDay(for: Date())
+        let todayISO = ISO8601DateFormatter().string(from: todayStart)
+
+        do {
+            struct UsageRow: Decodable {
+                let input_tokens: Int
+                let output_tokens: Int
+            }
+
+            let rows: [UsageRow] = try await SupabaseManager.shared.client
+                .from("usage_log")
+                .select("input_tokens, output_tokens")
+                .eq("user_id", value: userId)
+                .gte("created_at", value: todayISO)
+                .execute()
+                .value
+
+            let total = rows.reduce(0) { $0 + $1.input_tokens + $1.output_tokens }
+            tokensUsedToday = total
+            UserDefaults.standard.set(total, forKey: Keys.tokensToday)
+        } catch {
+            print("[TierManager] Failed to sync token usage: \(error)")
         }
     }
 
     // MARK: - Display Helpers
 
-    var aiActionsRemaining: Int {
-        max(0, limits.maxAIActionsPerDay - aiActionsUsedToday)
+    var tokensRemaining: Int {
+        max(0, limits.maxTokensPerDay - tokensUsedToday)
+    }
+
+    static func formatTokenCount(_ count: Int) -> String {
+        if count >= 1_000_000 {
+            let value = Double(count) / 1_000_000.0
+            return String(format: "%.1fM", value)
+        } else if count >= 1_000 {
+            let value = Double(count) / 1_000.0
+            return value.truncatingRemainder(dividingBy: 1) == 0
+                ? "\(Int(value))K"
+                : String(format: "%.1fK", value)
+        }
+        return "\(count)"
     }
 
     var tierDisplayName: String {

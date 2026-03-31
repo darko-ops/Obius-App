@@ -141,6 +141,10 @@ struct IntelligenceView: View {
             NavigationStack {
                 SettingsView()
             }
+            .frame(minWidth: 450, minHeight: 500)
+            .preferredColorScheme(.dark)
+            .environmentObject(appState)
+            .environmentObject(AuthManager.shared)
             .environmentObject(AppearanceManager.shared)
         }
         .sheet(isPresented: $showingLoops) {
@@ -215,10 +219,6 @@ struct IntelligenceView: View {
             ScrollView {
                 LazyVStack(spacing: 16) {
                     activeEchoesSection
-
-                    if !upcomingEchoInsights.isEmpty {
-                        upcomingEchoesSection
-                    }
 
                     trackedSection
 

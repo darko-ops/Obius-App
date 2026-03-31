@@ -373,12 +373,13 @@ private struct NotesListContent: View {
                         .padding(.horizontal, 20)
                         .padding(.vertical, 10)
                         .background(Color(white: 0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 10)
+                            RoundedRectangle(cornerRadius: 8)
                                 .stroke(Color(white: 0.3), lineWidth: 1)
                         )
                 }
+                .buttonStyle(.plain)
             }
         } else if !searchQuery.isEmpty && filteredNotes.isEmpty {
             ContentUnavailableView.search(text: searchQuery)
@@ -498,7 +499,8 @@ private struct NotesListContent: View {
                         .foregroundColor(.secondary)
                         .textCase(nil)
                         #if os(macOS)
-                        .listRowBackground(Color.black)
+                        .listRowBackground(Color(white: 0.06))
+                        .listSectionSeparator(.hidden)
                         #endif
                 }
             }
@@ -513,7 +515,8 @@ private struct NotesListContent: View {
                     .foregroundColor(.secondary)
                     .textCase(nil)
                     #if os(macOS)
-                    .listRowBackground(Color.black)
+                    .listRowBackground(Color(white: 0.06))
+                    .listSectionSeparator(.hidden)
                     #endif
             }
 
@@ -630,7 +633,8 @@ private struct NotesListContent: View {
                     .foregroundColor(.secondary)
                     .textCase(nil)
                     #if os(macOS)
-                    .listRowBackground(Color.black)
+                    .listRowBackground(Color(white: 0.06))
+                    .listSectionSeparator(.hidden)
                     #endif
             }
         }

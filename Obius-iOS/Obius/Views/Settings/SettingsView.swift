@@ -9,9 +9,16 @@ struct SettingsView: View {
     @State private var showingSignOut = false
     @State private var showingAuth = false
     @State private var showingEditProfile = false
+    @State private var settingsPath: [SettingsDestination] = []
+
+    enum SettingsDestination: Hashable {
+        case subscription
+        case dataManagement
+        case ledger
+    }
 
     var body: some View {
-        List {
+        Form {
             // Account Section
             SwiftUI.Section("Account") {
                 if authManager.isAuthenticated {
@@ -54,9 +61,7 @@ struct SettingsView: View {
 
             // Subscription Section
             SwiftUI.Section {
-                NavigationLink {
-                    SubscriptionView()
-                } label: {
+                NavigationLink(value: SettingsDestination.subscription) {
                     HStack {
                         Label("Subscription", systemImage: "crown")
                         Spacer()
@@ -69,9 +74,7 @@ struct SettingsView: View {
 
             // Privacy Section
             SwiftUI.Section("Privacy") {
-                NavigationLink {
-                    DataManagementView()
-                } label: {
+                NavigationLink(value: SettingsDestination.dataManagement) {
                     Label("Data Management", systemImage: "externaldrive")
                 }
             }
@@ -90,9 +93,7 @@ struct SettingsView: View {
 
             // Commits Section
             SwiftUI.Section("Versions") {
-                NavigationLink {
-                    LedgerView()
-                } label: {
+                NavigationLink(value: SettingsDestination.ledger) {
                     Label("Ledger", systemImage: "list.bullet.rectangle")
                 }
             }
@@ -115,7 +116,19 @@ struct SettingsView: View {
                 }
             }
         }
+        .formStyle(.grouped)
         .navigationTitle("Settings")
+        .navigationDestination(for: SettingsDestination.self) { destination in
+            switch destination {
+            case .subscription:
+                SubscriptionView()
+            case .dataManagement:
+                DataManagementView()
+            case .ledger:
+                LedgerView()
+                    .environmentObject(appState)
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Done") {

@@ -206,7 +206,7 @@ struct PaywallSheet: View {
             comparisonRow("Search & capture", free: "checkmark", paid: "checkmark")
             comparisonRow("Multi-device sync", free: nil, paid: "checkmark")
             comparisonRow("AI resurfacing", free: nil, paid: "checkmark")
-            comparisonRow("AI actions / day", free: "10", paid: "100")
+            comparisonRow("AI tokens / day", free: "50K", paid: "500K")
             comparisonRow("Version history", free: nil, paid: "checkmark")
             comparisonRow("Share links", free: nil, paid: "checkmark")
             comparisonRow("AI workspace", free: nil, paid: "checkmark")
@@ -382,7 +382,7 @@ extension GatedFeature {
     var softMessage: String {
         switch self {
         case .notes: return "Unlock unlimited notes"
-        case .aiActions: return "Get more AI actions"
+        case .aiActions: return "Get more AI tokens"
         case .aiWorkspace: return "Unlock the AI workspace"
         case .cloudSync: return "Sync across all your devices"
         case .commits: return "Unlock version history"

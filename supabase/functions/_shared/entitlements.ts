@@ -12,11 +12,11 @@ interface UserTierInfo {
   expiresAt: string | null;
 }
 
-// Per-tier daily AI action limits (must match iOS TierLimits)
-const AI_ACTION_LIMITS: Record<SubscriptionTier, number> = {
-  free: 10,
-  pro: 100,
-  founding: 100,
+// Per-tier daily token limits (must match iOS TierLimits)
+const AI_TOKEN_LIMITS: Record<SubscriptionTier, number> = {
+  free: 50_000,
+  pro: 500_000,
+  founding: 500_000,
 };
 
 // Per-tier entity limits (null = unlimited, must match iOS TierLimits)
@@ -124,8 +124,7 @@ export async function requireFeature(
 }
 
 /**
- * Check AI action rate limit. Returns null if allowed, or an error Response if blocked.
- * Increments the counter on success.
+ * Check AI token rate limit. Returns null if allowed, or an error Response if blocked.
  */
 export async function requireAIAction(
   supabase: SupabaseClient,
@@ -135,15 +134,15 @@ export async function requireAIAction(
   if (userId === 'anonymous') return null;
 
   const { tier } = await getUserTier(supabase, userId);
-  const limit = AI_ACTION_LIMITS[tier];
+  const limit = AI_TOKEN_LIMITS[tier];
 
-  // Count today's usage from usage_log
+  // Sum today's token usage from usage_log
   const todayStart = new Date();
   todayStart.setUTCHours(0, 0, 0, 0);
 
-  const { count, error } = await supabase
+  const { data, error } = await supabase
     .from('usage_log')
-    .select('*', { count: 'exact', head: true })
+    .select('input_tokens, output_tokens')
     .eq('user_id', userId)
     .gte('created_at', todayStart.toISOString());
 
@@ -152,15 +151,42 @@ export async function requireAIAction(
     return null; // fail open
   }
 
-  if ((count ?? 0) >= limit) {
+  const tokensUsed = (data ?? []).reduce((sum: number, row: { input_tokens: number; output_tokens: number }) => sum + row.input_tokens + row.output_tokens, 0);
+
+  if (tokensUsed >= limit) {
+    const limitStr = limit >= 1000 ? `${Math.round(limit / 1000)}K` : `${limit}`;
     return errorResponse(
       'AI_LIMIT_REACHED',
-      `You've used all ${limit} AI actions for today. ${tier === 'free' ? 'Upgrade to Pro for 100/day.' : 'Limit resets at midnight UTC.'}`,
+      `You've used all ${limitStr} tokens for today. ${tier === 'free' ? 'Upgrade to Pro for 500K/day.' : 'Limit resets at midnight UTC.'}`,
       429,
     );
   }
 
   return null;
+}
+
+/**
+ * Get today's total token usage for a user.
+ */
+export async function getTokensUsedToday(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<number> {
+  const todayStart = new Date();
+  todayStart.setUTCHours(0, 0, 0, 0);
+
+  const { data, error } = await supabase
+    .from('usage_log')
+    .select('input_tokens, output_tokens')
+    .eq('user_id', userId)
+    .gte('created_at', todayStart.toISOString());
+
+  if (error) {
+    console.warn(`[Entitlements] Could not fetch token usage for ${userId}: ${error.message}`);
+    return 0;
+  }
+
+  return (data ?? []).reduce((sum: number, row: { input_tokens: number; output_tokens: number }) => sum + row.input_tokens + row.output_tokens, 0);
 }
 
 /**

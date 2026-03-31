@@ -76,8 +76,8 @@ struct LibraryView: View {
         .ignoresSafeArea(.container, edges: .top)
         #if os(iOS)
         .navigationBarHidden(true)
-        #else
-        .toolbar(.hidden, for: .windowToolbar)
+        #elseif os(macOS)
+        .navigationTitle("")
         #endif
         .onChange(of: selectedSection) { _, _ in
             searchQuery = ""

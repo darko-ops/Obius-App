@@ -1322,11 +1322,10 @@ private struct NoteEditorContent: View {
                                 .font(.caption.bold())
                                 .foregroundStyle(.yellow)
                                 .frame(width: 26, height: 26)
-                                .background(
-                                    Circle()
-                                        .fill(Color.yellow.opacity(0.12))
-                                )
+                                .background(.ultraThinMaterial)
+                                .clipShape(Circle())
                         }
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(.horizontal, 4)
@@ -1344,11 +1343,10 @@ private struct NoteEditorContent: View {
                 .font(.caption2.bold())
                 .foregroundStyle(.yellow.opacity(0.6))
                 .frame(width: 40, height: 24)
-                .background(
-                    Capsule()
-                        .fill(Color.yellow.opacity(0.08))
-                )
+                .background(.ultraThinMaterial)
+                .clipShape(Capsule())
             }
+            .buttonStyle(.plain)
         }
     }
 
@@ -2034,9 +2032,10 @@ struct AddContentBar: View {
                             .font(.title3)
                             .foregroundStyle(Color.systemBackground)
                             .frame(width: 44, height: 44)
-                            .background(Color.gray.opacity(0.5))
+                            .background(.ultraThinMaterial)
                             .clipShape(Circle())
                     }
+                    .buttonStyle(.plain)
 
                     Button {
                         onAddText()
@@ -2046,9 +2045,10 @@ struct AddContentBar: View {
                             .font(.title3)
                             .foregroundStyle(Color.systemBackground)
                             .frame(width: 44, height: 44)
-                            .background(Color.gray.opacity(0.5))
+                            .background(.ultraThinMaterial)
                             .clipShape(Circle())
                     }
+                    .buttonStyle(.plain)
 
                     Button {
                         onAddImage()
@@ -2058,9 +2058,10 @@ struct AddContentBar: View {
                             .font(.title3)
                             .foregroundStyle(Color.systemBackground)
                             .frame(width: 44, height: 44)
-                            .background(Color.gray.opacity(0.5))
+                            .background(.ultraThinMaterial)
                             .clipShape(Circle())
                     }
+                    .buttonStyle(.plain)
                 }
                 .transition(.scale.combined(with: .opacity))
             } else {
@@ -2071,9 +2072,10 @@ struct AddContentBar: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Color.systemBackground)
                         .frame(width: 28, height: 28)
-                        .background(Color.gray.opacity(0.5))
+                        .background(.ultraThinMaterial)
                         .clipShape(Circle())
                 }
+                .buttonStyle(.plain)
                 .transition(.scale.combined(with: .opacity))
             }
         }
