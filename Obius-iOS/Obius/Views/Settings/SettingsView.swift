@@ -203,6 +203,7 @@ struct LedgerView: View {
     @State private var commits: [Commit] = []
     @State private var noteNames: [String: String] = [:]
     @State private var isLoading = true
+    @State private var commitToDelete: Commit?
 
     var body: some View {
         Group {
@@ -290,6 +291,12 @@ struct LedgerView: View {
                         )
                         .opacity(commit.isHidden ? 0.6 : 1.0)
                         .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                commitToDelete = commit
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+
                             if commit.isHidden {
                                 Button {
                                     Task { await toggleHidden(commit) }
@@ -306,12 +313,39 @@ struct LedgerView: View {
                                 .tint(.orange)
                             }
                         }
+                        .contextMenu {
+                            Button {
+                                Task { await toggleHidden(commit) }
+                            } label: {
+                                Label(commit.isHidden ? "Unhide" : "Hide",
+                                      systemImage: commit.isHidden ? "eye" : "eye.slash")
+                            }
+
+                            Button(role: .destructive) {
+                                commitToDelete = commit
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
                     }
                 }
                 .listStyle(.plain)
             }
         }
         .navigationTitle("Ledger")
+        .alert("Delete Version", isPresented: Binding(
+            get: { commitToDelete != nil },
+            set: { if !$0 { commitToDelete = nil } }
+        )) {
+            Button("Cancel", role: .cancel) { commitToDelete = nil }
+            Button("Delete", role: .destructive) {
+                if let commit = commitToDelete {
+                    Task { await deleteCommit(commit) }
+                }
+            }
+        } message: {
+            Text("This version will be permanently deleted. This cannot be undone.")
+        }
         .task {
             await loadAllCommits()
         }
@@ -340,6 +374,15 @@ struct LedgerView: View {
             }
         } catch {
             print("Failed to load ledger: \(error)")
+        }
+    }
+
+    private func deleteCommit(_ commit: Commit) async {
+        do {
+            try await appState.commitRepository.deleteCommit(id: commit.id)
+            commits.removeAll { $0.id == commit.id }
+        } catch {
+            print("Failed to delete commit: \(error)")
         }
     }
 

@@ -260,18 +260,11 @@ struct MainTabView: View {
         .tint(.white)
         #else
         NavigationSplitView {
-            List(selection: $selectedTab) {
-                Label("Notes", systemImage: "note.text")
-                    .tag(0)
-                Label("Intelligence", systemImage: "brain")
-                    .tag(1)
-                Label("Library", systemImage: "person.crop.circle")
-                    .tag(2)
-            }
-            .scrollContentBackground(.hidden)
-            .background(Color.black)
-            .navigationSplitViewColumnWidth(min: 180, ideal: 220)
-            .navigationTitle("Obius")
+            MacSidebarProjectList(
+                moduleRepository: appState.moduleRepository,
+                selectedTab: $selectedTab
+            )
+            .environmentObject(appState)
         } detail: {
             NavigationStack {
                 switch selectedTab {

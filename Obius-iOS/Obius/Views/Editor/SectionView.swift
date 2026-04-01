@@ -169,9 +169,42 @@ enum RichTextHelper {
                     .font: font, .foregroundColor: bodyColor
                 ]))
             } else {
-                result.append(NSAttributedString(string: trimmed, attributes: [
+                result.append(parseInlineFormatting(trimmed, bodyFont: bodyFont, bodyColor: bodyColor))
+            }
+        }
+
+        return result
+    }
+
+    private static func parseInlineFormatting(_ text: String, bodyFont: NSFont, bodyColor: NSColor) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        var remaining = text[text.startIndex...]
+
+        while !remaining.isEmpty {
+            if remaining.hasPrefix("**"),
+               let endRange = remaining[remaining.index(remaining.startIndex, offsetBy: 2)...].range(of: "**") {
+                let boldStart = remaining.index(remaining.startIndex, offsetBy: 2)
+                let boldText = String(remaining[boldStart..<endRange.lowerBound])
+                let boldFont = NSFont.systemFont(ofSize: bodyFont.pointSize, weight: .bold)
+                result.append(NSAttributedString(string: boldText, attributes: [
+                    .font: boldFont, .foregroundColor: bodyColor
+                ]))
+                remaining = remaining[endRange.upperBound...]
+            } else if remaining.hasPrefix("*"),
+                      let endRange = remaining[remaining.index(after: remaining.startIndex)...].range(of: "*") {
+                let italicStart = remaining.index(after: remaining.startIndex)
+                let italicText = String(remaining[italicStart..<endRange.lowerBound])
+                let italicFont = NSFontManager.shared.convert(bodyFont, toHaveTrait: .italicFontMask)
+                result.append(NSAttributedString(string: italicText, attributes: [
+                    .font: italicFont, .foregroundColor: bodyColor
+                ]))
+                remaining = remaining[endRange.upperBound...]
+            } else {
+                let char = String(remaining[remaining.startIndex])
+                result.append(NSAttributedString(string: char, attributes: [
                     .font: bodyFont, .foregroundColor: bodyColor
                 ]))
+                remaining = remaining[remaining.index(after: remaining.startIndex)...]
             }
         }
 
@@ -609,14 +642,12 @@ struct SectionView: View {
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
             }
             #else
-            // macOS fallback
-            TextEditor(text: $content)
+            // macOS: use TextField with vertical axis for proper auto-sizing
+            TextField("", text: $content, axis: .vertical)
+                .textFieldStyle(.plain)
                 .font(.body)
-                .scrollContentBackground(.hidden)
-                .scrollDisabled(true)
                 .focused($textFieldFocused)
-                .frame(maxWidth: .infinity, minHeight: 32)
-                .frame(maxWidth: .infinity, minHeight: estimatedHeight)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
                 .onChange(of: content) { _, newValue in
                     onContentChange(newValue, nil)
                 }
@@ -793,13 +824,17 @@ struct SectionView: View {
     /// Calculate estimated height based on content
     private var estimatedHeight: CGFloat {
         let lineCount = max(1, content.components(separatedBy: "\n").count)
-        // Estimate wrapped lines: assume ~40 chars per line on average
+        #if os(macOS)
+        // macOS has wider windows — use more chars per line estimate
+        let avgCharsPerLine: CGFloat = 80
+        #else
         let avgCharsPerLine: CGFloat = 40
+        #endif
         let totalChars = CGFloat(content.count)
         let estimatedWrappedLines = max(1, ceil(totalChars / avgCharsPerLine))
         let visualLines = max(CGFloat(lineCount), estimatedWrappedLines)
         let lineHeight: CGFloat = 22
-        let padding: CGFloat = 20
+        let padding: CGFloat = 12
         return visualLines * lineHeight + padding
     }
 
@@ -845,13 +880,12 @@ struct SectionView: View {
                 // Don't add contentShape - let UITextView handle all gestures natively
             }
             #else
-            // macOS fallback
-            TextEditor(text: $content)
+            // macOS: use TextField with vertical axis for proper auto-sizing
+            TextField("", text: $content, axis: .vertical)
+                .textFieldStyle(.plain)
                 .font(.body)
-                .scrollContentBackground(.hidden)
-                .scrollDisabled(true)
                 .focused($textFieldFocused)
-                .frame(maxWidth: .infinity, minHeight: estimatedHeight)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
                 .onChange(of: content) { _, newValue in
                     onContentChange(newValue, nil)
                 }

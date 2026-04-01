@@ -468,7 +468,6 @@ struct SuggestedAction: Identifiable {
             try await HandleManager.shared.updateContent(handleId: p.handleId, content: p.newContent)
 
         case .updatePageBody(let p):
-            #if os(iOS)
             let hasMarkdown = p.newBody.contains("# ") || p.newBody.contains("**") || p.newBody.contains("*")
             let richText: String?
             if hasMarkdown {
@@ -483,15 +482,11 @@ struct SuggestedAction: Identifiable {
                 .replacingOccurrences(of: "# ", with: "")
                 .replacingOccurrences(of: "**", with: "")
             try await appState.noteRepository.updateNoteBody(p.noteId, body: plainBody, richText: richText)
-            #else
-            try await appState.noteRepository.updateNoteBody(p.noteId, body: p.newBody)
-            #endif
 
         case .deleteSection(let p):
             try await appState.sectionRepository.deleteSection(p.sectionId)
 
         case .updateSectionContent(let p):
-            #if os(iOS)
             let hasMarkdown = p.newContent.contains("# ") || p.newContent.contains("**") || p.newContent.contains("*")
             let richText: String?
             if hasMarkdown {
@@ -506,9 +501,6 @@ struct SuggestedAction: Identifiable {
                 .replacingOccurrences(of: "# ", with: "")
                 .replacingOccurrences(of: "**", with: "")
             try await appState.sectionRepository.updateContent(p.sectionId, content: plainContent, richText: richText)
-            #else
-            try await appState.sectionRepository.updateContent(p.sectionId, content: p.newContent)
-            #endif
 
         case .addSection(let p):
             let secType: SectionType = p.sectionType == "fold" ? .fold : .line
@@ -519,16 +511,12 @@ struct SuggestedAction: Identifiable {
             case "quote":     conType = .quote
             default:          conType = .text
             }
-            #if os(iOS)
             let hasMarkdown = p.content.contains("# ") || p.content.contains("**") || p.content.contains("*")
             let plainContent = p.content
                 .replacingOccurrences(of: "### ", with: "")
                 .replacingOccurrences(of: "## ", with: "")
                 .replacingOccurrences(of: "# ", with: "")
                 .replacingOccurrences(of: "**", with: "")
-            #else
-            let plainContent = p.content
-            #endif
             let section = try await appState.sectionRepository.createSection(
                 noteId: p.noteId,
                 content: plainContent,
@@ -536,13 +524,11 @@ struct SuggestedAction: Identifiable {
                 sectionType: secType,
                 afterSectionId: p.afterSectionId
             )
-            #if os(iOS)
             if hasMarkdown {
                 let attributed = RichTextHelper.fromMarkdown(p.content)
                 let richText = RichTextHelper.serialize(attributed)
                 try await appState.sectionRepository.updateContent(section.id, content: plainContent, richText: richText)
             }
-            #endif
             if let intentStr = p.intent, let intent = IntentType(rawValue: intentStr.lowercased()) {
                 try await appState.sectionRepository.setIntent(section.id, intent: intent)
             }
@@ -558,7 +544,6 @@ struct SuggestedAction: Identifiable {
 
         case .rewritePage(let p):
             // 1. Update body
-            #if os(iOS)
             let hasMarkdown = p.newBody.contains("# ") || p.newBody.contains("**") || p.newBody.contains("*")
             let richText: String?
             if hasMarkdown {
@@ -573,9 +558,6 @@ struct SuggestedAction: Identifiable {
                 .replacingOccurrences(of: "# ", with: "")
                 .replacingOccurrences(of: "**", with: "")
             try await appState.noteRepository.updateNoteBody(p.noteId, body: plainBody, richText: richText)
-            #else
-            try await appState.noteRepository.updateNoteBody(p.noteId, body: p.newBody)
-            #endif
 
             // 2. Build set of section IDs to keep
             let keepIds = Set(p.keepSections.map(\.sectionId))
@@ -592,7 +574,6 @@ struct SuggestedAction: Identifiable {
             // 4. Update content for kept sections that have new_content
             for keep in p.keepSections {
                 guard let newContent = keep.newContent else { continue }
-                #if os(iOS)
                 let hasMd = newContent.contains("# ") || newContent.contains("**") || newContent.contains("*")
                 let rt: String?
                 if hasMd {
@@ -607,9 +588,6 @@ struct SuggestedAction: Identifiable {
                     .replacingOccurrences(of: "# ", with: "")
                     .replacingOccurrences(of: "**", with: "")
                 try await appState.sectionRepository.updateContent(keep.sectionId, content: plain, richText: rt)
-                #else
-                try await appState.sectionRepository.updateContent(keep.sectionId, content: newContent)
-                #endif
             }
         }
     }

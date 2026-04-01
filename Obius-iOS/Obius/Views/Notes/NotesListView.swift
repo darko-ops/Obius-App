@@ -26,10 +26,14 @@ private struct NotesListContent: View {
     let commitModule: CommitModule
 
     @AppStorage("selectedModuleId") private var selectedModuleId: String?
+    #if os(macOS)
+    @AppStorage("macIsInEditor") private var macIsInEditor = false
+    #endif
     @State private var showingModulePicker = false
     @State private var searchQuery = ""
     @State private var selectedNote: Note?
     @State private var sectionPreviews: [String: String] = [:]
+    @State private var sectionSearchContent: [String: String] = [:]
     @State private var autoTitles: [String: String] = [:]
     @State private var showingCommitConfirmation = false
     @State private var lastCommitName: String?
@@ -47,7 +51,7 @@ private struct NotesListContent: View {
     @State private var showingGroupDialog = false
     @State private var newGroupName = ""
     @State private var selectedBlockName: String?
-    @State private var longPressedBlockName: String?
+    // longPressedBlockName removed — blocks use contextMenu now
     @State private var blockToDelete: String?
     @State private var blockToRename: String?
     @State private var renameBlockText: String = ""
@@ -79,9 +83,23 @@ private struct NotesListContent: View {
         if searchQuery.isEmpty {
             return notes
         }
+        let query = searchQuery
         return notes.filter { note in
             let title = autoTitles[note.id] ?? note.displayTitle
-            return title.localizedCaseInsensitiveContains(searchQuery)
+            if title.localizedCaseInsensitiveContains(query) { return true }
+
+            // Search note body
+            if note.body.localizedCaseInsensitiveContains(query) { return true }
+
+            // Search tags (#handles)
+            if note.tags.contains(where: { $0.localizedCaseInsensitiveContains(query) }) { return true }
+            if note.aiTags.contains(where: { $0.localizedCaseInsensitiveContains(query) }) { return true }
+
+            // Search section/node content
+            if let content = sectionSearchContent[note.id],
+               content.localizedCaseInsensitiveContains(query) { return true }
+
+            return false
         }
     }
 
@@ -271,10 +289,22 @@ private struct NotesListContent: View {
                 selectedModuleId = moduleRepository.getLocalModule()?.id
             }
         }
+        #if os(macOS)
+        .onReceive(NotificationCenter.default.publisher(for: .sidebarNoteSelected)) { notification in
+            if let noteId = notification.userInfo?["noteId"] as? String,
+               let note = notes.first(where: { $0.id == noteId }) {
+                selectedNote = note
+            }
+        }
+        .onChange(of: selectedNote) { _, newValue in
+            macIsInEditor = newValue != nil
+        }
+        #endif
     }
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        #if os(iOS)
         ToolbarItem(placement: .cancellationAction) {
             if let module = selectedModule {
                 StorageTypeBadge(storageType: module.storageType)
@@ -296,6 +326,23 @@ private struct NotesListContent: View {
             }
             .buttonStyle(.plain)
         }
+        #else
+        ToolbarItem(placement: .principal) {
+            Button {
+                showingModulePicker = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.white)
+                    Text(selectedModuleName)
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+        #endif
 
         ToolbarItemGroup(placement: .primaryAction) {
             Menu {
@@ -522,51 +569,9 @@ private struct NotesListContent: View {
 
             blocksSection
         }
-        #if os(iOS)
-        .listStyle(.insetGrouped)
-        #else
         .listStyle(.plain)
-        .listRowBackground(Color.systemBackground)
-        #endif
         .scrollContentBackground(.hidden)
-        .confirmationDialog(
-            longPressedBlockName ?? "",
-            isPresented: Binding(
-                get: { longPressedBlockName != nil },
-                set: { if !$0 { longPressedBlockName = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            if let name = longPressedBlockName {
-                if trackedBlockNames.contains(name) {
-                    Button("Untrack") {
-                        var names = trackedBlockNames
-                        names.removeAll { $0 == name }
-                        setTrackedBlockNames(names)
-                    }
-                } else {
-                    Button("Track") {
-                        var names = trackedBlockNames
-                        names.append(name)
-                        setTrackedBlockNames(names)
-                    }
-                }
-
-                Button("Rename") {
-                    renameBlockText = name
-                    blockToRename = name
-                }
-
-                Button("Unblock") {
-                    Task { await unblockNotes(blockName: name) }
-                }
-
-                Button("Delete Block", role: .destructive) {
-                    blockToDelete = name
-                }
-                Button("Cancel", role: .cancel) {}
-            }
-        }
+        // Block options now handled by contextMenu on BlockCellView
         .alert(
             "Delete \"\(blockToDelete ?? "")\"?",
             isPresented: Binding(
@@ -616,10 +621,26 @@ private struct NotesListContent: View {
                         BlockCellView(
                             groupName: groupName,
                             count: groupedNotes[groupName]?.count ?? 0,
+                            isTracked: trackedBlockNames.contains(groupName),
                             onTap: { selectedBlockName = groupName },
-                            onLongPress: {
-                                HapticFeedback.impact(.medium)
-                                longPressedBlockName = groupName
+                            onTrackToggle: {
+                                var names = trackedBlockNames
+                                if names.contains(groupName) {
+                                    names.removeAll { $0 == groupName }
+                                } else {
+                                    names.append(groupName)
+                                }
+                                setTrackedBlockNames(names)
+                            },
+                            onRename: {
+                                renameBlockText = groupName
+                                blockToRename = groupName
+                            },
+                            onUnblock: {
+                                Task { await unblockNotes(blockName: groupName) }
+                            },
+                            onDelete: {
+                                blockToDelete = groupName
                             }
                         )
                     }
@@ -653,7 +674,6 @@ private struct NotesListContent: View {
             NoteRowView(note: note, sectionContent: sectionPreviews[note.id], autoTitle: autoTitles[note.id])
         }
         .contentShape(Rectangle())
-        .listRowBackground(Color.systemBackground)
         .onTapGesture {
             if isSelectionMode {
                 withAnimation(.easeInOut(duration: 0.15)) {
@@ -757,7 +777,7 @@ private struct NotesListContent: View {
                     Label("Delete Page", systemImage: "trash")
                 }
             }
-            .swipeActions(edge: .trailing) {
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 Button(role: .destructive) {
                     Task {
                         try? await noteRepository.deleteNote(note.id)
@@ -766,8 +786,9 @@ private struct NotesListContent: View {
                 } label: {
                     Label("Delete", systemImage: "trash")
                 }
+                .tint(.red)
             }
-            .swipeActions(edge: .leading) {
+            .swipeActions(edge: .leading, allowsFullSwipe: false) {
                 Button {
                     Task {
                         try? await noteRepository.togglePinned(note.id)
@@ -874,6 +895,17 @@ private struct NotesListContent: View {
                 }
             } else {
                 sectionPreviews.removeValue(forKey: note.id)
+            }
+
+            // Build searchable content from all text sections
+            let searchText = sorted
+                .filter { $0.contentType == .text }
+                .map { $0.content }
+                .joined(separator: " ")
+            if !searchText.isEmpty {
+                sectionSearchContent[note.id] = searchText
+            } else {
+                sectionSearchContent.removeValue(forKey: note.id)
             }
         } catch {
             print("Failed to load sections for preview: \(error)")
@@ -1076,8 +1108,12 @@ struct RoundedSearchBar: View {
 private struct BlockCellView: View {
     let groupName: String
     let count: Int
+    let isTracked: Bool
     let onTap: () -> Void
-    let onLongPress: () -> Void
+    let onTrackToggle: () -> Void
+    let onRename: () -> Void
+    let onUnblock: () -> Void
+    let onDelete: () -> Void
 
     var body: some View {
         VStack(spacing: 6) {
@@ -1094,7 +1130,31 @@ private struct BlockCellView: View {
         .padding(.vertical, 10)
         .contentShape(RoundedRectangle(cornerRadius: 12))
         .onTapGesture { onTap() }
-        .onLongPressGesture(minimumDuration: 0.5) { onLongPress() }
+        .contextMenu {
+            Button {
+                onTrackToggle()
+            } label: {
+                Label(isTracked ? "Untrack" : "Track", systemImage: isTracked ? "location.slash" : "location")
+            }
+
+            Button {
+                onRename()
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+
+            Button {
+                onUnblock()
+            } label: {
+                Label("Unblock", systemImage: "arrow.uturn.backward")
+            }
+
+            Button(role: .destructive) {
+                onDelete()
+            } label: {
+                Label("Delete Block", systemImage: "trash")
+            }
+        }
     }
 }
 

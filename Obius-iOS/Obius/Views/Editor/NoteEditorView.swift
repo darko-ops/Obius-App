@@ -90,6 +90,9 @@ private struct NoteEditorContent: View {
     @State private var titleVisible = true
     @State private var showingHistory = false
     @State private var showWorkspaceSheet = false
+    #if os(macOS)
+    @State private var showWorkspacePanel = false
+    #endif
 
     let noteId: String
     let targetSectionId: String?
@@ -359,6 +362,7 @@ private struct NoteEditorContent: View {
                     }
                 )
             }
+            #if os(iOS)
             .overlay {
                 WorkspaceFAB { showWorkspaceSheet = true }
             }
@@ -366,6 +370,32 @@ private struct NoteEditorContent: View {
                 WorkspaceSheet(handles: handleManager.handles, preselectedPageId: noteId)
                     .environmentObject(appState)
             }
+            #else
+            .overlay(alignment: .bottomTrailing) {
+                if !showWorkspacePanel {
+                    WorkspaceFAB {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            showWorkspacePanel = true
+                        }
+                    }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if showWorkspacePanel {
+                    WorkspaceTerminalPanel(
+                        handles: handleManager.handles,
+                        preselectedPageId: noteId,
+                        onDismiss: {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                showWorkspacePanel = false
+                            }
+                        }
+                    )
+                    .environmentObject(appState)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            #endif
             .onChange(of: showingImagePicker) { _, isShowing in
                 if !isShowing {
                     imagePickerTargetSectionId = nil
@@ -672,6 +702,12 @@ private struct NoteEditorContent: View {
                 Text(viewModel.displayTitle)
                     .font(.headline)
                     .lineLimit(1)
+                    #if os(macOS)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                    .background(Color(white: 0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    #endif
                     .transition(.opacity)
             }
         }
