@@ -720,8 +720,95 @@ private struct NoteEditorContent: View {
         ToolbarItemGroup(placement: .keyboard) {
             keyboardToolbarItems
         }
+        #else
+        ToolbarItemGroup(placement: .secondaryAction) {
+            macFormattingToolbar
+        }
         #endif
     }
+
+    #if os(macOS)
+    private var currentFocusedIntent: IntentType {
+        guard let id = focusedSectionId,
+              let section = viewModel.getSection(id) else { return .idea }
+        return section.intent
+    }
+
+    @ViewBuilder
+    private var macFormattingToolbar: some View {
+        // Indent / Outdent
+        Button {
+            if let id = focusedSectionId {
+                Task { try? await viewModel.outdent(id) }
+            }
+        } label: {
+            Image(systemName: "decrease.indent")
+        }
+        .disabled(focusedSectionId == nil)
+
+        Button {
+            if let id = focusedSectionId {
+                Task { try? await viewModel.indent(id) }
+            }
+        } label: {
+            Image(systemName: "increase.indent")
+        }
+        .disabled(focusedSectionId == nil)
+
+        Divider()
+
+        // Bold
+        Button {
+            NotificationCenter.default.post(name: .macFormattingBold, object: nil)
+        } label: {
+            Image(systemName: "bold")
+        }
+        .disabled(focusedSectionId == nil)
+
+        // Italic
+        Button {
+            NotificationCenter.default.post(name: .macFormattingItalic, object: nil)
+        } label: {
+            Image(systemName: "italic")
+        }
+        .disabled(focusedSectionId == nil)
+
+        // Underline
+        Button {
+            NotificationCenter.default.post(name: .macFormattingUnderline, object: nil)
+        } label: {
+            Image(systemName: "underline")
+        }
+        .disabled(focusedSectionId == nil)
+
+        // Title
+        Button {
+            NotificationCenter.default.post(name: .macFormattingTitle, object: nil)
+        } label: {
+            Image(systemName: "textformat.size")
+        }
+        .disabled(focusedSectionId == nil)
+
+        Divider()
+
+        // Intent picker
+        Menu {
+            ForEach(IntentType.allCases, id: \.self) { intent in
+                Button {
+                    if let sectionId = focusedSectionId {
+                        Task { try? await viewModel.setSectionIntent(sectionId, intent: intent) }
+                    }
+                } label: {
+                    Label(intent.displayName, systemImage: intent.icon)
+                }
+            }
+        } label: {
+            Image(systemName: currentFocusedIntent.icon)
+                .foregroundStyle(currentFocusedIntent.color)
+        }
+        .disabled(focusedSectionId == nil)
+    }
+    #endif
 
     @ViewBuilder
     private var primaryToolbarItems: some View {
@@ -1460,8 +1547,9 @@ private struct NoteEditorContent: View {
         }
         #else
         TextEditor(text: $bodyText)
-            .font(.body)
+            .font(.system(size: 17))
             .scrollContentBackground(.hidden)
+            .scrollDisabled(true)
             .frame(minHeight: isPageEmpty ? 100 : 22)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 10)
@@ -1470,7 +1558,7 @@ private struct NoteEditorContent: View {
             .overlay(alignment: .topLeading) {
                 if isPageEmpty && !bodyFocused {
                     Text(emptyPlaceholder)
-                        .font(.body)
+                        .font(.system(size: 17))
                         .foregroundStyle(.tertiary)
                         .padding(.horizontal, 10)
                         .allowsHitTesting(false)

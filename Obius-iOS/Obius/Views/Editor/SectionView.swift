@@ -642,15 +642,24 @@ struct SectionView: View {
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
             }
             #else
-            // macOS: use TextField with vertical axis for proper auto-sizing
-            TextField("", text: $content, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.body)
-                .focused($textFieldFocused)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .onChange(of: content) { _, newValue in
-                    onContentChange(newValue, nil)
-                }
+            // macOS: use NSTextView for rich text support
+            EditableTextView(
+                text: $content,
+                isFocused: $textFieldFocused,
+                richText: section.richContent,
+                onContentChange: onContentChange,
+                onFocusChange: { focused in
+                    if focused {
+                        isEditing = true
+                        onFocus()
+                    }
+                },
+                onIndent: onIndent,
+                onOutdent: onOutdent,
+                currentStatus: section.intent,
+                onStatusChange: onIntentChange
+            )
+            .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
             #endif
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -880,15 +889,24 @@ struct SectionView: View {
                 // Don't add contentShape - let UITextView handle all gestures natively
             }
             #else
-            // macOS: use TextField with vertical axis for proper auto-sizing
-            TextField("", text: $content, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.body)
-                .focused($textFieldFocused)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .onChange(of: content) { _, newValue in
-                    onContentChange(newValue, nil)
-                }
+            // macOS: use NSTextView for rich text support
+            EditableTextView(
+                text: $content,
+                isFocused: $textFieldFocused,
+                richText: section.richContent,
+                onContentChange: onContentChange,
+                onFocusChange: { focused in
+                    if focused {
+                        isEditing = true
+                        onFocus()
+                    }
+                },
+                onIndent: onIndent,
+                onOutdent: onOutdent,
+                currentStatus: section.intent,
+                onStatusChange: onIntentChange
+            )
+            .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
             #endif
         }
         .animation(nil, value: content) // Prevent layout animations affecting siblings
@@ -1785,7 +1803,7 @@ struct EditableTextView: NSViewRepresentable {
         textView.isHorizontallyResizable = false
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.lineBreakMode = .byWordWrapping
-        textView.textContainerInset = NSSize(width: 0, height: 8)
+        textView.textContainerInset = NSSize(width: 0, height: 4)
         textView.font = NSFont.systemFont(ofSize: 17)
         textView.textColor = NSColor.labelColor
 
@@ -1833,9 +1851,137 @@ struct EditableTextView: NSViewRepresentable {
     class Coordinator: NSObject, NSTextViewDelegate {
         var parent: EditableTextView
         weak var textView: NSTextView?
+        private var observers: [Any] = []
 
         init(_ parent: EditableTextView) {
             self.parent = parent
+            super.init()
+            setupFormattingObservers()
+        }
+
+        deinit {
+            observers.forEach { NotificationCenter.default.removeObserver($0) }
+        }
+
+        private func setupFormattingObservers() {
+            observers.append(NotificationCenter.default.addObserver(
+                forName: .macFormattingBold, object: nil, queue: .main
+            ) { [weak self] _ in self?.toggleBold() })
+
+            observers.append(NotificationCenter.default.addObserver(
+                forName: .macFormattingItalic, object: nil, queue: .main
+            ) { [weak self] _ in self?.toggleItalic() })
+
+            observers.append(NotificationCenter.default.addObserver(
+                forName: .macFormattingUnderline, object: nil, queue: .main
+            ) { [weak self] _ in self?.toggleUnderline() })
+
+            observers.append(NotificationCenter.default.addObserver(
+                forName: .macFormattingTitle, object: nil, queue: .main
+            ) { [weak self] _ in self?.toggleTitle() })
+        }
+
+        private func isFocused() -> Bool {
+            guard let textView = textView else { return false }
+            return textView.window?.firstResponder == textView
+        }
+
+        private func toggleBold() {
+            guard isFocused(), let textView = textView else { return }
+            let range = textView.selectedRange()
+            let bodySize = NSFont.systemFont(ofSize: 17).pointSize
+
+            if range.length > 0 {
+                // Apply to selection
+                let attrs = textView.textStorage?.attributes(at: range.location, effectiveRange: nil) ?? [:]
+                let currentFont = (attrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: bodySize)
+                let isBold = NSFontManager.shared.traits(of: currentFont).contains(.boldFontMask)
+                let newFont = isBold
+                    ? NSFontManager.shared.convert(currentFont, toNotHaveTrait: .boldFontMask)
+                    : NSFontManager.shared.convert(currentFont, toHaveTrait: .boldFontMask)
+                textView.textStorage?.addAttribute(.font, value: newFont, range: range)
+            } else {
+                // Toggle for typing attributes
+                var attrs = textView.typingAttributes
+                let currentFont = (attrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: bodySize)
+                let isBold = NSFontManager.shared.traits(of: currentFont).contains(.boldFontMask)
+                let newFont = isBold
+                    ? NSFontManager.shared.convert(currentFont, toNotHaveTrait: .boldFontMask)
+                    : NSFontManager.shared.convert(currentFont, toHaveTrait: .boldFontMask)
+                attrs[.font] = newFont
+                textView.typingAttributes = attrs
+            }
+            notifyChange()
+        }
+
+        private func toggleItalic() {
+            guard isFocused(), let textView = textView else { return }
+            let range = textView.selectedRange()
+            let bodySize = NSFont.systemFont(ofSize: 17).pointSize
+
+            if range.length > 0 {
+                let attrs = textView.textStorage?.attributes(at: range.location, effectiveRange: nil) ?? [:]
+                let currentFont = (attrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: bodySize)
+                let isItalic = NSFontManager.shared.traits(of: currentFont).contains(.italicFontMask)
+                let newFont = isItalic
+                    ? NSFontManager.shared.convert(currentFont, toNotHaveTrait: .italicFontMask)
+                    : NSFontManager.shared.convert(currentFont, toHaveTrait: .italicFontMask)
+                textView.textStorage?.addAttribute(.font, value: newFont, range: range)
+            } else {
+                var attrs = textView.typingAttributes
+                let currentFont = (attrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: bodySize)
+                let isItalic = NSFontManager.shared.traits(of: currentFont).contains(.italicFontMask)
+                let newFont = isItalic
+                    ? NSFontManager.shared.convert(currentFont, toNotHaveTrait: .italicFontMask)
+                    : NSFontManager.shared.convert(currentFont, toHaveTrait: .italicFontMask)
+                attrs[.font] = newFont
+                textView.typingAttributes = attrs
+            }
+            notifyChange()
+        }
+
+        private func toggleUnderline() {
+            guard isFocused(), let textView = textView else { return }
+            let range = textView.selectedRange()
+
+            if range.length > 0 {
+                let attrs = textView.textStorage?.attributes(at: range.location, effectiveRange: nil) ?? [:]
+                let isUnderlined = (attrs[.underlineStyle] as? Int) == NSUnderlineStyle.single.rawValue
+                if isUnderlined {
+                    textView.textStorage?.removeAttribute(.underlineStyle, range: range)
+                } else {
+                    textView.textStorage?.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+                }
+            } else {
+                var attrs = textView.typingAttributes
+                let isUnderlined = (attrs[.underlineStyle] as? Int) == NSUnderlineStyle.single.rawValue
+                attrs[.underlineStyle] = isUnderlined ? 0 : NSUnderlineStyle.single.rawValue
+                textView.typingAttributes = attrs
+            }
+            notifyChange()
+        }
+
+        private func toggleTitle() {
+            guard isFocused(), let textView = textView else { return }
+            let bodySize = NSFont.systemFont(ofSize: 17).pointSize
+            let titleSize = bodySize * 1.65
+            let fullRange = NSRange(location: 0, length: textView.textStorage?.length ?? 0)
+
+            let attrs = textView.textStorage?.attributes(at: 0, effectiveRange: nil) ?? [:]
+            let currentFont = (attrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: bodySize)
+            let isTitle = currentFont.pointSize > bodySize + 2
+
+            let newFont = isTitle
+                ? NSFont.systemFont(ofSize: bodySize)
+                : NSFont.systemFont(ofSize: titleSize, weight: .bold)
+            textView.textStorage?.addAttribute(.font, value: newFont, range: fullRange)
+            notifyChange()
+        }
+
+        private func notifyChange() {
+            guard let textView = textView else { return }
+            let richText = RichTextHelper.serialize(textView.attributedString())
+            parent.onContentChange(textView.string, richText)
         }
 
         func textDidBeginEditing(_ notification: Notification) {
@@ -1862,6 +2008,18 @@ struct EditableTextView: NSViewRepresentable {
             parent.onContentChange(newText, richText)
         }
     }
+}
+
+#endif
+
+// MARK: - Formatting Notification Names (macOS)
+
+#if os(macOS)
+extension Notification.Name {
+    static let macFormattingBold = Notification.Name("macFormattingBold")
+    static let macFormattingItalic = Notification.Name("macFormattingItalic")
+    static let macFormattingUnderline = Notification.Name("macFormattingUnderline")
+    static let macFormattingTitle = Notification.Name("macFormattingTitle")
 }
 #endif
 

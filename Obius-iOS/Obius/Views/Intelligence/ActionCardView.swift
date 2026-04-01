@@ -117,6 +117,7 @@ struct ActionCardView: View {
                     .foregroundStyle(action.tintColor)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
+                    .background(action.tintColor.opacity(0.1))
                     .background(.ultraThinMaterial)
                     .clipShape(Capsule())
                     .overlay(
@@ -138,6 +139,7 @@ struct ActionCardView: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
+                    .background(Color.gray.opacity(0.08))
                     .background(.ultraThinMaterial)
                     .clipShape(Capsule())
                     .overlay(

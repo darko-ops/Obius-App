@@ -118,7 +118,11 @@ struct LocalOrAuthView: View {
 struct MainTabView: View {
     @EnvironmentObject var appState: AppState
     @StateObject private var echoManager = EchoManager.shared
+    #if os(macOS)
+    @State private var selectedTab = -1  // -1 = welcome screen
+    #else
     @State private var selectedTab = 0
+    #endif
     @State private var pendingEchoId: String?
     @State private var bannerEcho: Echo?
     @State private var showBanner = false
@@ -160,6 +164,11 @@ struct MainTabView: View {
     var body: some View {
         ZStack(alignment: .top) {
             mainNavigation
+                #if os(macOS)
+                .onAppear {
+                    UserDefaults.standard.set(false, forKey: "macIsInEditor")
+                }
+                #endif
 
             // In-app echo alert banner with context
             if showBanner, let echo = bannerEcho {
@@ -268,6 +277,13 @@ struct MainTabView: View {
         } detail: {
             NavigationStack {
                 switch selectedTab {
+                case -1:
+                    MacWelcomeView(
+                        onNewProject: { selectedTab = 0 },
+                        onNewPage: { selectedTab = 0 },
+                        onBrowse: { selectedTab = 0 }
+                    )
+                    .environmentObject(appState)
                 case 0:
                     NotesListView()
                 case 1:

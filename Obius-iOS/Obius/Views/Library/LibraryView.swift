@@ -481,7 +481,7 @@ struct LoopDetailSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            Form {
                 SwiftUI.Section("Loop") {
                     Text(handle.formattedName)
                         .font(.headline)
@@ -527,6 +527,7 @@ struct LoopDetailSheet: View {
                     }
                 }
             }
+            .formStyle(.grouped)
             .navigationTitle("Edit Loop")
             .inlineNavigationTitle()
             .toolbar {

@@ -107,7 +107,7 @@ struct MacSidebarProjectList: View {
 
                 navButton("Notes", icon: "note.text", tag: 0)
                 navButtonCustomIcon("Insights", imageName: "ObiusLogo", tag: 1)
-                navButton("Library", icon: "person.crop.circle", tag: 2)
+                navButton("More", icon: "person.crop.circle", tag: 2)
 
                 Button {
                     showingSettings = true

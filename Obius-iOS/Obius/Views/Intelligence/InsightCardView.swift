@@ -354,20 +354,26 @@ struct InsightDetailSheet: View {
                                     HStack(spacing: 8) {
                                         Image(systemName: "doc.text")
                                             .font(.subheadline)
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(.purple)
                                         Text(ref.title)
                                             .font(.subheadline.weight(.medium))
                                             .foregroundStyle(.primary)
                                         Spacer()
                                         Image(systemName: "chevron.right")
                                             .font(.caption)
-                                            .foregroundStyle(.tertiary)
+                                            .foregroundStyle(.purple.opacity(0.5))
                                     }
                                     .padding(.vertical, 10)
                                     .padding(.horizontal, 12)
-                                    .background(Color.tertiarySystemGroupedBackground)
+                                    .background(Color.purple.opacity(0.1))
+                                    .background(.ultraThinMaterial)
                                     .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(Color.purple.opacity(0.3), lineWidth: 1)
+                                    )
                                 }
+                                .buttonStyle(.plain)
                             }
                         }
                     }
@@ -386,12 +392,18 @@ struct InsightDetailSheet: View {
                                     Text("Track")
                                 }
                                 .font(.subheadline.weight(.medium))
-                                .foregroundStyle(insight.displayTint.color)
+                                .foregroundStyle(.green)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 10)
-                                .background(insight.displayTint.color.opacity(0.12))
+                                .background(Color.green.opacity(0.1))
+                                .background(.ultraThinMaterial)
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(Color.green.opacity(0.3), lineWidth: 1)
+                                )
                             }
+                            .buttonStyle(.plain)
 
                             Button {
                                 onDismiss?()
@@ -402,12 +414,18 @@ struct InsightDetailSheet: View {
                                     Text("Dismiss")
                                 }
                                 .font(.subheadline.weight(.medium))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.yellow)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 10)
-                                .background(Color.gray.opacity(0.1))
+                                .background(Color.yellow.opacity(0.1))
+                                .background(.ultraThinMaterial)
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(Color.yellow.opacity(0.3), lineWidth: 1)
+                                )
                             }
+                            .buttonStyle(.plain)
                         }
                     } else if insight.status == .tracked {
                         HStack(spacing: 12) {
@@ -424,8 +442,14 @@ struct InsightDetailSheet: View {
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 10)
                                 .background(Color.orange.opacity(0.1))
+                                .background(.ultraThinMaterial)
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                                )
                             }
+                            .buttonStyle(.plain)
 
                             Button {
                                 onDismiss?()
@@ -436,12 +460,18 @@ struct InsightDetailSheet: View {
                                     Text("Dismiss")
                                 }
                                 .font(.subheadline.weight(.medium))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.yellow)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 10)
-                                .background(Color.gray.opacity(0.1))
+                                .background(Color.yellow.opacity(0.1))
+                                .background(.ultraThinMaterial)
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(Color.yellow.opacity(0.3), lineWidth: 1)
+                                )
                             }
+                            .buttonStyle(.plain)
                         }
                     }
 
@@ -461,8 +491,14 @@ struct InsightDetailSheet: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
                             .background(Color.red.opacity(0.1))
+                            .background(.ultraThinMaterial)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.red.opacity(0.3), lineWidth: 1)
+                            )
                         }
+                        .buttonStyle(.plain)
                     }
 
                     // Delete loop button for inactive loop insights
@@ -481,8 +517,14 @@ struct InsightDetailSheet: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
                             .background(Color.red.opacity(0.1))
+                            .background(.ultraThinMaterial)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.red.opacity(0.3), lineWidth: 1)
+                            )
                         }
+                        .buttonStyle(.plain)
                     }
 
                     // Move to Block button for dormant loop insights
@@ -499,20 +541,33 @@ struct InsightDetailSheet: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
                             .background(Color.blue.opacity(0.1))
+                            .background(.ultraThinMaterial)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                            )
                         }
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding()
             }
+            .background(Color.black)
+            .scrollContentBackground(.hidden)
             .navigationTitle("Insight")
             .inlineNavigationTitle()
+            #if os(iOS)
+            .toolbarBackground(Color.black, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }
         }
+        .preferredColorScheme(.dark)
         .presentationDetents([.medium])
         .sheet(isPresented: $showBlockPicker) {
             BlockPickerSheet(

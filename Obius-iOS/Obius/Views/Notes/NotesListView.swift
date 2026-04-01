@@ -238,6 +238,22 @@ private struct NotesListContent: View {
 
                     Spacer()
 
+                    // Block button
+                    Button {
+                        showingGroupDialog = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "cube.transparent")
+                                .font(.subheadline)
+                            Text("Block")
+                                .font(.subheadline.weight(.medium))
+                        }
+                    }
+                    .disabled(selectedNoteIds.isEmpty)
+
+                    Spacer()
+                        .frame(width: 16)
+
                     // Delete button
                     Button(role: .destructive) {
                         showingDeleteConfirmation = true

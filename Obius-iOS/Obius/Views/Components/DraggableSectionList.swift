@@ -314,7 +314,7 @@ struct InterstitialTextField: View {
                 onBackspaceEmpty(afterSectionId)
             }
         )
-        .frame(minHeight: 36)
+        .frame(minHeight: 24)
         .fixedSize(horizontal: false, vertical: true)  // Take natural height
         .contentShape(Rectangle())  // Ensure entire area is tappable
         .padding(.horizontal, 10)
@@ -746,7 +746,7 @@ struct InterstitialTextView: View {
 
     var body: some View {
         TextEditor(text: $text)
-            .font(.body)
+            .font(.system(size: 17))
             .scrollContentBackground(.hidden)
             .focused(isFocused)
             .onChange(of: text) { _, newValue in

@@ -72,6 +72,7 @@
 		B8A1D0010000000000000300 /* WorkspaceFAB.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000300 /* WorkspaceFAB.swift */; };
 		B8A1D0010000000000000301 /* WorkspaceTerminalPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000301 /* WorkspaceTerminalPanel.swift */; };
 		B8A1D0010000000000000302 /* MacSidebarProjectList.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000302 /* MacSidebarProjectList.swift */; };
+		B8A1D0010000000000000303 /* MacWelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000303 /* MacWelcomeView.swift */; };
 		B8A1D0010000000000000060 /* ImageNodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000060 /* ImageNodeView.swift */; };
 		B8A1D0010000000000000061 /* ImagePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000061 /* ImagePickerView.swift */; };
 		B8A1D0030000000000000001 /* ActivityViewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0030000000000000001 /* ActivityViewSheet.swift */; };
@@ -213,6 +214,7 @@
 		B8A1F0010000000000000300 /* WorkspaceFAB.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFAB.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000301 /* WorkspaceTerminalPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTerminalPanel.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000302 /* MacSidebarProjectList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSidebarProjectList.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000303 /* MacWelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacWelcomeView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000060 /* ImageNodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageNodeView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000061 /* ImagePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePickerView.swift; sourceTree = "<group>"; };
 		B8A1F0030000000000000001 /* ActivityViewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityViewSheet.swift; sourceTree = "<group>"; };
@@ -515,6 +517,7 @@
 				B8A1F0010000000000000300 /* WorkspaceFAB.swift */,
 				B8A1F0010000000000000301 /* WorkspaceTerminalPanel.swift */,
 				B8A1F0010000000000000302 /* MacSidebarProjectList.swift */,
+				B8A1F0010000000000000303 /* MacWelcomeView.swift */,
 				B8A1F0200000000000000092 /* PaywallSheet.swift */,
 			);
 			path = Components;
@@ -795,6 +798,7 @@
 				B8A1D0010000000000000300 /* WorkspaceFAB.swift in Sources */,
 				B8A1D0010000000000000301 /* WorkspaceTerminalPanel.swift in Sources */,
 				B8A1D0010000000000000302 /* MacSidebarProjectList.swift in Sources */,
+				B8A1D0010000000000000303 /* MacWelcomeView.swift in Sources */,
 				B8A1D0020000000000000001 /* ShareLink.swift in Sources */,
 				B8A1D0020000000000000002 /* Comment.swift in Sources */,
 				B8A1D0020000000000000003 /* ShareLinkRepository.swift in Sources */,

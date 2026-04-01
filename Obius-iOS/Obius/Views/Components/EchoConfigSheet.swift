@@ -283,7 +283,7 @@ struct EchoDetailSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            Form {
                 // Loop content section
                 if let handle = handle {
                     SwiftUI.Section {
@@ -374,6 +374,7 @@ struct EchoDetailSheet: View {
                     }
                 }
             }
+            .formStyle(.grouped)
             .navigationTitle("Echo Details")
             .inlineNavigationTitle()
             .toolbar {
