@@ -4,10 +4,10 @@ import SwiftUI
 struct MacWelcomeView: View {
     @EnvironmentObject var appState: AppState
     let onNewProject: () -> Void
-    let onNewPage: () -> Void
-    let onBrowse: () -> Void
+    let onOpenProject: () -> Void
 
     @State private var showingNewProject = false
+    @State private var showingProjectList = false
     @State private var newProjectName = ""
     @AppStorage("selectedModuleId") private var selectedModuleId: String?
 
@@ -52,32 +52,64 @@ struct MacWelcomeView: View {
                     }
 
                     welcomeCard(
-                        icon: "doc.badge.plus",
-                        title: "New Page",
-                        subtitle: "Create a new page",
-                        color: .green
+                        icon: "folder",
+                        title: "Open Project",
+                        subtitle: "Browse your projects",
+                        color: .purple
                     ) {
-                        Task {
-                            if selectedModuleId == nil,
-                               let local = appState.moduleRepository.getLocalModule() {
-                                selectedModuleId = local.id
-                            }
-                            if let _ = try? await appState.noteRepository.createNote(moduleId: selectedModuleId) {
-                                onNewPage()
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            showingProjectList.toggle()
+                        }
+                    }
+                }
+                .frame(maxWidth: 400)
+
+                // Expandable project list
+                if showingProjectList {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("PROJECTS")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color(white: 0.4))
+                            .padding(.leading, 4)
+
+                        if appState.moduleRepository.modules.isEmpty {
+                            Text("No projects yet")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Color(white: 0.35))
+                                .padding(.vertical, 12)
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            VStack(spacing: 2) {
+                                ForEach(appState.moduleRepository.modules) { module in
+                                    Button {
+                                        selectedModuleId = module.id
+                                        onOpenProject()
+                                    } label: {
+                                        HStack(spacing: 10) {
+                                            Image(systemName: "folder.fill")
+                                                .font(.system(size: 12))
+                                                .foregroundStyle(.purple.opacity(0.7))
+
+                                            Text(module.name)
+                                                .font(.system(size: 13))
+                                                .foregroundStyle(Color(white: 0.75))
+                                                .lineLimit(1)
+
+                                            Spacer()
+                                        }
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 10)
+                                        .background(Color(white: 0.08))
+                                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
                             }
                         }
                     }
-
-                    welcomeCard(
-                        icon: "magnifyingglass",
-                        title: "Browse",
-                        subtitle: "Find something you've been working on",
-                        color: .purple
-                    ) {
-                        onBrowse()
-                    }
+                    .frame(maxWidth: 400)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-                .frame(maxWidth: 600)
 
                 // Recent pages
                 if !recentNotes.isEmpty {
@@ -96,7 +128,7 @@ struct MacWelcomeView: View {
                                         object: nil,
                                         userInfo: ["noteId": note.id]
                                     )
-                                    onBrowse()
+                                    onOpenProject()
                                 } label: {
                                     HStack(spacing: 10) {
                                         RoundedRectangle(cornerRadius: 1.5)

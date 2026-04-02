@@ -214,7 +214,7 @@ struct SuggestedAction: Identifiable {
         case .updatePageBody:       return "update_page_body"
         case .deleteSection:        return "delete_section"
         case .updateSectionContent: return "update_section_content"
-        case .addSection:           return "create_section"
+        case .addSection:           return "create_node"
         case .moveSection:          return "move_section"
         case .setSectionIntent:     return "set_section_intent"
         case .rewritePage:          return "rewrite_page"
@@ -339,7 +339,7 @@ struct SuggestedAction: Identifiable {
                 newContent: newContent
             ))
 
-        case "create_section", "add_section":
+        case "create_section", "add_section", "create_node":
             // note_id and content are required; section_type defaults to "fold" (node)
             guard let noteId = input["note_id"] as? String,
                   let content = input["content"] as? String else {

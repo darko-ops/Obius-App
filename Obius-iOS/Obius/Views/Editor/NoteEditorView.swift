@@ -36,6 +36,13 @@ private enum PlaceholderProvider {
         "Dream it into ink\u{2026}",
         "Brave new note\u{2026}",
         "Et tu, Brain?\u{2026}",
+        "The thoughts are out there\u{2026}",
+        "Notes are like a box of chocolates\u{2026}",
+        "Thinking finds a way\u{2026}",
+        "You know noting, Jon Snow\u{2026}",
+        "I am the one who notes\u{2026}",
+        "This is the way\u{2026}",
+        "Now I am become thought\u{2026}",
     ]
 
     private static var counter = Int.random(in: 0..<options.count)
@@ -92,6 +99,7 @@ private struct NoteEditorContent: View {
     @State private var showWorkspaceSheet = false
     #if os(macOS)
     @State private var showWorkspacePanel = false
+    @State private var bodyEditorHeight: CGFloat = 22
     #endif
 
     let noteId: String
@@ -142,6 +150,14 @@ private struct NoteEditorContent: View {
             .inlineNavigationTitle()
             .platformToolbarBackground(.black)
             .toolbar { toolbarContent }
+            #if os(macOS)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                macInlineFormattingBar
+                    .padding(.horizontal)
+                    .padding(.vertical, 4)
+                    .background(Color.black)
+            }
+            #endif
             .onChange(of: viewModel.focusedSectionId) { _, newValue in
                 focusedSectionId = newValue
             }
@@ -720,93 +736,113 @@ private struct NoteEditorContent: View {
         ToolbarItemGroup(placement: .keyboard) {
             keyboardToolbarItems
         }
-        #else
-        ToolbarItemGroup(placement: .secondaryAction) {
-            macFormattingToolbar
-        }
         #endif
     }
 
     #if os(macOS)
     private var currentFocusedIntent: IntentType {
-        guard let id = focusedSectionId,
+        guard let id = viewModel.focusedSectionId,
               let section = viewModel.getSection(id) else { return .idea }
         return section.intent
     }
 
+    @StateObject private var macFmtState = MacFormattingState.shared
+
     @ViewBuilder
-    private var macFormattingToolbar: some View {
-        // Indent / Outdent
-        Button {
-            if let id = focusedSectionId {
-                Task { try? await viewModel.outdent(id) }
+    private var macInlineFormattingBar: some View {
+        HStack(spacing: 2) {
+            // Indent / Outdent (only for sections, not body)
+            macBarButton(icon: "decrease.indent", active: false, disabled: viewModel.focusedSectionId == nil) {
+                if let id = viewModel.focusedSectionId { Task { try? await viewModel.outdent(id) } }
             }
-        } label: {
-            Image(systemName: "decrease.indent")
-        }
-        .disabled(focusedSectionId == nil)
-
-        Button {
-            if let id = focusedSectionId {
-                Task { try? await viewModel.indent(id) }
+            macBarButton(icon: "increase.indent", active: false, disabled: viewModel.focusedSectionId == nil) {
+                if let id = viewModel.focusedSectionId { Task { try? await viewModel.indent(id) } }
             }
-        } label: {
-            Image(systemName: "increase.indent")
-        }
-        .disabled(focusedSectionId == nil)
 
-        Divider()
+            macBarDivider
 
-        // Bold
-        Button {
-            NotificationCenter.default.post(name: .macFormattingBold, object: nil)
-        } label: {
-            Image(systemName: "bold")
-        }
-        .disabled(focusedSectionId == nil)
+            // Text formatting — always enabled, toggle state immediately for instant feedback
+            macBarButton(icon: "bold", active: macFmtState.isBold, disabled: false) {
+                macFmtState.isBold.toggle()
+                ensureEditorFocused()
+                NotificationCenter.default.post(name: .macFormattingBold, object: nil)
+            }
+            macBarButton(icon: "italic", active: macFmtState.isItalic, disabled: false) {
+                macFmtState.isItalic.toggle()
+                ensureEditorFocused()
+                NotificationCenter.default.post(name: .macFormattingItalic, object: nil)
+            }
+            macBarButton(icon: "underline", active: macFmtState.isUnderline, disabled: false) {
+                macFmtState.isUnderline.toggle()
+                ensureEditorFocused()
+                NotificationCenter.default.post(name: .macFormattingUnderline, object: nil)
+            }
+            macBarButton(icon: "textformat.size", active: macFmtState.isTitle, disabled: false) {
+                macFmtState.isTitle.toggle()
+                ensureEditorFocused()
+                NotificationCenter.default.post(name: .macFormattingTitle, object: nil)
+            }
 
-        // Italic
-        Button {
-            NotificationCenter.default.post(name: .macFormattingItalic, object: nil)
-        } label: {
-            Image(systemName: "italic")
-        }
-        .disabled(focusedSectionId == nil)
+            macBarDivider
 
-        // Underline
-        Button {
-            NotificationCenter.default.post(name: .macFormattingUnderline, object: nil)
-        } label: {
-            Image(systemName: "underline")
-        }
-        .disabled(focusedSectionId == nil)
-
-        // Title
-        Button {
-            NotificationCenter.default.post(name: .macFormattingTitle, object: nil)
-        } label: {
-            Image(systemName: "textformat.size")
-        }
-        .disabled(focusedSectionId == nil)
-
-        Divider()
-
-        // Intent picker
-        Menu {
-            ForEach(IntentType.allCases, id: \.self) { intent in
-                Button {
-                    if let sectionId = focusedSectionId {
-                        Task { try? await viewModel.setSectionIntent(sectionId, intent: intent) }
+            // Intent picker (only for sections)
+            Menu {
+                ForEach(IntentType.allCases, id: \.self) { intent in
+                    Button {
+                        if let sectionId = viewModel.focusedSectionId {
+                            Task { try? await viewModel.setSectionIntent(sectionId, intent: intent) }
+                        }
+                    } label: {
+                        Label(intent.displayName, systemImage: intent.icon)
                     }
-                } label: {
-                    Label(intent.displayName, systemImage: intent.icon)
                 }
+            } label: {
+                Image(systemName: currentFocusedIntent.icon)
+                    .font(.system(size: 12))
+                    .foregroundStyle(viewModel.focusedSectionId != nil ? currentFocusedIntent.color : Color(white: 0.3))
+                    .frame(width: 28, height: 24)
             }
-        } label: {
-            Image(systemName: currentFocusedIntent.icon)
-                .foregroundStyle(currentFocusedIntent.color)
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(viewModel.focusedSectionId == nil)
+
+            Spacer()
         }
-        .disabled(focusedSectionId == nil)
+        .padding(.vertical, 4)
+        .padding(.horizontal, 4)
+        .background(Color(white: 0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// If no text view is active, focus the body so formatting has a target.
+    private func ensureEditorFocused() {
+        if !macFmtState.hasActiveEditor {
+            bodyFocused = true
+        }
+    }
+
+    private func macBarButton(icon: String, active: Bool, disabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundStyle(disabled ? Color(white: 0.3) : active ? .white : Color(white: 0.7))
+                .frame(width: 28, height: 24)
+                .background(
+                    active && !disabled
+                        ? RoundedRectangle(cornerRadius: 5).fill(Color.purple)
+                        : RoundedRectangle(cornerRadius: 5).fill(Color.clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+    }
+
+    private var macBarDivider: some View {
+        Rectangle()
+            .fill(Color(white: 0.2))
+            .frame(width: 1, height: 16)
+            .padding(.horizontal, 4)
     }
     #endif
 
@@ -1542,46 +1578,63 @@ private struct NoteEditorContent: View {
             if let body = note?.body, body != bodyText {
                 print("[Sync] Editor body updated from observation: \(body.prefix(50))")
                 isExternalBodyUpdate = true
-                bodyText = body
+                DispatchQueue.main.async {
+                    bodyText = body
+                }
             }
         }
         #else
-        TextEditor(text: $bodyText)
-            .font(.system(size: 17))
-            .scrollContentBackground(.hidden)
-            .scrollDisabled(true)
-            .frame(minHeight: isPageEmpty ? 100 : 22)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 0)
-            .focused($bodyFocused)
-            .overlay(alignment: .topLeading) {
-                if isPageEmpty && !bodyFocused {
-                    Text(emptyPlaceholder)
-                        .font(.system(size: 17))
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 10)
-                        .allowsHitTesting(false)
-                }
-            }
-            .onChange(of: bodyText) { _, newValue in
+        EditableTextView(
+            text: $bodyText,
+            isFocused: $bodyFocused,
+            richText: viewModel.note?.bodyRichText,
+            onContentChange: { newValue, richText in
                 guard !isExternalBodyUpdate else {
                     isExternalBodyUpdate = false
                     return
                 }
                 Task {
-                    try? await viewModel.updateBody(newValue)
+                    try? await viewModel.updateBody(newValue, richText: richText)
                 }
+            },
+            onFocusChange: { _ in },
+            dynamicHeight: $bodyEditorHeight
+        )
+        .frame(height: max(isPageEmpty ? 100 : 22, bodyEditorHeight))
+        .padding(.horizontal, 10)
+        .overlay(alignment: .topLeading) {
+            if isPageEmpty && !bodyFocused {
+                Text(emptyPlaceholder)
+                    .font(.system(size: 17))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 10)
+                    .allowsHitTesting(false)
             }
-            .onAppear {
-                bodyText = viewModel.note?.body ?? ""
+        }
+        .onAppear {
+            bodyText = viewModel.note?.body ?? ""
+            // Reset formatting state so no styles are pre-selected on page open
+            DispatchQueue.main.async {
+                let fmt = MacFormattingState.shared
+                fmt.isBold = false
+                fmt.isItalic = false
+                fmt.isUnderline = false
+                fmt.isTitle = false
+                fmt.hasActiveEditor = false
             }
-            .onChange(of: viewModel.note?.body) { _, newBody in
-                if let newBody = newBody, newBody != bodyText {
-                    print("[Sync] Editor body updated from observation: \(newBody.prefix(50))")
+            // Auto-focus body after reset so user can type immediately
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                bodyFocused = true
+            }
+        }
+        .onChange(of: viewModel.note?.body) { _, newBody in
+            if let newBody = newBody, newBody != bodyText {
+                print("[Sync] Editor body updated from observation: \(newBody.prefix(50))")
+                DispatchQueue.main.async {
                     bodyText = newBody
                 }
             }
+        }
         #endif
     }
 }

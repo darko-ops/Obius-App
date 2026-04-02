@@ -280,8 +280,7 @@ struct MainTabView: View {
                 case -1:
                     MacWelcomeView(
                         onNewProject: { selectedTab = 0 },
-                        onNewPage: { selectedTab = 0 },
-                        onBrowse: { selectedTab = 0 }
+                        onOpenProject: { selectedTab = 0 }
                     )
                     .environmentObject(appState)
                 case 0:

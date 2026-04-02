@@ -2339,10 +2339,15 @@ struct WorkspaceSheet: View {
                 }
             }
             .focused($isInputFocused)
-            .lineLimit(1...4)
+            .lineLimit(1...10)
             .onSubmit {
                 sendMessage()
             }
+            #if os(macOS)
+            .background {
+                WorkspaceInputKeyHandler(inputText: $inputText)
+            }
+            #endif
 
             Button {
                 sendMessage()
@@ -2853,6 +2858,44 @@ struct WorkspaceSheet: View {
         HapticFeedback.notification(type)
     }
 }
+
+// MARK: - Shift+Return Key Handler (macOS)
+
+#if os(macOS)
+/// Invisible NSView that installs a local event monitor so Shift+Return
+/// inserts a newline into the workspace input instead of sending.
+struct WorkspaceInputKeyHandler: NSViewRepresentable {
+    @Binding var inputText: String
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Return key = keyCode 36
+            if event.keyCode == 36, event.modifierFlags.contains(.shift) {
+                DispatchQueue.main.async {
+                    self.inputText += "\n"
+                }
+                return nil // swallow the event
+            }
+            return event
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    class Coordinator {
+        var monitor: Any?
+        deinit {
+            if let monitor = monitor {
+                NSEvent.removeMonitor(monitor)
+            }
+        }
+    }
+}
+#endif
 
 // MARK: - Flow Layout
 
