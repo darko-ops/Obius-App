@@ -2864,6 +2864,8 @@ struct WorkspaceSheet: View {
 #if os(macOS)
 /// Invisible NSView that installs a local event monitor so Shift+Return
 /// inserts a newline into the workspace input instead of sending.
+/// Re-posts a plain Return event so the TextField handles the newline
+/// natively (proper grow *and* shrink on delete).
 struct WorkspaceInputKeyHandler: NSViewRepresentable {
     @Binding var inputText: String
 
@@ -2872,10 +2874,23 @@ struct WorkspaceInputKeyHandler: NSViewRepresentable {
         context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             // Return key = keyCode 36
             if event.keyCode == 36, event.modifierFlags.contains(.shift) {
-                DispatchQueue.main.async {
-                    self.inputText += "\n"
+                // Forge an Option+Return so TextField(axis: .vertical)
+                // inserts a newline instead of triggering .onSubmit
+                if let newEvent = NSEvent.keyEvent(
+                    with: event.type,
+                    location: event.locationInWindow,
+                    modifierFlags: [.option],
+                    timestamp: event.timestamp,
+                    windowNumber: event.windowNumber,
+                    context: nil,
+                    characters: "\n",
+                    charactersIgnoringModifiers: "\n",
+                    isARepeat: event.isARepeat,
+                    keyCode: event.keyCode
+                ) {
+                    return newEvent
                 }
-                return nil // swallow the event
+                return nil
             }
             return event
         }

@@ -10,6 +10,8 @@ struct MacWelcomeView: View {
     @State private var showingProjectList = false
     @State private var newProjectName = ""
     @AppStorage("selectedModuleId") private var selectedModuleId: String?
+    @AppStorage("macSelectedNoteId") private var macSelectedNoteId: String?
+    @AppStorage("macIsInEditor") private var macIsInEditor = false
 
     private var recentNotes: [Note] {
         Array(
@@ -123,11 +125,8 @@ struct MacWelcomeView: View {
                             ForEach(recentNotes) { note in
                                 Button {
                                     selectedModuleId = note.moduleId
-                                    NotificationCenter.default.post(
-                                        name: .sidebarNoteSelected,
-                                        object: nil,
-                                        userInfo: ["noteId": note.id]
-                                    )
+                                    macSelectedNoteId = note.id
+                                    macIsInEditor = true
                                     onOpenProject()
                                 } label: {
                                     HStack(spacing: 10) {

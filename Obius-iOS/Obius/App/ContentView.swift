@@ -120,6 +120,8 @@ struct MainTabView: View {
     @StateObject private var echoManager = EchoManager.shared
     #if os(macOS)
     @State private var selectedTab = -1  // -1 = welcome screen
+    @AppStorage("macSelectedNoteId") private var macSelectedNoteId: String?
+    @AppStorage("macIsInEditor") private var macIsInEditor = false
     #else
     @State private var selectedTab = 0
     #endif
@@ -166,7 +168,8 @@ struct MainTabView: View {
             mainNavigation
                 #if os(macOS)
                 .onAppear {
-                    UserDefaults.standard.set(false, forKey: "macIsInEditor")
+                    macIsInEditor = false
+                    macSelectedNoteId = nil
                 }
                 #endif
 
@@ -284,7 +287,22 @@ struct MainTabView: View {
                     )
                     .environmentObject(appState)
                 case 0:
-                    NotesListView()
+                    if let noteId = macSelectedNoteId {
+                        NoteEditorView(noteId: noteId)
+                            .id(noteId)
+                            .toolbar {
+                                ToolbarItem(placement: .navigation) {
+                                    Button {
+                                        macSelectedNoteId = nil
+                                        macIsInEditor = false
+                                    } label: {
+                                        Label("Back", systemImage: "chevron.left")
+                                    }
+                                }
+                            }
+                    } else {
+                        NotesListView()
+                    }
                 case 1:
                     IntelligenceView()
                         .environmentObject(appState.insightRepository)

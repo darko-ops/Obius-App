@@ -1433,10 +1433,16 @@ class KeyboardAccessoryToolbar: UIToolbar {
         underlineButton?.tintColor = isUnderlineActive ? .systemPurple : nil
     }
 
-    /// Sync button states with the text view's current typing attributes
+    /// Sync button states with the attributes at the current selection or cursor
     func syncWithTypingAttributes() {
         guard let textView = textView else { return }
-        let attrs = textView.typingAttributes
+        let range = textView.selectedRange
+        let attrs: [NSAttributedString.Key: Any]
+        if range.location < textView.attributedText.length {
+            attrs = textView.attributedText.attributes(at: range.location, effectiveRange: nil)
+        } else {
+            attrs = textView.typingAttributes
+        }
         let font = (attrs[.font] as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
         let traits = font.fontDescriptor.symbolicTraits
 
@@ -1494,14 +1500,13 @@ class KeyboardAccessoryToolbar: UIToolbar {
         let range = textView.selectedRange
 
         if range.length > 0 {
-            // Apply to selected text
             applyFontTraitToSelection(.traitBold, in: textView)
+            syncWithTypingAttributes()
         } else {
-            // Toggle for future typing
             isBoldActive.toggle()
             applyFontTraitToTyping(.traitBold, isActive: isBoldActive, in: textView)
+            updateButtonAppearance()
         }
-        updateButtonAppearance()
     }
 
     @objc private func italicTapped() {
@@ -1509,14 +1514,13 @@ class KeyboardAccessoryToolbar: UIToolbar {
         let range = textView.selectedRange
 
         if range.length > 0 {
-            // Apply to selected text
             applyFontTraitToSelection(.traitItalic, in: textView)
+            syncWithTypingAttributes()
         } else {
-            // Toggle for future typing
             isItalicActive.toggle()
             applyFontTraitToTyping(.traitItalic, isActive: isItalicActive, in: textView)
+            updateButtonAppearance()
         }
-        updateButtonAppearance()
     }
 
     @objc private func underlineTapped() {
@@ -1524,7 +1528,6 @@ class KeyboardAccessoryToolbar: UIToolbar {
         let range = textView.selectedRange
 
         if range.length > 0 {
-            // Apply to selected text
             let mutableAttrString = NSMutableAttributedString(attributedString: textView.attributedText)
 
             var isUnderlined = false
@@ -1543,8 +1546,8 @@ class KeyboardAccessoryToolbar: UIToolbar {
             textView.attributedText = mutableAttrString
             textView.selectedRange = range
             notifyContentChanged()
+            syncWithTypingAttributes()
         } else {
-            // Toggle for future typing
             isUnderlineActive.toggle()
             var attrs = textView.typingAttributes
             if isUnderlineActive {
@@ -1553,8 +1556,8 @@ class KeyboardAccessoryToolbar: UIToolbar {
                 attrs.removeValue(forKey: .underlineStyle)
             }
             textView.typingAttributes = attrs
+            updateButtonAppearance()
         }
-        updateButtonAppearance()
     }
 
     private func applyFontTraitToSelection(_ trait: UIFontDescriptor.SymbolicTraits, in textView: UITextView) {

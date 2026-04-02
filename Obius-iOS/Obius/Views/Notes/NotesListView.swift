@@ -28,6 +28,7 @@ private struct NotesListContent: View {
     @AppStorage("selectedModuleId") private var selectedModuleId: String?
     #if os(macOS)
     @AppStorage("macIsInEditor") private var macIsInEditor = false
+    @AppStorage("macSelectedNoteId") private var macSelectedNoteId: String?
     #endif
     @State private var showingModulePicker = false
     @State private var searchQuery = ""
@@ -171,9 +172,11 @@ private struct NotesListContent: View {
         } message: {
             Text(shareError ?? "")
         }
+        #if os(iOS)
         .navigationDestination(item: $selectedNote) { note in
             NoteEditorView(noteId: note.id)
         }
+        #endif
         .navigationDestination(isPresented: Binding(
             get: { selectedBlockName != nil },
             set: { if !$0 { selectedBlockName = nil } }
@@ -306,14 +309,9 @@ private struct NotesListContent: View {
             }
         }
         #if os(macOS)
-        .onReceive(NotificationCenter.default.publisher(for: .sidebarNoteSelected)) { notification in
-            if let noteId = notification.userInfo?["noteId"] as? String,
-               let note = notes.first(where: { $0.id == noteId }) {
-                selectedNote = note
-            }
-        }
         .onChange(of: selectedNote) { _, newValue in
             macIsInEditor = newValue != nil
+            macSelectedNoteId = newValue?.id
         }
         #endif
     }

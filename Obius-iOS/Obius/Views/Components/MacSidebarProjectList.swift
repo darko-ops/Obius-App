@@ -18,6 +18,7 @@ struct MacSidebarProjectList: View {
     @State private var showingSettings = false
     @State private var selectedNote: Note?
     @AppStorage("macIsInEditor") private var isInEditor = false
+    @AppStorage("macSelectedNoteId") private var macSelectedNoteId: String?
 
     private var selectedModule: Module? {
         moduleRepository.modules.first { $0.id == selectedModuleId }
@@ -209,12 +210,8 @@ struct MacSidebarProjectList: View {
         Button {
             selectedNote = note
             selectedTab = 0
-            // Post notification so NotesListView can navigate to this note
-            NotificationCenter.default.post(
-                name: .sidebarNoteSelected,
-                object: nil,
-                userInfo: ["noteId": note.id]
-            )
+            macSelectedNoteId = note.id
+            isInEditor = true
         } label: {
             HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 1.5)
@@ -230,7 +227,7 @@ struct MacSidebarProjectList: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
-            .background(selectedNote?.id == note.id ? Color(white: 0.12) : Color.clear)
+            .background(macSelectedNoteId == note.id ? Color(white: 0.12) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 5))
         }
         .buttonStyle(.plain)
