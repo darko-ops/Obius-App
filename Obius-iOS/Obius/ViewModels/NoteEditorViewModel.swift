@@ -833,6 +833,16 @@ final class NoteEditorViewModel: ObservableObject {
     }
 
     /// Unlink a section from its handle
+    /// Resolve a sync conflict on the note by accepting current local state and re-pushing
+    func resolveNoteConflict() async throws {
+        try await noteRepository.resolveConflict(noteId)
+    }
+
+    /// Resolve a sync conflict on a section by accepting the current local state and re-pushing
+    func resolveConflict(sectionId: String) async throws {
+        try await sectionRepository.resolveConflict(sectionId)
+    }
+
     func unlinkFromHandle(sectionId: String) async throws {
         // Get the handle content first to preserve it in the section
         if let section = getSection(sectionId),

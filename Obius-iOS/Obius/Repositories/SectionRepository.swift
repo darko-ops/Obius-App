@@ -426,6 +426,16 @@ final class SectionRepository: ObservableObject {
     }
 
     /// Unlink a section from its handle (remove portal mode)
+    /// Resolve a sync conflict by accepting current local state and marking for re-push
+    func resolveConflict(_ sectionId: String) async throws {
+        try await database.write { db in
+            guard var section = try Section.fetchOne(db, key: sectionId) else { return }
+            section.syncStatus = .pending
+            section.updatedAt = Int64(Date().timeIntervalSince1970 * 1000)
+            try section.update(db)
+        }
+    }
+
     func unlinkSectionFromHandle(sectionId: String) async throws {
         try await database.write { db in
             guard var section = try Section.fetchOne(db, key: sectionId) else { return }

@@ -448,6 +448,31 @@ private struct NoteEditorContent: View {
                 VStack(alignment: .leading, spacing: 0) {
                     headerContent(currentParent: currentParent, nonEmptySectionsEmpty: nonEmptySections.isEmpty)
 
+                    // Sync conflict banner
+                    if viewModel.note?.syncStatus == .conflict {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.icloud.fill")
+                                .foregroundStyle(.orange)
+                            Text("This page has a sync conflict. Tap to keep your version.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Resolve") {
+                                Task {
+                                    try? await viewModel.resolveNoteConflict()
+                                }
+                            }
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.orange)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Color.orange.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 8)
+                    }
+
                     if möbiusNavigation.isAtRoot && !viewModel.suggestedEntities.isEmpty {
                         EntitySuggestionBanner(
                             entities: viewModel.suggestedEntities,
@@ -640,6 +665,9 @@ private struct NoteEditorContent: View {
                 }
             },
             mediaRepository: appState.mediaRepository,
+            onResolveConflict: { sectionId in
+                Task { try? await viewModel.resolveConflict(sectionId: sectionId) }
+            },
             getInterstitialContent: { viewModel.getInterstitialContent(afterSectionId: $0) },
             getInterstitialRichContent: { viewModel.getInterstitialRichContent(afterSectionId: $0) },
             onInterstitialContentChange: { afterSectionId, content, richText in

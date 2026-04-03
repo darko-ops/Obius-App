@@ -67,8 +67,22 @@ struct SyncOperationDTO: Encodable {
     }
 }
 
+struct AcceptedOp: Decodable {
+    let operationId: String
+    let entityId: String
+    let entityType: String
+    let newVersion: Int
+
+    enum CodingKeys: String, CodingKey {
+        case operationId = "operation_id"
+        case entityId = "entity_id"
+        case entityType = "entity_type"
+        case newVersion = "new_version"
+    }
+}
+
 struct SyncPushResponse: Decodable {
-    let accepted: [String]
+    let accepted: [AcceptedOp]
     let conflicts: [ConflictInfo]
     let serverTimestamp: String
 

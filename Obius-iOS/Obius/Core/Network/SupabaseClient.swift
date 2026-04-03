@@ -145,6 +145,82 @@ final class SupabaseManager {
     }
 }
 
+// MARK: - Edge Function Errors
+
+/// Classified edge function errors for differentiated handling.
+/// Callers can switch on the case to decide whether to retry, re-auth, back off, etc.
+enum EdgeFunctionError: LocalizedError {
+    case unauthorized          // 401 — session expired or invalid
+    case forbidden             // 403 — tier/permission issue
+    case rateLimited           // 429 — too many requests
+    case serverError(Int)      // 500-599 — server-side failure, safe to retry
+    case timeout               // URLError.timedOut
+    case networkFailure(Error) // no connectivity or DNS failure
+    case httpError(Int, String) // other HTTP errors
+
+    var errorDescription: String? {
+        switch self {
+        case .unauthorized:
+            return "Session expired. Please sign in again."
+        case .forbidden:
+            return "You don't have access to this feature."
+        case .rateLimited:
+            return "Too many requests. Please wait a moment."
+        case .serverError(let code):
+            return "Server error (\(code)). Retrying shortly."
+        case .timeout:
+            return "Request timed out. Check your connection."
+        case .networkFailure:
+            return "No internet connection."
+        case .httpError(let code, let body):
+            return "Request failed (\(code)): \(body)"
+        }
+    }
+
+    var isRetryable: Bool {
+        switch self {
+        case .serverError, .timeout, .rateLimited:
+            return true
+        case .unauthorized, .forbidden, .httpError, .networkFailure:
+            return false
+        }
+    }
+
+    /// Classify a thrown error from the Supabase SDK into an EdgeFunctionError.
+    static func classify(_ error: Error) -> EdgeFunctionError {
+        // Supabase SDK FunctionsError.httpError
+        if case let FunctionsError.httpError(code, data) = error {
+            let body = String(data: data, encoding: .utf8) ?? ""
+            switch code {
+            case 401: return .unauthorized
+            case 403: return .forbidden
+            case 429: return .rateLimited
+            case 500...599: return .serverError(code)
+            default: return .httpError(code, body)
+            }
+        }
+
+        // URLSession errors
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain {
+            switch nsError.code {
+            case NSURLErrorTimedOut:
+                return .timeout
+            case NSURLErrorNotConnectedToInternet,
+                 NSURLErrorNetworkConnectionLost,
+                 NSURLErrorCannotFindHost,
+                 NSURLErrorCannotConnectToHost,
+                 NSURLErrorDNSLookupFailed:
+                return .networkFailure(error)
+            default:
+                return .networkFailure(error)
+            }
+        }
+
+        return .httpError(0, error.localizedDescription)
+    }
+}
+
 // MARK: - Auth Errors
 
 enum AuthError: LocalizedError {

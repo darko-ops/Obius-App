@@ -16,6 +16,9 @@ actor SyncEngine {
     private var pendingSync = false
     private var lastSyncTimestamp: Date?
     private var deviceId: String?
+    /// Consecutive sync failure count — reset on success, caps auto-retry
+    private var consecutiveFailures = 0
+    private let maxAutoRetries = 2
 
     // Realtime subscription
     private var realtimeChannel: RealtimeChannelV2?
@@ -382,20 +385,22 @@ actor SyncEngine {
                 return
             }
 
-            // 1. Pull remote changes (don't let pull failures block push)
+            // 1. Push local changes first so the server sees our edits
+            //    before we pull (prevents pull from overwriting unsaved local work)
             do {
-                try await pullChanges()
+                try await pushChanges()
             } catch {
-                print("[Sync] Pull failed (will still attempt push): \(error)")
+                print("[Sync] Push failed (will still attempt pull): \(error)")
             }
 
-            // 2. Push local changes
-            try await pushChanges()
+            // 2. Pull remote changes
+            try await pullChanges()
 
             // 3. Post-sync: fix orphaned notes and clean up empty modules
             await cleanupOrphanedModules()
 
             // 4. Update sync state
+            consecutiveFailures = 0
             await MainActor.run {
                 syncState = .idle
                 lastSyncDate = Date()
@@ -404,15 +409,70 @@ actor SyncEngine {
             await updatePendingCount()
 
         } catch {
-            // Decode the response body for HTTP errors
-            if case let FunctionsError.httpError(code, data) = error {
-                let body = String(data: data, encoding: .utf8) ?? "(undecodable)"
-                print("[Sync] HTTP \(code) error body: \(body)")
-            } else {
-                print("[Sync] Error: \(error)")
-            }
-            await MainActor.run {
-                syncState = .error(error.localizedDescription)
+            consecutiveFailures += 1
+            let classified = EdgeFunctionError.classify(error)
+            print("[Sync] Error (\(consecutiveFailures)/\(maxAutoRetries)): \(classified.localizedDescription ?? error.localizedDescription)")
+
+            switch classified {
+            case .unauthorized:
+                // Session expired — notify user to re-auth, don't retry
+                print("[Sync] Session expired — user must re-authenticate")
+                await MainActor.run { syncState = .error("Session expired. Please sign in again.") }
+
+            case .rateLimited:
+                // Back off — schedule retry after delay (capped)
+                if consecutiveFailures <= maxAutoRetries {
+                    print("[Sync] Rate limited — will retry in 30 seconds")
+                    await MainActor.run { syncState = .error("Rate limited. Retrying shortly.") }
+                    Task {
+                        try? await Task.sleep(nanoseconds: 30_000_000_000)
+                        await sync()
+                    }
+                } else {
+                    print("[Sync] Rate limited — max retries reached")
+                    await MainActor.run { syncState = .error("Rate limited. Try again later.") }
+                }
+
+            case .serverError(let code):
+                // Server issue — retry with cap
+                if consecutiveFailures <= maxAutoRetries {
+                    print("[Sync] Server error \(code) — will retry in 5 seconds")
+                    await MainActor.run { syncState = .error("Server error. Retrying...") }
+                    Task {
+                        try? await Task.sleep(nanoseconds: 5_000_000_000)
+                        await sync()
+                    }
+                } else {
+                    print("[Sync] Server error \(code) — max retries reached")
+                    await MainActor.run { syncState = .error("Server error (\(code)). Try again later.") }
+                }
+
+            case .timeout:
+                // Timeout — retry with cap
+                if consecutiveFailures <= maxAutoRetries {
+                    print("[Sync] Timeout — will retry in 5 seconds")
+                    await MainActor.run { syncState = .error("Request timed out. Retrying...") }
+                    Task {
+                        try? await Task.sleep(nanoseconds: 5_000_000_000)
+                        await sync()
+                    }
+                } else {
+                    print("[Sync] Timeout — max retries reached")
+                    await MainActor.run { syncState = .error("Request timed out. Try again later.") }
+                }
+
+            case .networkFailure:
+                print("[Sync] Network unavailable")
+                await MainActor.run { syncState = .offline }
+
+            case .forbidden:
+                // Tier/permission issue — don't retry
+                print("[Sync] Forbidden — feature may require upgrade")
+                await MainActor.run { syncState = .error("Cloud sync requires a paid plan.") }
+
+            case .httpError(let code, let body):
+                print("[Sync] HTTP \(code): \(body)")
+                await MainActor.run { syncState = .error(classified.localizedDescription ?? "Sync failed") }
             }
         }
     }
@@ -559,6 +619,11 @@ actor SyncEngine {
 
                 // Check if note already exists locally
                 if let existing = try Note.fetchOne(db, key: localNote.id) {
+                    // Never overwrite notes with pending local changes — push handles conflicts
+                    if existing.syncStatus == .pending {
+                        print("[Sync] Skipped note \(localNote.id.prefix(8)) — has pending local changes")
+                        continue
+                    }
                     // UPDATE path — only update if server version is newer
                     if (existing.serverVersion ?? 0) < localNote.localVersion {
                         // Preserve local-only fields not included in server data
@@ -611,6 +676,10 @@ actor SyncEngine {
                     let localHandle = remoteHandle.toLocal()
 
                     if let existing = try Handle.fetchOne(db, key: localHandle.id) {
+                        if existing.syncStatus == .pending {
+                            print("[Sync] Skipped handle \(localHandle.id.prefix(8)) — has pending local changes")
+                            continue
+                        }
                         if (existing.serverVersion ?? 0) < localHandle.localVersion {
                             try localHandle.update(db)
                         }
@@ -627,6 +696,10 @@ actor SyncEngine {
 
                     do {
                         if let existing = try Echo.fetchOne(db, key: localEcho.id) {
+                            if existing.syncStatus == .pending {
+                                print("[Sync] Skipped echo \(localEcho.id.prefix(8)) — has pending local changes")
+                                continue
+                            }
                             if (existing.serverVersion ?? 0) < localEcho.localVersion {
                                 try localEcho.update(db)
                                 print("[Sync] Updated echo \(localEcho.id.prefix(8))")
@@ -647,6 +720,11 @@ actor SyncEngine {
 
                 do {
                     if let existing = try Section.fetchOne(db, key: localSection.id) {
+                        // Never overwrite sections with pending local changes
+                        if existing.syncStatus == .pending {
+                            print("[Sync] Skipped section \(localSection.id.prefix(8)) — has pending local changes")
+                            continue
+                        }
                         if (existing.serverVersion ?? 0) < localSection.localVersion {
                             try localSection.update(db)
                         }
@@ -661,21 +739,46 @@ actor SyncEngine {
             // Purge stale sync operations for entities just updated from the server.
             // Without this, enqueueUnsyncedEntities may have queued "create" ops with OLD data
             // that would overwrite the server's newer version during the push phase.
+            // IMPORTANT: Only purge ops for entities that DON'T have pending local changes.
             let pulledNoteIds = response.notes.map { $0.id.uppercased() }
             let pulledSectionIds = response.sections.map { $0.id.uppercased() }
             let pulledHandleIds = (response.handles ?? []).map { $0.id.uppercased() }
             let pulledEchoIds = (response.echoes ?? []).map { $0.id.uppercased() }
             let allPulledIds = pulledNoteIds + pulledSectionIds + pulledHandleIds + pulledEchoIds
             if !allPulledIds.isEmpty {
-                let placeholders = allPulledIds.map { _ in "?" }.joined(separator: ",")
-                let deletedOps = try Int.fetchOne(db, sql: """
-                    SELECT COUNT(*) FROM syncOperations WHERE synced = 0 AND entityId IN (\(placeholders))
-                """, arguments: StatementArguments(allPulledIds)) ?? 0
-                if deletedOps > 0 {
-                    try db.execute(sql: """
-                        DELETE FROM syncOperations WHERE synced = 0 AND entityId IN (\(placeholders))
-                    """, arguments: StatementArguments(allPulledIds))
-                    print("[Sync] Purged \(deletedOps) stale sync operations for entities updated from server")
+                // Collect IDs of entities that still have pending local changes — don't purge their ops
+                var pendingIds = Set<String>()
+                for id in pulledNoteIds {
+                    if let status = try String.fetchOne(db, sql: "SELECT syncStatus FROM notes WHERE id = ?", arguments: [id]),
+                       status == "pending" { pendingIds.insert(id) }
+                }
+                for id in pulledSectionIds {
+                    if let status = try String.fetchOne(db, sql: "SELECT syncStatus FROM sections WHERE id = ?", arguments: [id]),
+                       status == "pending" { pendingIds.insert(id) }
+                }
+                for id in pulledHandleIds {
+                    if let status = try String.fetchOne(db, sql: "SELECT syncStatus FROM handles WHERE id = ?", arguments: [id]),
+                       status == "pending" { pendingIds.insert(id) }
+                }
+                for id in pulledEchoIds {
+                    if let status = try String.fetchOne(db, sql: "SELECT syncStatus FROM echoes WHERE id = ?", arguments: [id]),
+                       status == "pending" { pendingIds.insert(id) }
+                }
+                let safeToPurge = allPulledIds.filter { !pendingIds.contains($0) }
+                if !safeToPurge.isEmpty {
+                    let placeholders = safeToPurge.map { _ in "?" }.joined(separator: ",")
+                    let deletedOps = try Int.fetchOne(db, sql: """
+                        SELECT COUNT(*) FROM syncOperations WHERE synced = 0 AND entityId IN (\(placeholders))
+                    """, arguments: StatementArguments(safeToPurge)) ?? 0
+                    if deletedOps > 0 {
+                        try db.execute(sql: """
+                            DELETE FROM syncOperations WHERE synced = 0 AND entityId IN (\(placeholders))
+                        """, arguments: StatementArguments(safeToPurge))
+                        print("[Sync] Purged \(deletedOps) stale sync operations for entities updated from server")
+                    }
+                }
+                if !pendingIds.isEmpty {
+                    print("[Sync] Preserved \(pendingIds.count) sync operations for entities with pending local changes")
                 }
             }
 
@@ -760,7 +863,7 @@ actor SyncEngine {
             var versions: [String: Int] = [:]
             for op in operations {
                 let table = op.entityType == "note" ? "notes" : (op.entityType == "handle" ? "handles" : (op.entityType == "echo" ? "echoes" : "sections"))
-                if let version = try Int.fetchOne(db, sql: "SELECT COALESCE(serverVersion, localVersion, 1) FROM \(table) WHERE id = ?", arguments: [op.entityId]) {
+                if let version = try Int.fetchOne(db, sql: "SELECT COALESCE(serverVersion, 1) FROM \(table) WHERE id = ?", arguments: [op.entityId]) {
                     versions[op.entityId] = version
                 }
             }
@@ -806,32 +909,26 @@ actor SyncEngine {
             lastPushTime = Date()
         }
 
-        // Mark accepted operations as synced
+        // Mark accepted operations as synced and set serverVersion from the server's response.
+        // The server now returns the actual new_version for each accepted op, so we can
+        // set serverVersion correctly without waiting for the next pull.
         try await database.write { db in
-            for operationId in response.accepted {
+            for accepted in response.accepted {
                 try db.execute(sql: """
                     UPDATE syncOperations SET synced = 1 WHERE operationId = ?
-                """, arguments: [operationId])
-            }
+                """, arguments: [accepted.operationId])
 
-            // Update entities that were synced — mark as synced but don't set serverVersion.
-            // The subsequent pull will set serverVersion from the server's actual version.
-            // Setting it from localVersion caused bugs where localVersion (e.g. 36 from edits)
-            // was far higher than the server's version (1), blocking all future pull updates.
-            for operationId in response.accepted {
-                if let op = operations.first(where: { $0.operationId == operationId }) {
-                    let table: String
-                    switch op.entityType {
-                    case "note": table = "notes"
-                    case "section": table = "sections"
-                    case "handle": table = "handles"
-                    case "echo": table = "echoes"
-                    default: table = "sections"
-                    }
-                    try db.execute(sql: """
-                        UPDATE \(table) SET syncStatus = 'synced' WHERE id = ?
-                    """, arguments: [op.entityId])
+                let table: String
+                switch accepted.entityType {
+                case "note": table = "notes"
+                case "section": table = "sections"
+                case "handle": table = "handles"
+                case "echo": table = "echoes"
+                default: table = "sections"
                 }
+                try db.execute(sql: """
+                    UPDATE \(table) SET syncStatus = 'synced', serverVersion = ? WHERE id = ?
+                """, arguments: [accepted.newVersion, accepted.entityId.uppercased()])
             }
         }
 
@@ -862,7 +959,82 @@ actor SyncEngine {
     }
 
     private func handleConflict(_ conflict: ConflictInfo) async throws {
-        // For now, just mark as conflict for user resolution
+        let entityId = conflict.entityId.uppercased()
+
+        if conflict.resolution == "client_wins" {
+            // Server accepted our version — just mark synced and update serverVersion
+            try await database.write { db in
+                let table: String
+                switch conflict.entityType {
+                case "note": table = "notes"
+                case "section": table = "sections"
+                case "handle": table = "handles"
+                case "echo": table = "echoes"
+                default: table = "sections"
+                }
+                try db.execute(sql: """
+                    UPDATE \(table) SET syncStatus = 'synced', serverVersion = ? WHERE id = ?
+                """, arguments: [conflict.serverVersion, entityId])
+            }
+            print("[Sync] Conflict resolved (client wins) for \(conflict.entityType) \(entityId.prefix(8))")
+            return
+        }
+
+        if conflict.resolution == "server_wins", let merged = conflict.mergedEntity {
+            // Server's version is authoritative — apply it locally
+            try await database.write { db in
+                guard let dict = merged.value as? [String: Any] else {
+                    print("[Sync] Could not decode merged entity for \(entityId.prefix(8))")
+                    return
+                }
+                // Re-encode the dictionary and decode as the appropriate Remote model
+                let jsonData = try JSONSerialization.data(withJSONObject: dict)
+                let decoder = JSONDecoder()
+
+                switch conflict.entityType {
+                case "note":
+                    let remote = try decoder.decode(RemoteNote.self, from: jsonData)
+                    var local = remote.toLocal()
+                    // Preserve local-only fields
+                    if let existing = try Note.fetchOne(db, key: entityId) {
+                        local.moduleId = existing.moduleId
+                        local.tags = existing.tags
+                        local.aiTags = existing.aiTags
+                        local.viewCount = existing.viewCount
+                    }
+                    local.syncStatus = .synced
+                    try local.update(db)
+                    print("[Sync] Conflict resolved (server wins) for note \(entityId.prefix(8))")
+
+                case "section":
+                    let remote = try decoder.decode(RemoteSection.self, from: jsonData)
+                    var local = remote.toLocal()
+                    local.syncStatus = .synced
+                    try local.update(db)
+                    print("[Sync] Conflict resolved (server wins) for section \(entityId.prefix(8))")
+
+                case "handle":
+                    let remote = try decoder.decode(RemoteHandle.self, from: jsonData)
+                    var local = remote.toLocal()
+                    local.syncStatus = .synced
+                    try local.update(db)
+                    print("[Sync] Conflict resolved (server wins) for handle \(entityId.prefix(8))")
+
+                case "echo":
+                    let remote = try decoder.decode(RemoteEcho.self, from: jsonData)
+                    var local = remote.toLocal()
+                    local.syncStatus = .synced
+                    try local.update(db)
+                    print("[Sync] Conflict resolved (server wins) for echo \(entityId.prefix(8))")
+
+                default:
+                    print("[Sync] Unknown entity type in conflict: \(conflict.entityType)")
+                }
+            }
+            return
+        }
+
+        // Fallback: mark as conflict for manual resolution
         try await database.write { db in
             let table: String
             switch conflict.entityType {
@@ -874,12 +1046,8 @@ actor SyncEngine {
             }
             try db.execute(sql: """
                 UPDATE \(table) SET syncStatus = 'conflict' WHERE id = ?
-            """, arguments: [conflict.entityId])
-        }
-
-        // If server wins and we have merged entity, apply it
-        if conflict.resolution == "server_wins", let merged = conflict.mergedEntity {
-            // TODO: Apply merged entity to local database
+            """, arguments: [entityId])
+            print("[Sync] Marked \(conflict.entityType) \(entityId.prefix(8)) as conflict (resolution: \(conflict.resolution))")
         }
     }
 
@@ -888,7 +1056,7 @@ actor SyncEngine {
     /// Create missing modules for orphaned notes instead of reassigning them.
     /// This preserves the server's moduleId so both devices converge.
     private func cleanupOrphanedModules() async {
-        try? await database.write { db in
+        do { try await database.write { db in
             let now = Int64(Date().timeIntervalSince1970 * 1000)
 
             // 1. Find orphaned moduleIds (notes point to modules that don't exist locally)
@@ -916,6 +1084,9 @@ actor SyncEngine {
                 """, arguments: [UUID().uuidString, now, now])
                 print("[Sync] Created fallback 'Artifacts' module")
             }
+        }
+        } catch {
+            print("[Sync] ERROR cleaning up orphaned modules: \(error)")
         }
     }
 
@@ -1017,24 +1188,32 @@ actor SyncEngine {
 
     private func getOrCreateDeviceId() async -> String {
         // Try to get from database
-        if let existing = try? await database.read({ db in
-            try String.fetchOne(db, sql: "SELECT deviceId FROM syncMetadata WHERE id = 'singleton'")
-        }) {
-            // Register device with Supabase if authenticated
-            if supabase.isAuthenticated {
-                await registerDevice(existing)
+        do {
+            if let existing = try await database.read({ db in
+                try String.fetchOne(db, sql: "SELECT deviceId FROM syncMetadata WHERE id = 'singleton'")
+            }) {
+                // Register device with Supabase if authenticated
+                if supabase.isAuthenticated {
+                    await registerDevice(existing)
+                }
+                return existing
             }
-            return existing
+        } catch {
+            print("[Sync] ERROR reading device ID: \(error)")
         }
 
         // Create new device ID
         let newId = UUID().uuidString
 
-        try? await database.write { db in
-            try db.execute(sql: """
-                INSERT OR REPLACE INTO syncMetadata (id, deviceId, lastSyncTimestamp, schemaVersion)
-                VALUES ('singleton', ?, 0, 1)
-            """, arguments: [newId])
+        do {
+            try await database.write { db in
+                try db.execute(sql: """
+                    INSERT OR REPLACE INTO syncMetadata (id, deviceId, lastSyncTimestamp, schemaVersion)
+                    VALUES ('singleton', ?, 0, 1)
+                """, arguments: [newId])
+            }
+        } catch {
+            print("[Sync] ERROR saving device ID: \(error)")
         }
 
         if supabase.isAuthenticated {
@@ -1073,30 +1252,42 @@ actor SyncEngine {
     }
 
     private func getLastSyncTimestamp() async -> Date? {
-        try? await database.read { db in
-            if let timestamp = try Int64.fetchOne(db, sql: "SELECT lastSyncTimestamp FROM syncMetadata WHERE id = 'singleton'"),
-               timestamp > 0 {
-                return Date(timeIntervalSince1970: Double(timestamp) / 1000)
+        do {
+            return try await database.read { db in
+                if let timestamp = try Int64.fetchOne(db, sql: "SELECT lastSyncTimestamp FROM syncMetadata WHERE id = 'singleton'"),
+                   timestamp > 0 {
+                    return Date(timeIntervalSince1970: Double(timestamp) / 1000)
+                }
+                return nil
             }
+        } catch {
+            print("[Sync] ERROR reading last sync timestamp: \(error)")
             return nil
         }
     }
 
     private func saveLastSyncTimestamp(_ date: Date) async {
-        try? await database.write { db in
-            try db.execute(sql: """
-                UPDATE syncMetadata SET lastSyncTimestamp = ? WHERE id = 'singleton'
-            """, arguments: [Int64(date.timeIntervalSince1970 * 1000)])
+        do {
+            try await database.write { db in
+                try db.execute(sql: """
+                    UPDATE syncMetadata SET lastSyncTimestamp = ? WHERE id = 'singleton'
+                """, arguments: [Int64(date.timeIntervalSince1970 * 1000)])
+            }
+        } catch {
+            print("[Sync] ERROR saving last sync timestamp: \(error)")
         }
     }
 
     @MainActor
     private func updatePendingCount() async {
-        let count = (try? await database.read { db in
-            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM syncOperations WHERE synced = 0") ?? 0
-        }) ?? 0
-
-        pendingChangesCount = count
+        do {
+            let count = try await database.read { db in
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM syncOperations WHERE synced = 0") ?? 0
+            }
+            pendingChangesCount = count
+        } catch {
+            print("[Sync] ERROR reading pending count: \(error)")
+        }
     }
 
     private func parsePayload(_ jsonString: String) -> [String: AnyCodable] {
@@ -1126,6 +1317,7 @@ enum SyncError: LocalizedError {
     case offline
     case aiError(String)
     case serverError(String)
+    case edgeFunctionError(EdgeFunctionError)
 
     var errorDescription: String? {
         switch self {
@@ -1137,6 +1329,8 @@ enum SyncError: LocalizedError {
             return "AI error: \(message)"
         case .serverError(let message):
             return "Server error: \(message)"
+        case .edgeFunctionError(let e):
+            return e.localizedDescription
         }
     }
 }

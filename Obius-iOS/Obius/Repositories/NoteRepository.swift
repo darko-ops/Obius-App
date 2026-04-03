@@ -80,6 +80,16 @@ final class NoteRepository: ObservableObject {
         return note
     }
 
+    /// Resolve a sync conflict by accepting current local state and marking for re-push
+    func resolveConflict(_ noteId: String) async throws {
+        try await database.write { db in
+            guard var note = try Note.fetchOne(db, key: noteId) else { return }
+            note.syncStatus = .pending
+            note.updatedAt = Int64(Date().timeIntervalSince1970 * 1000)
+            try note.update(db)
+        }
+    }
+
     func updateNoteBody(_ noteId: String, body: String, richText: String? = nil) async throws {
         try await database.write { db in
             guard var note = try Note.fetchOne(db, key: noteId) else { return }

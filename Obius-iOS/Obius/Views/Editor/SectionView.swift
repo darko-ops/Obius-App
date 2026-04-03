@@ -253,6 +253,9 @@ struct SectionView: View {
     let onImageTap: () -> Void  // Open image picker for this section
     let mediaRepository: MediaRepository?  // For loading image data
 
+    // Sync conflict resolution
+    let onResolveConflict: () -> Void
+
     @State private var content: String
     @State private var isEditing = false
     @State private var isProcessingLock = false
@@ -288,7 +291,8 @@ struct SectionView: View {
         onPaste: @escaping () -> Void = {},
         hasCopiedSection: Bool = false,
         onImageTap: @escaping () -> Void = {},
-        mediaRepository: MediaRepository? = nil
+        mediaRepository: MediaRepository? = nil,
+        onResolveConflict: @escaping () -> Void = {}
     ) {
         self.section = section
         self.isFocused = isFocused
@@ -316,6 +320,7 @@ struct SectionView: View {
         self.hasCopiedSection = hasCopiedSection
         self.onImageTap = onImageTap
         self.mediaRepository = mediaRepository
+        self.onResolveConflict = onResolveConflict
 
         // Initialize content, ensuring template prefix is included for template sections
         var initialContent = displayContent ?? handle?.content ?? section.content
@@ -426,7 +431,11 @@ struct SectionView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             // Overlay controls at corners - don't take up content width
             .overlay(alignment: .topTrailing) {
-                if section.isLocked {
+                if section.syncStatus == .conflict {
+                    syncConflictBadge
+                        .padding(6)
+                        .padding(.trailing, 20)
+                } else if section.isLocked {
                     lockBadge
                         .padding(6)
                         .padding(.trailing, 20) // Offset for lip
@@ -754,7 +763,27 @@ struct SectionView: View {
         .buttonStyle(.plain)
         .transition(.scale.combined(with: .opacity))
     }
-    
+
+    private var syncConflictBadge: some View {
+        Button {
+            // Resolve conflict by re-pushing local state
+            onResolveConflict()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "exclamationmark.icloud.fill")
+                    .font(.caption)
+                Text("Sync conflict")
+                    .font(.caption2.weight(.medium))
+            }
+            .foregroundStyle(.orange)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(Color.orange.opacity(0.15)))
+        }
+        .buttonStyle(.plain)
+        .transition(.scale.combined(with: .opacity))
+    }
+
     @ViewBuilder
     private var contentArea: some View {
         VStack(alignment: .leading, spacing: 2) {

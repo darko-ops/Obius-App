@@ -31,6 +31,7 @@ struct DraggableSectionList: View {
     let hasCopiedSection: Bool  // Whether a section is on the clipboard
     let onImageTap: (String) -> Void  // Open image picker for section
     let mediaRepository: MediaRepository?  // For loading image data in image nodes
+    var onResolveConflict: (String) -> Void = { _ in }  // Resolve sync conflict for section
     let getInterstitialContent: (String?) -> String  // Get text after section (nil = end)
     let getInterstitialRichContent: (String?) -> String?  // Get rich text after section (nil = end)
     let onInterstitialContentChange: (String?, String, String?) -> Void  // Update text after section (id, content, richText)
@@ -83,7 +84,8 @@ struct DraggableSectionList: View {
                         onPaste: { onPaste(section.id) },
                         hasCopiedSection: hasCopiedSection,
                         onImageTap: { onImageTap(section.id) },
-                        mediaRepository: mediaRepository
+                        mediaRepository: mediaRepository,
+                        onResolveConflict: { onResolveConflict(section.id) }
                     )
                     .id(section.id)  // For ScrollViewReader
                     .zIndex(draggingSection?.id == section.id ? 1 : 0)
@@ -178,6 +180,7 @@ struct DraggableSectionRow: View {
     let hasCopiedSection: Bool  // Whether a section is on the clipboard
     let onImageTap: () -> Void  // Image node tap
     let mediaRepository: MediaRepository?  // For image nodes
+    var onResolveConflict: () -> Void = {}
 
     @State private var dragAmount = CGSize.zero
     @GestureState private var isLongPressing = false
@@ -210,7 +213,8 @@ struct DraggableSectionRow: View {
                 onPaste: onPaste,
                 hasCopiedSection: hasCopiedSection,
                 onImageTap: onImageTap,
-                mediaRepository: mediaRepository
+                mediaRepository: mediaRepository,
+                onResolveConflict: onResolveConflict
             )
 
             if hasChildren {

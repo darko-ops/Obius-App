@@ -6,6 +6,8 @@ struct ContentView: View {
     @EnvironmentObject var deepLinkRouter: DeepLinkRouter
     @StateObject private var networkMonitor = NetworkMonitor.shared
 
+    @State private var showCorruptionAlert = false
+
     var body: some View {
         Group {
             if authManager.isLoading && !appState.isInitialized {
@@ -22,6 +24,17 @@ struct ContentView: View {
         .platformFullScreenCover(item: $deepLinkRouter.pendingShareSlugItem) { item in
             SharedContentView(slug: item.slug)
                 .environmentObject(appState)
+        }
+        .onAppear {
+            if appState.didRecoverFromCorruption {
+                showCorruptionAlert = true
+                appState.didRecoverFromCorruption = false
+            }
+        }
+        .alert("Database Recovered", isPresented: $showCorruptionAlert) {
+            Button("OK") {}
+        } message: {
+            Text("The local database was corrupted and had to be reset. Sign in to restore your data from the cloud.")
         }
     }
 }
