@@ -159,6 +159,7 @@ struct SettingsView: View {
 // MARK: - Data Management View
 
 struct DataManagementView: View {
+    @EnvironmentObject var appState: AppState
     @State private var showingDeleteConfirm = false
     @State private var showingExport = false
 
