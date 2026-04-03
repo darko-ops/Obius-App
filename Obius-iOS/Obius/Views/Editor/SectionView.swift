@@ -1881,6 +1881,9 @@ struct EditableTextView: NSViewRepresentable {
         /// Saved selection range — preserved when the text view loses focus
         /// so formatting buttons can still apply to the original selection.
         var savedSelectedRange: NSRange = NSRange(location: 0, length: 0)
+        /// Debounce timer for expensive per-keystroke work (rich text
+        /// serialization, hashtag highlighting, database persistence).
+        private var contentDebounceTimer: Timer?
 
         /// Tracks the most recently focused text view coordinator so formatting
         /// buttons can call applyBold/Italic/etc directly on the active editor.
@@ -1892,6 +1895,7 @@ struct EditableTextView: NSViewRepresentable {
         }
 
         deinit {
+            contentDebounceTimer?.invalidate()
             if Coordinator.activeCoordinator === self {
                 Coordinator.activeCoordinator = nil
             }
@@ -1903,6 +1907,17 @@ struct EditableTextView: NSViewRepresentable {
             guard let textView = textView else { return }
             let richText = RichTextHelper.serialize(textView.attributedString())
             parent.onContentChange(textView.string, richText)
+        }
+
+        /// Flush any pending debounced content change immediately.
+        /// Called on focus loss so edits are never silently dropped.
+        func flushPendingContentChange() {
+            guard contentDebounceTimer != nil else { return }
+            contentDebounceTimer?.invalidate()
+            contentDebounceTimer = nil
+            guard let textView = textView else { return }
+            HashtagHelper.applyHighlighting(to: textView)
+            notifyChange()
         }
 
         // MARK: - NSTextViewDelegate
@@ -1918,6 +1933,7 @@ struct EditableTextView: NSViewRepresentable {
         }
 
         func textDidEndEditing(_ notification: Notification) {
+            flushPendingContentChange()
             parent.isFocused.wrappedValue = false
             parent.onFocusChange(false)
             if Coordinator.activeCoordinator === self {
@@ -1948,14 +1964,21 @@ struct EditableTextView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = textView else { return }
-            HashtagHelper.applyHighlighting(to: textView)
+            // Update the binding immediately so SwiftUI stays in sync
             let newText = textView.string
-            let richText = RichTextHelper.serialize(textView.attributedString())
             if parent.text != newText {
                 parent.text = newText
             }
-            parent.onContentChange(newText, richText)
             updateDynamicHeight()
+
+            // Debounce expensive work: rich text serialization, hashtag
+            // highlighting, and the persistence callback
+            contentDebounceTimer?.invalidate()
+            contentDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
+                guard let self, let textView = self.textView else { return }
+                HashtagHelper.applyHighlighting(to: textView)
+                self.notifyChange()
+            }
         }
 
         func updateDynamicHeight() {
