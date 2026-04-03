@@ -8,10 +8,18 @@ final class NoteRepository: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     @Published private(set) var notes: [Note] = []
+    /// Section-aware display titles keyed by note ID.
+    /// Views should use `resolvedTitle(for:)` instead of `note.displayTitle`.
+    @Published private(set) var autoTitles: [String: String] = [:]
 
     init(database: DatabaseManager) {
         self.database = database
         observeNotes()
+    }
+
+    /// Returns the section-aware display title for a note.
+    func resolvedTitle(for note: Note) -> String {
+        autoTitles[note.id] ?? note.displayTitle
     }
 
     private func observeNotes() {
@@ -23,8 +31,34 @@ final class NoteRepository: ObservableObject {
             }
             .sink { [weak self] notes in
                 self?.notes = notes
+                self?.refreshAutoTitles(for: notes)
             }
             .store(in: &cancellables)
+    }
+
+    /// Refresh auto-titles for notes that need section context.
+    private func refreshAutoTitles(for notes: [Note]) {
+        Task { [weak self] in
+            guard let self else { return }
+            var titles: [String: String] = [:]
+            for note in notes {
+                // Only fetch sections for notes without a user or AI title
+                let hasUserTitle = note.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                let hasAiTitle = note.aiTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                if hasUserTitle || hasAiTitle {
+                    continue
+                }
+                if let sections = try? await self.database.read({ db in
+                    try note.sections.order(Section.Columns.orderKey).fetchAll(db)
+                }) {
+                    let title = note.displayTitle(sections: sections)
+                    if title != "Untitled" {
+                        titles[note.id] = title
+                    }
+                }
+            }
+            self.autoTitles = titles
+        }
     }
 
     // MARK: - Create
@@ -49,9 +83,9 @@ final class NoteRepository: ObservableObject {
     func updateNoteBody(_ noteId: String, body: String, richText: String? = nil) async throws {
         try await database.write { db in
             guard var note = try Note.fetchOne(db, key: noteId) else { return }
-            // Only touch if body text actually changed — prevents spurious sync pushes.
-            // richText=nil means "not provided" (e.g. macOS plain TextEditor), not "clear it".
-            guard note.body != body else { return }
+            // Only touch if body text or rich text actually changed.
+            let richChanged = richText != nil && note.bodyRichText != richText
+            guard note.body != body || richChanged else { return }
             note.body = body
             if let richText = richText {
                 note.bodyRichText = richText

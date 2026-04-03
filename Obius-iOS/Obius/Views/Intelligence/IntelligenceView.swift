@@ -84,6 +84,7 @@ struct IntelligenceView: View {
         .inlineNavigationTitle()
         .platformToolbarBackground(.black)
         .toolbar {
+            #if os(iOS)
             ToolbarItem(placement: .cancellationAction) {
                 Button {
                     showingSettings = true
@@ -94,6 +95,7 @@ struct IntelligenceView: View {
                         .offset(y: 2)
                 }
             }
+            #endif
             ToolbarItem(placement: .principal) {
                 Button {
                     showingModulePicker = true
@@ -141,6 +143,10 @@ struct IntelligenceView: View {
             NavigationStack {
                 SettingsView()
             }
+            .frame(minWidth: 450, minHeight: 500)
+            .preferredColorScheme(.dark)
+            .environmentObject(appState)
+            .environmentObject(AuthManager.shared)
             .environmentObject(AppearanceManager.shared)
         }
         .sheet(isPresented: $showingLoops) {
@@ -215,10 +221,6 @@ struct IntelligenceView: View {
             ScrollView {
                 LazyVStack(spacing: 16) {
                     activeEchoesSection
-
-                    if !upcomingEchoInsights.isEmpty {
-                        upcomingEchoesSection
-                    }
 
                     trackedSection
 
@@ -711,6 +713,70 @@ struct ChatMessage: Identifiable {
 
 struct ChatMessageView: View {
     let message: ChatMessage
+    var onOptionSelect: ((String) -> Void)? = nil
+
+    /// Parsed content: intro text + option items (if any) + trailing text
+    private var parsedContent: (intro: String, options: [String], trailing: String) {
+        guard message.role == .assistant else { return (message.content, [], "") }
+
+        let lines = message.content.components(separatedBy: "\n")
+        var intro: [String] = []
+        var options: [String] = []
+        var trailing: [String] = []
+        var foundOptions = false
+        var doneWithOptions = false
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if !doneWithOptions, isOptionLine(trimmed) {
+                foundOptions = true
+                let cleaned = stripOptionPrefix(trimmed)
+                if !cleaned.isEmpty {
+                    options.append(cleaned)
+                }
+            } else if foundOptions && !doneWithOptions {
+                // Non-option line after options started = trailing text
+                if trimmed.isEmpty && options.count > 0 {
+                    // Allow one blank line between options group and trailing
+                    doneWithOptions = true
+                } else {
+                    doneWithOptions = true
+                    trailing.append(line)
+                }
+            } else if doneWithOptions {
+                trailing.append(line)
+            } else {
+                intro.append(line)
+            }
+        }
+
+        // Only treat as options if we found 2+ items
+        if options.count < 2 {
+            return (message.content, [], "")
+        }
+
+        return (
+            intro.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines),
+            options,
+            trailing.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    private func isOptionLine(_ line: String) -> Bool {
+        // Match: 1. text, 2) text, - text, • text, * text
+        let patterns = [
+            #"^\d+[\.\)]\s+"#,
+            #"^[-•\*]\s+"#
+        ]
+        return patterns.contains { line.range(of: $0, options: .regularExpression) != nil }
+    }
+
+    private func stripOptionPrefix(_ line: String) -> String {
+        line.replacingOccurrences(of: #"^\d+[\.\)]\s+"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"^[-•\*]\s+"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+    }
 
     var body: some View {
         HStack {
@@ -718,19 +784,122 @@ struct ChatMessageView: View {
                 Spacer()
             }
 
-            VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 4) {
-                Text(message.content)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(message.role == .user ? Color.white : Color(red: 0.12, green: 0.12, blue: 0.12))
-                    .foregroundStyle(message.role == .user ? .black : Color(.lightGray))
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
+            VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
+                let parsed = parsedContent
+
+                // Intro text bubble
+                if !parsed.intro.isEmpty || parsed.options.isEmpty {
+                    let displayText = parsed.options.isEmpty ? message.content : parsed.intro
+                    formattedText(displayText)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(message.role == .user ? Color.white : Color(red: 0.12, green: 0.12, blue: 0.12))
+                        .foregroundStyle(message.role == .user ? .black : Color(.lightGray))
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                }
+
+                // Option buttons
+                if !parsed.options.isEmpty {
+                    VStack(spacing: 6) {
+                        ForEach(Array(parsed.options.enumerated()), id: \.offset) { index, option in
+                            Button {
+                                onOptionSelect?(option)
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Text("\(index + 1)")
+                                        .font(.caption2.weight(.bold))
+                                        .foregroundStyle(.white.opacity(0.5))
+                                        .frame(width: 20, height: 20)
+                                        .background(.ultraThinMaterial)
+                                        .clipShape(Circle())
+
+                                    formattedText(option)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.white)
+                                        .multilineTextAlignment(.leading)
+
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+                                .background(Color(white: 0.1))
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                // Trailing text bubble
+                if !parsed.trailing.isEmpty {
+                    formattedText(parsed.trailing)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(Color(red: 0.12, green: 0.12, blue: 0.12))
+                        .foregroundStyle(Color(.lightGray))
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                }
             }
 
             if message.role == .assistant {
                 Spacer()
             }
         }
+    }
+
+    /// Parse markdown headings and **bold** into styled Text
+    private func formattedText(_ input: String) -> Text {
+        let lines = input.components(separatedBy: "\n")
+        var result = Text("")
+
+        for (index, line) in lines.enumerated() {
+            if index > 0 {
+                result = result + Text("\n")
+            }
+
+            if line.hasPrefix("### ") {
+                let content = String(line.dropFirst(4))
+                result = result + Text(content).font(.subheadline).bold()
+            } else if line.hasPrefix("## ") {
+                let content = String(line.dropFirst(3))
+                result = result + Text(content).font(.headline).bold()
+            } else if line.hasPrefix("# ") {
+                let content = String(line.dropFirst(2))
+                result = result + Text(content).font(.title3).bold()
+            } else {
+                result = result + parseBold(line)
+            }
+        }
+
+        return result
+    }
+
+    /// Parse **bold** within a single line
+    private func parseBold(_ input: String) -> Text {
+        var result = Text("")
+        var remaining = input[...]
+
+        while let starIndex = remaining.range(of: "**") {
+            let before = remaining[remaining.startIndex..<starIndex.lowerBound]
+            result = result + Text(before)
+
+            let afterOpen = remaining[starIndex.upperBound...]
+            if let closeIndex = afterOpen.range(of: "**") {
+                let boldContent = afterOpen[afterOpen.startIndex..<closeIndex.lowerBound]
+                result = result + Text(boldContent).bold()
+                remaining = afterOpen[closeIndex.upperBound...]
+            } else {
+                result = result + Text("**")
+                remaining = afterOpen
+            }
+        }
+
+        result = result + Text(remaining)
+        return result
     }
 }
 
@@ -898,6 +1067,7 @@ struct WorkspaceSheet: View {
 
     let handles: [Handle]
     var preselectedPageId: String? = nil
+    var embedded: Bool = false
 
     enum FocusMode: String, CaseIterable {
         case pages = "Pages"
@@ -1015,11 +1185,11 @@ struct WorkspaceSheet: View {
         return !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
+    private var workspaceContent: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if !embedded {
                         // Search bar (hidden when something is selected)
                         if !hasSelection {
                             searchBar
@@ -1052,43 +1222,60 @@ struct WorkspaceSheet: View {
                         if focusMode == .loops, let handle = primaryHandle {
                             loopContentEditor(for: handle)
                         }
-
-                        // Mode picker after selection
-                        if hasSelection && interactionMode == nil {
-                            modePicker
-                        }
-
-                        // Chat messages (only after mode chosen)
-                        if interactionMode != nil && !messages.isEmpty {
-                            chatSection
-                        }
-
-                        if interactionMode != nil && isLoading {
-                            loadingIndicator
-                        }
                     }
-                    .padding()
-                    .frame(maxWidth: .infinity)
-                }
 
-                // Input bar pinned at bottom (only after mode chosen)
-                if interactionMode != nil {
-                    inputBar
+                    // Change history at the top of the terminal panel
+                    if embedded && selectedPageId != nil {
+                        changeHistory
+                    }
+
+                    // Mode picker after selection
+                    if hasSelection && interactionMode == nil {
+                        modePicker
+                    }
+
+                    // Chat messages (only after mode chosen)
+                    if interactionMode != nil && !messages.isEmpty {
+                        chatSection
+                    }
+
+                    if interactionMode != nil && isLoading {
+                        loadingIndicator
+                    }
                 }
+                .padding()
+                .frame(maxWidth: .infinity)
             }
-            .background(Color.black)
-            .navigationTitle("Workspace")
-            .inlineNavigationTitle()
-            #if os(iOS)
-            .toolbarBackground(Color.black, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") {
-                        savePendingEdits()
-                        dismiss()
-                    }
+
+            // Input bar pinned at bottom (only after mode chosen)
+            if interactionMode != nil {
+                inputBar
+            }
+        }
+        .background(Color.black)
+    }
+
+    var body: some View {
+        Group {
+            if embedded {
+                workspaceContent
+            } else {
+                NavigationStack {
+                    workspaceContent
+                        .navigationTitle("Workspace")
+                        .inlineNavigationTitle()
+                        #if os(iOS)
+                        .toolbarBackground(Color.black, for: .navigationBar)
+                        .toolbarBackground(.visible, for: .navigationBar)
+                        #endif
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") {
+                                    savePendingEdits()
+                                    dismiss()
+                                }
+                            }
+                        }
                 }
             }
         }
@@ -2095,7 +2282,10 @@ struct WorkspaceSheet: View {
     private var chatSection: some View {
         VStack(spacing: 12) {
             ForEach(Array(messages.enumerated()), id: \.element.id) { messageIndex, message in
-                ChatMessageView(message: message)
+                ChatMessageView(message: message, onOptionSelect: { option in
+                    inputText = option
+                    sendMessage()
+                })
                     .id(message.id)
 
                 if message.role == .assistant {
@@ -2113,13 +2303,28 @@ struct WorkspaceSheet: View {
         }
     }
 
+    private static let loadingPhrases = [
+        "Looping...", "Dooping...", "Hooping...",
+        "Mooping...", "Zooping...", "Pooping..."
+    ]
+
+    @State private var loadingPhraseIndex = 0
+
     private var loadingIndicator: some View {
         HStack {
             ProgressView()
                 .scaleEffect(0.8)
-            Text("Thinking...")
+            Text(Self.loadingPhrases[loadingPhraseIndex % Self.loadingPhrases.count])
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .onAppear {
+                    loadingPhraseIndex = 0
+                }
+                .onReceive(Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()) { _ in
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        loadingPhraseIndex += 1
+                    }
+                }
             Spacer()
         }
     }
@@ -2149,7 +2354,15 @@ struct WorkspaceSheet: View {
                 }
             }
             .focused($isInputFocused)
-            .lineLimit(1...4)
+            .lineLimit(1...10)
+            .onSubmit {
+                sendMessage()
+            }
+            #if os(macOS)
+            .background {
+                WorkspaceInputKeyHandler(inputText: $inputText)
+            }
+            #endif
 
             Button {
                 sendMessage()
@@ -2660,6 +2873,59 @@ struct WorkspaceSheet: View {
         HapticFeedback.notification(type)
     }
 }
+
+// MARK: - Shift+Return Key Handler (macOS)
+
+#if os(macOS)
+/// Invisible NSView that installs a local event monitor so Shift+Return
+/// inserts a newline into the workspace input instead of sending.
+/// Re-posts a plain Return event so the TextField handles the newline
+/// natively (proper grow *and* shrink on delete).
+struct WorkspaceInputKeyHandler: NSViewRepresentable {
+    @Binding var inputText: String
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Return key = keyCode 36
+            if event.keyCode == 36, event.modifierFlags.contains(.shift) {
+                // Forge an Option+Return so TextField(axis: .vertical)
+                // inserts a newline instead of triggering .onSubmit
+                if let newEvent = NSEvent.keyEvent(
+                    with: event.type,
+                    location: event.locationInWindow,
+                    modifierFlags: [.option],
+                    timestamp: event.timestamp,
+                    windowNumber: event.windowNumber,
+                    context: nil,
+                    characters: "\n",
+                    charactersIgnoringModifiers: "\n",
+                    isARepeat: event.isARepeat,
+                    keyCode: event.keyCode
+                ) {
+                    return newEvent
+                }
+                return nil
+            }
+            return event
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    class Coordinator {
+        var monitor: Any?
+        deinit {
+            if let monitor = monitor {
+                NSEvent.removeMonitor(monitor)
+            }
+        }
+    }
+}
+#endif
 
 // MARK: - Flow Layout
 

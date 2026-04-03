@@ -73,12 +73,24 @@ enum ClaudeService {
     private static func checkAIGate() async throws {
         let allowed = await MainActor.run { TierManager.shared.requireAI() }
         guard allowed else {
-            throw ClaudeError.proxyError("AI action limit reached. Upgrade for more.")
+            throw ClaudeError.proxyError("AI token limit reached. Upgrade for more.")
         }
     }
 
-    private static func recordAIUsage() async {
-        await MainActor.run { TierManager.shared.recordAIAction() }
+    private static func recordAIUsage(data: Data? = nil) async {
+        var tokens = 0
+        if let data = data,
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let usage = json["usage"] as? [String: Any] {
+            let input = usage["input_tokens"] as? Int ?? 0
+            let output = usage["output_tokens"] as? Int ?? 0
+            tokens = input + output
+        }
+        // Local estimate if we couldn't parse; server tracks exact count
+        if tokens == 0 { tokens = 500 }
+        await MainActor.run { TierManager.shared.recordTokenUsage(tokens) }
+        // Sync real count from server in the background
+        Task { await MainActor.run { Task { await TierManager.shared.syncTokenUsage() } } }
     }
 
     // MARK: - Send With Tools
@@ -89,7 +101,6 @@ enum ClaudeService {
         noteContext: String
     ) async throws -> ToolResponse {
         try await checkAIGate()
-        await recordAIUsage()
         let request = AIProxyRequest(
             action: "send_with_tools",
             messages: messages,
@@ -97,6 +108,7 @@ enum ClaudeService {
         )
 
         let data = try await invokeProxyRaw(request)
+        await recordAIUsage(data: data)
 
         let rawString = String(data: data, encoding: .utf8) ?? ""
 

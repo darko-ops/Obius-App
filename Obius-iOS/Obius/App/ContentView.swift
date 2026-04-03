@@ -118,7 +118,13 @@ struct LocalOrAuthView: View {
 struct MainTabView: View {
     @EnvironmentObject var appState: AppState
     @StateObject private var echoManager = EchoManager.shared
+    #if os(macOS)
+    @State private var selectedTab = -1  // -1 = welcome screen
+    @AppStorage("macSelectedNoteId") private var macSelectedNoteId: String?
+    @AppStorage("macIsInEditor") private var macIsInEditor = false
+    #else
     @State private var selectedTab = 0
+    #endif
     @State private var pendingEchoId: String?
     @State private var bannerEcho: Echo?
     @State private var showBanner = false
@@ -160,6 +166,12 @@ struct MainTabView: View {
     var body: some View {
         ZStack(alignment: .top) {
             mainNavigation
+                #if os(macOS)
+                .onAppear {
+                    macIsInEditor = false
+                    macSelectedNoteId = nil
+                }
+                #endif
 
             // In-app echo alert banner with context
             if showBanner, let echo = bannerEcho {
@@ -260,23 +272,37 @@ struct MainTabView: View {
         .tint(.white)
         #else
         NavigationSplitView {
-            List(selection: $selectedTab) {
-                Label("Notes", systemImage: "note.text")
-                    .tag(0)
-                Label("Intelligence", systemImage: "brain")
-                    .tag(1)
-                Label("Library", systemImage: "person.crop.circle")
-                    .tag(2)
-            }
-            .scrollContentBackground(.hidden)
-            .background(Color.black)
-            .navigationSplitViewColumnWidth(min: 180, ideal: 220)
-            .navigationTitle("Obius")
+            MacSidebarProjectList(
+                moduleRepository: appState.moduleRepository,
+                selectedTab: $selectedTab
+            )
+            .environmentObject(appState)
         } detail: {
             NavigationStack {
                 switch selectedTab {
+                case -1:
+                    MacWelcomeView(
+                        onNewProject: { selectedTab = 0 },
+                        onOpenProject: { selectedTab = 0 }
+                    )
+                    .environmentObject(appState)
                 case 0:
-                    NotesListView()
+                    if let noteId = macSelectedNoteId {
+                        NoteEditorView(noteId: noteId)
+                            .id(noteId)
+                            .toolbar {
+                                ToolbarItem(placement: .navigation) {
+                                    Button {
+                                        macSelectedNoteId = nil
+                                        macIsInEditor = false
+                                    } label: {
+                                        Label("Back", systemImage: "chevron.left")
+                                    }
+                                }
+                            }
+                    } else {
+                        NotesListView()
+                    }
                 case 1:
                     IntelligenceView()
                         .environmentObject(appState.insightRepository)

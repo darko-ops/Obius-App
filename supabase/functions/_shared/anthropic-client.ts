@@ -3,7 +3,7 @@
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')!;
-const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
+const CLAUDE_MODEL = 'claude-sonnet-4-20250514'; // Architect default — used for tool calling & reasoning
 
 export interface ClaudeMessage {
   role: 'user' | 'assistant';

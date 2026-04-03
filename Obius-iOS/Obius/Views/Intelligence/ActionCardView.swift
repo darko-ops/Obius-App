@@ -117,9 +117,15 @@ struct ActionCardView: View {
                     .foregroundStyle(action.tintColor)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
-                    .background(action.tintColor.opacity(0.12))
+                    .background(action.tintColor.opacity(0.1))
+                    .background(.ultraThinMaterial)
                     .clipShape(Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(action.tintColor.opacity(0.3), lineWidth: 1)
+                    )
                 }
+                .buttonStyle(.plain)
 
                 Button {
                     onDismiss()
@@ -133,9 +139,15 @@ struct ActionCardView: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
-                    .background(Color.white.opacity(0.08))
+                    .background(Color.gray.opacity(0.08))
+                    .background(.ultraThinMaterial)
                     .clipShape(Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                    )
                 }
+                .buttonStyle(.plain)
 
                 Spacer()
             }

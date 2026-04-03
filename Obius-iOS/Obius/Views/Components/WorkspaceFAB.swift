@@ -64,12 +64,34 @@ struct WorkspaceFAB: View {
     }
 }
 #else
-/// On macOS, the FAB is replaced by toolbar buttons. This is a no-op placeholder.
 struct WorkspaceFAB: View {
     let action: () -> Void
 
     var body: some View {
-        EmptyView()
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                Button(action: action) {
+                    Image("MobiusStrip")
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 70, height: 70)
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Color(red: 0.08, green: 0.08, blue: 0.08))
+                        .clipShape(Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white.opacity(0.6), lineWidth: 1)
+                        )
+                        .shadow(color: .white.opacity(0.15), radius: 8)
+                }
+                .buttonStyle(.plain)
+                .padding(20)
+            }
+        }
     }
 }
 #endif

@@ -314,7 +314,7 @@ struct InterstitialTextField: View {
                 onBackspaceEmpty(afterSectionId)
             }
         )
-        .frame(minHeight: 36)
+        .frame(minHeight: 24)
         .fixedSize(horizontal: false, vertical: true)  // Take natural height
         .contentShape(Rectangle())  // Ensure entire area is tappable
         .padding(.horizontal, 10)
@@ -736,7 +736,7 @@ struct InterstitialTextView: UIViewRepresentable {
     }
 }
 #else
-/// macOS fallback using TextEditor
+/// macOS interstitial using EditableTextView (NSTextView) for rich text support
 struct InterstitialTextView: View {
     @Binding var text: String
     var isFocused: FocusState<Bool>.Binding
@@ -745,13 +745,13 @@ struct InterstitialTextView: View {
     let onBackspaceEmpty: () -> Void
 
     var body: some View {
-        TextEditor(text: $text)
-            .font(.body)
-            .scrollContentBackground(.hidden)
-            .focused(isFocused)
-            .onChange(of: text) { _, newValue in
-                onContentChange(newValue, nil)
-            }
+        EditableTextView(
+            text: $text,
+            isFocused: isFocused,
+            richText: richText,
+            onContentChange: onContentChange,
+            onFocusChange: { _ in }
+        )
     }
 }
 #endif

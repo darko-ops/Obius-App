@@ -9,11 +9,8 @@ import {
   errorResponse,
   corsResponse,
 } from '../_shared/supabase-client.ts';
-import {
-  generateNoteSummary,
-  refineTitle,
-  CLAUDE_MODEL,
-} from '../_shared/anthropic-client.ts';
+import { refineTitle } from '../_shared/anthropic-client.ts';
+import { generateNoteSummaryGemini, GEMINI_MODEL } from '../_shared/gemini-client.ts';
 import type { SummaryRequest, SummaryResponse } from '../_shared/types.ts';
 import { requireAIAction } from '../_shared/entitlements.ts';
 
@@ -82,7 +79,7 @@ serve(async (req: Request) => {
       summary = ''; // Don't generate summary when just refining title
     } else {
       // Generate new title and summary
-      const result = await generateNoteSummary(fullContent);
+      const result = await generateNoteSummaryGemini(fullContent);
       title = result.title;
       summary = result.summary;
     }
@@ -117,7 +114,7 @@ serve(async (req: Request) => {
 
     return jsonResponse({
       ...response,
-      model: CLAUDE_MODEL,
+      model: GEMINI_MODEL,
     });
   } catch (error) {
     console.error('Generate summary error:', error);

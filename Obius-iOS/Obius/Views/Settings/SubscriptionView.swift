@@ -43,9 +43,9 @@ struct SubscriptionView: View {
 
             // Usage
             SwiftUI.Section {
-                usageRow("AI Actions Today",
+                usageRow("Tokens Today",
                          icon: "sparkles",
-                         value: "\(tierManager.aiActionsUsedToday) / \(tierManager.limits.maxAIActionsPerDay)")
+                         value: "\(TierManager.formatTokenCount(tierManager.tokensUsedToday)) / \(TierManager.formatTokenCount(tierManager.limits.maxTokensPerDay))")
 
                 if let maxNotes = tierManager.limits.maxNotes {
                     usageRow("Notes", icon: "note.text", value: "\(maxNotes) limit")

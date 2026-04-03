@@ -76,8 +76,8 @@ struct LibraryView: View {
         .ignoresSafeArea(.container, edges: .top)
         #if os(iOS)
         .navigationBarHidden(true)
-        #else
-        .toolbar(.hidden, for: .windowToolbar)
+        #elseif os(macOS)
+        .navigationTitle("")
         #endif
         .onChange(of: selectedSection) { _, _ in
             searchQuery = ""
@@ -481,7 +481,7 @@ struct LoopDetailSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            Form {
                 SwiftUI.Section("Loop") {
                     Text(handle.formattedName)
                         .font(.headline)
@@ -527,6 +527,7 @@ struct LoopDetailSheet: View {
                     }
                 }
             }
+            .formStyle(.grouped)
             .navigationTitle("Edit Loop")
             .inlineNavigationTitle()
             .toolbar {

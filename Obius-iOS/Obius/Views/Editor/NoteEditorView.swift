@@ -36,6 +36,13 @@ private enum PlaceholderProvider {
         "Dream it into ink\u{2026}",
         "Brave new note\u{2026}",
         "Et tu, Brain?\u{2026}",
+        "The thoughts are out there\u{2026}",
+        "Notes are like a box of chocolates\u{2026}",
+        "Thinking finds a way\u{2026}",
+        "You know noting, Jon Snow\u{2026}",
+        "I am the one who notes\u{2026}",
+        "This is the way\u{2026}",
+        "Now I am become thought\u{2026}",
     ]
 
     private static var counter = Int.random(in: 0..<options.count)
@@ -90,6 +97,10 @@ private struct NoteEditorContent: View {
     @State private var titleVisible = true
     @State private var showingHistory = false
     @State private var showWorkspaceSheet = false
+    #if os(macOS)
+    @State private var showWorkspacePanel = false
+    @State private var bodyEditorHeight: CGFloat = 22
+    #endif
 
     let noteId: String
     let targetSectionId: String?
@@ -139,6 +150,14 @@ private struct NoteEditorContent: View {
             .inlineNavigationTitle()
             .platformToolbarBackground(.black)
             .toolbar { toolbarContent }
+            #if os(macOS)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                macInlineFormattingBar
+                    .padding(.horizontal)
+                    .padding(.vertical, 4)
+                    .background(Color.black)
+            }
+            #endif
             .onChange(of: viewModel.focusedSectionId) { _, newValue in
                 focusedSectionId = newValue
             }
@@ -359,6 +378,7 @@ private struct NoteEditorContent: View {
                     }
                 )
             }
+            #if os(iOS)
             .overlay {
                 WorkspaceFAB { showWorkspaceSheet = true }
             }
@@ -366,6 +386,32 @@ private struct NoteEditorContent: View {
                 WorkspaceSheet(handles: handleManager.handles, preselectedPageId: noteId)
                     .environmentObject(appState)
             }
+            #else
+            .overlay(alignment: .bottomTrailing) {
+                if !showWorkspacePanel {
+                    WorkspaceFAB {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            showWorkspacePanel = true
+                        }
+                    }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if showWorkspacePanel {
+                    WorkspaceTerminalPanel(
+                        handles: handleManager.handles,
+                        preselectedPageId: noteId,
+                        onDismiss: {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                showWorkspacePanel = false
+                            }
+                        }
+                    )
+                    .environmentObject(appState)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            #endif
             .onChange(of: showingImagePicker) { _, isShowing in
                 if !isShowing {
                     imagePickerTargetSectionId = nil
@@ -672,6 +718,12 @@ private struct NoteEditorContent: View {
                 Text(viewModel.displayTitle)
                     .font(.headline)
                     .lineLimit(1)
+                    #if os(macOS)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                    .background(Color(white: 0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    #endif
                     .transition(.opacity)
             }
         }
@@ -686,6 +738,110 @@ private struct NoteEditorContent: View {
         }
         #endif
     }
+
+    #if os(macOS)
+    private var currentFocusedIntent: IntentType {
+        guard let id = viewModel.focusedSectionId,
+              let section = viewModel.getSection(id) else { return .idea }
+        return section.intent
+    }
+
+    @StateObject private var macFmtState = MacFormattingState.shared
+
+    @ViewBuilder
+    private var macInlineFormattingBar: some View {
+        HStack(spacing: 2) {
+            // Indent / Outdent (only for sections, not body)
+            macBarButton(icon: "decrease.indent", active: false, disabled: viewModel.focusedSectionId == nil) {
+                if let id = viewModel.focusedSectionId { Task { try? await viewModel.outdent(id) } }
+            }
+            macBarButton(icon: "increase.indent", active: false, disabled: viewModel.focusedSectionId == nil) {
+                if let id = viewModel.focusedSectionId { Task { try? await viewModel.indent(id) } }
+            }
+
+            macBarDivider
+
+            // Text formatting — operates directly on the active NSTextView
+            macBarButton(icon: "bold", active: macFmtState.isBold, disabled: false) {
+                ensureEditorFocused()
+                macFmtState.applyBold()
+            }
+            macBarButton(icon: "italic", active: macFmtState.isItalic, disabled: false) {
+                ensureEditorFocused()
+                macFmtState.applyItalic()
+            }
+            macBarButton(icon: "underline", active: macFmtState.isUnderline, disabled: false) {
+                ensureEditorFocused()
+                macFmtState.applyUnderline()
+            }
+            macBarButton(icon: "textformat.size", active: macFmtState.isTitle, disabled: false) {
+                ensureEditorFocused()
+                macFmtState.applyTitle()
+            }
+
+            macBarDivider
+
+            // Intent picker (only for sections)
+            Menu {
+                ForEach(IntentType.allCases, id: \.self) { intent in
+                    Button {
+                        if let sectionId = viewModel.focusedSectionId {
+                            Task { try? await viewModel.setSectionIntent(sectionId, intent: intent) }
+                        }
+                    } label: {
+                        Label(intent.displayName, systemImage: intent.icon)
+                    }
+                }
+            } label: {
+                Image(systemName: currentFocusedIntent.icon)
+                    .font(.system(size: 12))
+                    .foregroundStyle(viewModel.focusedSectionId != nil ? currentFocusedIntent.color : Color(white: 0.3))
+                    .frame(width: 28, height: 24)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(viewModel.focusedSectionId == nil)
+
+            Spacer()
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 4)
+        .background(Color(white: 0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// If no text view is active, focus the body so formatting has a target.
+    private func ensureEditorFocused() {
+        if !macFmtState.hasActiveEditor {
+            bodyFocused = true
+        }
+    }
+
+    private func macBarButton(icon: String, active: Bool, disabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundStyle(disabled ? Color(white: 0.3) : active ? .white : Color(white: 0.7))
+                .frame(width: 28, height: 24)
+                .background(
+                    active && !disabled
+                        ? RoundedRectangle(cornerRadius: 5).fill(Color.purple)
+                        : RoundedRectangle(cornerRadius: 5).fill(Color.clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)  // Prevent stealing focus from NSTextView
+        .disabled(disabled)
+    }
+
+    private var macBarDivider: some View {
+        Rectangle()
+            .fill(Color(white: 0.2))
+            .frame(width: 1, height: 16)
+            .padding(.horizontal, 4)
+    }
+    #endif
 
     @ViewBuilder
     private var primaryToolbarItems: some View {
@@ -1322,11 +1478,10 @@ private struct NoteEditorContent: View {
                                 .font(.caption.bold())
                                 .foregroundStyle(.yellow)
                                 .frame(width: 26, height: 26)
-                                .background(
-                                    Circle()
-                                        .fill(Color.yellow.opacity(0.12))
-                                )
+                                .background(.ultraThinMaterial)
+                                .clipShape(Circle())
                         }
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(.horizontal, 4)
@@ -1344,11 +1499,10 @@ private struct NoteEditorContent: View {
                 .font(.caption2.bold())
                 .foregroundStyle(.yellow.opacity(0.6))
                 .frame(width: 40, height: 24)
-                .background(
-                    Capsule()
-                        .fill(Color.yellow.opacity(0.08))
-                )
+                .background(.ultraThinMaterial)
+                .clipShape(Capsule())
             }
+            .buttonStyle(.plain)
         }
     }
 
@@ -1421,45 +1575,58 @@ private struct NoteEditorContent: View {
             if let body = note?.body, body != bodyText {
                 print("[Sync] Editor body updated from observation: \(body.prefix(50))")
                 isExternalBodyUpdate = true
-                bodyText = body
+                DispatchQueue.main.async {
+                    bodyText = body
+                }
             }
         }
         #else
-        TextEditor(text: $bodyText)
-            .font(.body)
-            .scrollContentBackground(.hidden)
-            .frame(minHeight: isPageEmpty ? 100 : 22)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 0)
-            .focused($bodyFocused)
-            .overlay(alignment: .topLeading) {
-                if isPageEmpty && !bodyFocused {
-                    Text(emptyPlaceholder)
-                        .font(.body)
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 10)
-                        .allowsHitTesting(false)
-                }
-            }
-            .onChange(of: bodyText) { _, newValue in
+        EditableTextView(
+            text: $bodyText,
+            isFocused: $bodyFocused,
+            richText: viewModel.note?.bodyRichText,
+            onContentChange: { newValue, richText in
                 guard !isExternalBodyUpdate else {
                     isExternalBodyUpdate = false
                     return
                 }
                 Task {
-                    try? await viewModel.updateBody(newValue)
+                    try? await viewModel.updateBody(newValue, richText: richText)
                 }
+            },
+            onFocusChange: { _ in },
+            dynamicHeight: $bodyEditorHeight
+        )
+        .frame(height: max(isPageEmpty ? 100 : 22, bodyEditorHeight))
+        .padding(.horizontal, 10)
+        .overlay(alignment: .topLeading) {
+            if isPageEmpty && !bodyFocused {
+                Text(emptyPlaceholder)
+                    .font(.system(size: 17))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 10)
+                    .allowsHitTesting(false)
             }
-            .onAppear {
-                bodyText = viewModel.note?.body ?? ""
+        }
+        .onAppear {
+            bodyText = viewModel.note?.body ?? ""
+            // Reset formatting state so no styles are pre-selected on page open
+            DispatchQueue.main.async {
+                MacFormattingState.shared.hasActiveEditor = false
             }
-            .onChange(of: viewModel.note?.body) { _, newBody in
-                if let newBody = newBody, newBody != bodyText {
-                    print("[Sync] Editor body updated from observation: \(newBody.prefix(50))")
+            // Auto-focus body after reset so user can type immediately
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                bodyFocused = true
+            }
+        }
+        .onChange(of: viewModel.note?.body) { _, newBody in
+            if let newBody = newBody, newBody != bodyText {
+                print("[Sync] Editor body updated from observation: \(newBody.prefix(50))")
+                DispatchQueue.main.async {
                     bodyText = newBody
                 }
             }
+        }
         #endif
     }
 }
@@ -1596,10 +1763,18 @@ private class BodyKeyboardToolbar: UIToolbar {
         underlineButton?.tintColor = isUnderlineActive ? .systemPurple : nil
     }
 
-    /// Sync button states with the text view's current typing attributes
+    /// Sync button states with the attributes at the current selection or cursor
     func syncWithTypingAttributes() {
         guard let textView = textView else { return }
-        let attrs = textView.typingAttributes
+        let range = textView.selectedRange
+        let attrs: [NSAttributedString.Key: Any]
+        // Read attributes from the selected text (or cursor position) rather than
+        // typingAttributes, so buttons reflect the actual formatting of the selection.
+        if range.location < textView.attributedText.length {
+            attrs = textView.attributedText.attributes(at: range.location, effectiveRange: nil)
+        } else {
+            attrs = textView.typingAttributes
+        }
         let font = (attrs[.font] as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
         let traits = font.fontDescriptor.symbolicTraits
 
@@ -1653,11 +1828,12 @@ private class BodyKeyboardToolbar: UIToolbar {
 
         if range.length > 0 {
             applyFontTraitToSelection(.traitBold, in: textView)
+            syncWithTypingAttributes()
         } else {
             isBoldActive.toggle()
             applyFontTraitToTyping(.traitBold, isActive: isBoldActive, in: textView)
+            updateButtonAppearance()
         }
-        updateButtonAppearance()
     }
 
     @objc private func italicTapped() {
@@ -1666,11 +1842,12 @@ private class BodyKeyboardToolbar: UIToolbar {
 
         if range.length > 0 {
             applyFontTraitToSelection(.traitItalic, in: textView)
+            syncWithTypingAttributes()
         } else {
             isItalicActive.toggle()
             applyFontTraitToTyping(.traitItalic, isActive: isItalicActive, in: textView)
+            updateButtonAppearance()
         }
-        updateButtonAppearance()
     }
 
     @objc private func underlineTapped() {
@@ -1696,6 +1873,7 @@ private class BodyKeyboardToolbar: UIToolbar {
             textView.attributedText = mutableAttrString
             textView.selectedRange = range
             notifyContentChanged()
+            syncWithTypingAttributes()
         } else {
             isUnderlineActive.toggle()
             var attrs = textView.typingAttributes
@@ -1705,8 +1883,8 @@ private class BodyKeyboardToolbar: UIToolbar {
                 attrs.removeValue(forKey: .underlineStyle)
             }
             textView.typingAttributes = attrs
+            updateButtonAppearance()
         }
-        updateButtonAppearance()
     }
 
     private func applyFontTraitToSelection(_ trait: UIFontDescriptor.SymbolicTraits, in textView: UITextView) {
@@ -2034,9 +2212,10 @@ struct AddContentBar: View {
                             .font(.title3)
                             .foregroundStyle(Color.systemBackground)
                             .frame(width: 44, height: 44)
-                            .background(Color.gray.opacity(0.5))
+                            .background(.ultraThinMaterial)
                             .clipShape(Circle())
                     }
+                    .buttonStyle(.plain)
 
                     Button {
                         onAddText()
@@ -2046,9 +2225,10 @@ struct AddContentBar: View {
                             .font(.title3)
                             .foregroundStyle(Color.systemBackground)
                             .frame(width: 44, height: 44)
-                            .background(Color.gray.opacity(0.5))
+                            .background(.ultraThinMaterial)
                             .clipShape(Circle())
                     }
+                    .buttonStyle(.plain)
 
                     Button {
                         onAddImage()
@@ -2058,9 +2238,10 @@ struct AddContentBar: View {
                             .font(.title3)
                             .foregroundStyle(Color.systemBackground)
                             .frame(width: 44, height: 44)
-                            .background(Color.gray.opacity(0.5))
+                            .background(.ultraThinMaterial)
                             .clipShape(Circle())
                     }
+                    .buttonStyle(.plain)
                 }
                 .transition(.scale.combined(with: .opacity))
             } else {
@@ -2071,9 +2252,10 @@ struct AddContentBar: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Color.systemBackground)
                         .frame(width: 28, height: 28)
-                        .background(Color.gray.opacity(0.5))
+                        .background(.ultraThinMaterial)
                         .clipShape(Circle())
                 }
+                .buttonStyle(.plain)
                 .transition(.scale.combined(with: .opacity))
             }
         }

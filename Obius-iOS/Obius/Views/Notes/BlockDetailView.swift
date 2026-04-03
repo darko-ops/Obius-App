@@ -18,7 +18,6 @@ struct BlockDetailView: View {
         List {
             ForEach(notes) { note in
                 NoteRowView(note: note, sectionContent: sectionPreviews[note.id], autoTitle: autoTitles[note.id])
-                    .listRowBackground(Color.systemBackground)
                     .contentShape(Rectangle())
                     .onTapGesture {
                         selectedNote = note
@@ -101,10 +100,8 @@ struct BlockDetailView: View {
                     }
             }
         }
-        #if os(iOS)
-        .listStyle(.insetGrouped)
+        .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        #endif
         .background(Color.systemBackground)
         .navigationTitle(blockName)
         .inlineNavigationTitle()
