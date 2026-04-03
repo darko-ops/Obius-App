@@ -10,10 +10,13 @@ import {
   corsResponse,
 } from '../_shared/supabase-client.ts';
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
-import { sendMessage, sendRaw, logUsage } from '../_shared/anthropic-client.ts';
 import { requireAIAction, requireFeature } from '../_shared/entitlements.ts';
-
-const AI_MODEL = 'claude-haiku-4-5-20251001';
+import {
+  sendMessage as routedSendMessage,
+  sendWithTools as routedSendWithTools,
+  logRoutedUsage,
+  getRoute,
+} from '../_shared/model-router.ts';
 
 // ---------- Prompt loader ----------
 
@@ -306,17 +309,17 @@ async function handleSendWithTools(body: ActionRequest, userId: string, supabase
 
   const system = await systemPromptForSendWithTools(noteContext);
 
-  const raw = await sendRaw(
+  // Architect role → Claude Sonnet (best tool-use accuracy)
+  const raw = await routedSendWithTools(
     messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
     {
-      model: AI_MODEL,
       maxTokens: 4096,
       system,
       tools: TOOL_DEFINITIONS,
     }
   );
 
-  logUsage({ supabase, userId, action: 'chat', inputTokens: raw.usage.input_tokens, outputTokens: raw.usage.output_tokens, model: raw.model }).catch(() => {});
+  logRoutedUsage({ supabase, userId, action: 'chat', provider: raw.provider, model: raw.model, inputTokens: raw.usage.input_tokens, outputTokens: raw.usage.output_tokens }).catch(() => {});
 
   return jsonResponse({ content: raw.content });
 }
@@ -331,16 +334,14 @@ async function handleSendChat(body: ActionRequest, userId: string, supabase: Sup
 
   const system = await systemPromptForChat(noteContext);
 
-  const response = await sendMessage(
+  // Conversationalist role → Claude Haiku (fast, natural dialogue)
+  const response = await routedSendMessage(
+    'send_chat',
     messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-    {
-      maxTokens: 4096,
-      system,
-      model: AI_MODEL,
-    }
+    { maxTokens: 4096, system }
   );
 
-  logUsage({ supabase, userId, action: 'chat_convo', inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, model: response.model }).catch(() => {});
+  logRoutedUsage({ supabase, userId, action: 'chat_convo', provider: response.provider, model: response.model, inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens }).catch(() => {});
 
   return jsonResponse({ text: response.content });
 }
@@ -352,12 +353,15 @@ async function handleGenerateTitle(body: ActionRequest, userId: string, supabase
   }
 
   const system = await getGenerateTitleSystem();
-  const response = await sendMessage(
+
+  // Extractor role → Gemini Flash (fast structured extraction)
+  const response = await routedSendMessage(
+    'generate_title',
     [{ role: 'user', content: `Generate a short title for this note:\n\n${content}` }],
-    { maxTokens: 30, system, model: AI_MODEL }
+    { maxTokens: 30, system }
   );
 
-  logUsage({ supabase, userId, action: 'title_gen', inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, model: response.model }).catch(() => {});
+  logRoutedUsage({ supabase, userId, action: 'title_gen', provider: response.provider, model: response.model, inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens }).catch(() => {});
 
   return jsonResponse({ text: response.content });
 }
@@ -369,12 +373,15 @@ async function handleGenerateTags(body: ActionRequest, userId: string, supabase:
   }
 
   const system = await getGenerateTagsSystem();
-  const response = await sendMessage(
+
+  // Extractor role → Gemini Flash
+  const response = await routedSendMessage(
+    'generate_tags',
     [{ role: 'user', content: `Extract keyword tags from this note:\n\n${content}` }],
-    { maxTokens: 50, system, model: AI_MODEL }
+    { maxTokens: 50, system }
   );
 
-  logUsage({ supabase, userId, action: 'tag_gen', inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, model: response.model }).catch(() => {});
+  logRoutedUsage({ supabase, userId, action: 'tag_gen', provider: response.provider, model: response.model, inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens }).catch(() => {});
 
   return jsonResponse({ text: response.content });
 }
@@ -389,12 +396,15 @@ async function handleExtractTemporalEchoes(body: ActionRequest, userId: string, 
 
   const todayISO = new Date().toISOString();
   const system = await systemPromptForTemporalEchoes(todayISO);
-  const response = await sendMessage(
+
+  // Extractor role → Gemini Flash
+  const response = await routedSendMessage(
+    'extract_temporal_echoes',
     [{ role: 'user', content: `Notes:\n${noteSummaries}\n\nHandles:\n${handles || ''}` }],
-    { maxTokens: 512, system, model: AI_MODEL }
+    { maxTokens: 512, system }
   );
 
-  logUsage({ supabase, userId, action: 'temporal_echo', inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, model: response.model }).catch(() => {});
+  logRoutedUsage({ supabase, userId, action: 'temporal_echo', provider: response.provider, model: response.model, inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens }).catch(() => {});
 
   return jsonResponse({ text: response.content });
 }
@@ -406,12 +416,15 @@ async function handleExtractEntities(body: ActionRequest, userId: string, supaba
   }
 
   const system = await getExtractEntitiesSystem();
-  const response = await sendMessage(
+
+  // Extractor role → Gemini Flash
+  const response = await routedSendMessage(
+    'extract_entities',
     [{ role: 'user', content: sectionsText }],
-    { maxTokens: 256, system, model: AI_MODEL }
+    { maxTokens: 256, system }
   );
 
-  logUsage({ supabase, userId, action: 'entity_extract', inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, model: response.model }).catch(() => {});
+  logRoutedUsage({ supabase, userId, action: 'entity_extract', provider: response.provider, model: response.model, inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens }).catch(() => {});
 
   return jsonResponse({ text: response.content });
 }

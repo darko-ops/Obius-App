@@ -12,10 +12,11 @@ import {
 import {
   generateNoteSummary,
   refineTitle,
-  CLAUDE_MODEL,
-} from '../_shared/anthropic-client.ts';
+  GEMINI_PRO_MODEL,
+} from '../_shared/gemini-client.ts';
 import type { SummaryRequest, SummaryResponse } from '../_shared/types.ts';
 import { requireAIAction } from '../_shared/entitlements.ts';
+import { logRoutedUsage } from '../_shared/model-router.ts';
 
 serve(async (req: Request) => {
   // Handle CORS preflight
@@ -117,7 +118,8 @@ serve(async (req: Request) => {
 
     return jsonResponse({
       ...response,
-      model: CLAUDE_MODEL,
+      model: GEMINI_PRO_MODEL,
+      provider: 'gemini',
     });
   } catch (error) {
     console.error('Generate summary error:', error);
