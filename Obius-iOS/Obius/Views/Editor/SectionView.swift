@@ -1859,14 +1859,14 @@ struct EditableTextView: NSViewRepresentable {
 
         if isFocused.wrappedValue && textView.window?.firstResponder != textView {
             let coordinator = context.coordinator
+            // Set activeTextView immediately so formatting works even before
+            // the async makeFirstResponder completes.
+            MacFormattingState.shared.activeTextView = textView
+            MacFormattingState.shared.hasActiveEditor = true
+            Coordinator.activeCoordinator = coordinator
             DispatchQueue.main.async {
                 textView.window?.makeFirstResponder(textView)
-                // makeFirstResponder doesn't trigger textDidBeginEditing
-                // until the user types, so activate the formatting bar now.
-                Coordinator.activeCoordinator = coordinator
-                MacFormattingState.shared.hasActiveEditor = true
-                // Apply any pre-selected formatting and sync state
-                coordinator.applyFormattingState()
+                coordinator.syncFormattingState()
             }
         }
     }
@@ -1878,110 +1878,26 @@ struct EditableTextView: NSViewRepresentable {
     class Coordinator: NSObject, NSTextViewDelegate {
         var parent: EditableTextView
         weak var textView: NSTextView?
-        private var observers: [Any] = []
+        /// Saved selection range — preserved when the text view loses focus
+        /// so formatting buttons can still apply to the original selection.
+        var savedSelectedRange: NSRange = NSRange(location: 0, length: 0)
 
         /// Tracks the most recently focused text view coordinator so formatting
-        /// buttons (which steal first-responder on click) can still target it.
+        /// buttons can call applyBold/Italic/etc directly on the active editor.
         static weak var activeCoordinator: Coordinator?
 
         init(_ parent: EditableTextView) {
             self.parent = parent
             super.init()
-            setupFormattingObservers()
         }
 
         deinit {
             if Coordinator.activeCoordinator === self {
                 Coordinator.activeCoordinator = nil
             }
-            observers.forEach { NotificationCenter.default.removeObserver($0) }
         }
 
-        private func setupFormattingObservers() {
-            observers.append(NotificationCenter.default.addObserver(
-                forName: .macFormattingBold, object: nil, queue: .main
-            ) { [weak self] _ in self?.handleFormatting { $0.toggleBold() } })
-
-            observers.append(NotificationCenter.default.addObserver(
-                forName: .macFormattingItalic, object: nil, queue: .main
-            ) { [weak self] _ in self?.handleFormatting { $0.toggleItalic() } })
-
-            observers.append(NotificationCenter.default.addObserver(
-                forName: .macFormattingUnderline, object: nil, queue: .main
-            ) { [weak self] _ in self?.handleFormatting { $0.toggleUnderline() } })
-
-            observers.append(NotificationCenter.default.addObserver(
-                forName: .macFormattingTitle, object: nil, queue: .main
-            ) { [weak self] _ in self?.handleFormatting { $0.toggleTitle() } })
-        }
-
-        /// Only the active coordinator processes formatting notifications.
-        private func handleFormatting(_ action: (Coordinator) -> Void) {
-            guard Coordinator.activeCoordinator === self else { return }
-            action(self)
-        }
-
-        /// Apply MacFormattingState to text view, restore focus, and sync back.
-        /// The button already toggled MacFormattingState, so we just apply it here.
-        private func toggleBold() {
-            applyFormattingToTextView()
-        }
-
-        private func toggleItalic() {
-            applyFormattingToTextView()
-        }
-
-        private func toggleUnderline() {
-            applyFormattingToTextView()
-        }
-
-        private func toggleTitle() {
-            applyFormattingToTextView()
-        }
-
-        /// Reads the desired state from MacFormattingState and applies it to
-        /// the text view's selection (if any) and typing attributes, then
-        /// restores first-responder so the cursor stays in the text view.
-        private func applyFormattingToTextView() {
-            guard let textView = textView else { return }
-            let state = MacFormattingState.shared
-            let bodySize = NSFont.systemFont(ofSize: 17).pointSize
-            let range = textView.selectedRange()
-
-            // Build the desired font
-            var font: NSFont
-            if state.isTitle {
-                font = NSFont.systemFont(ofSize: bodySize * 1.65, weight: .bold)
-            } else {
-                font = NSFont.systemFont(ofSize: bodySize)
-                if state.isBold {
-                    font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
-                }
-                if state.isItalic {
-                    font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
-                }
-            }
-            let underline = state.isUnderline ? NSUnderlineStyle.single.rawValue : 0
-
-            // Apply to selection if there is one
-            if range.length > 0 {
-                textView.textStorage?.addAttribute(.font, value: font, range: range)
-                if state.isUnderline {
-                    textView.textStorage?.addAttribute(.underlineStyle, value: underline, range: range)
-                } else {
-                    textView.textStorage?.removeAttribute(.underlineStyle, range: range)
-                }
-            }
-
-            // Restore focus THEN set typing attributes (focus can reset them)
-            textView.window?.makeFirstResponder(textView)
-            var attrs = textView.typingAttributes
-            attrs[.font] = font
-            attrs[.underlineStyle] = underline
-            textView.typingAttributes = attrs
-
-            notifyChange()
-        }
+        // MARK: - Persistence
 
         private func notifyChange() {
             guard let textView = textView else { return }
@@ -1989,15 +1905,16 @@ struct EditableTextView: NSViewRepresentable {
             parent.onContentChange(textView.string, richText)
         }
 
+        // MARK: - NSTextViewDelegate
+
         func textDidBeginEditing(_ notification: Notification) {
             Coordinator.activeCoordinator = self
             parent.isFocused.wrappedValue = true
             parent.onFocusChange(true)
-            DispatchQueue.main.async {
-                MacFormattingState.shared.hasActiveEditor = true
-            }
-            // Apply any pre-selected formatting (user clicked bold before typing)
-            applyFormattingState()
+            let state = MacFormattingState.shared
+            state.hasActiveEditor = true
+            state.activeTextView = textView
+            syncFormattingState()
         }
 
         func textDidEndEditing(_ notification: Notification) {
@@ -2008,65 +1925,25 @@ struct EditableTextView: NSViewRepresentable {
                     MacFormattingState.shared.hasActiveEditor = false
                 }
             }
-            guard let textView = textView else { return }
-            let richText = RichTextHelper.serialize(textView.attributedString())
-            parent.onContentChange(textView.string, richText)
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
+            if let textView = textView {
+                let range = textView.selectedRange()
+                if range.length > 0 {
+                    savedSelectedRange = range
+                    MacFormattingState.shared.savedSelectedRange = range
+                }
+                // Always keep activeTextView current when user interacts
+                MacFormattingState.shared.activeTextView = textView
+            }
             syncFormattingState()
         }
 
-        /// Push current cursor/selection formatting state to the shared object.
         func syncFormattingState() {
             guard let textView = textView else { return }
-            let bodySize = NSFont.systemFont(ofSize: 17).pointSize
-            let attrs: [NSAttributedString.Key: Any]
-            let range = textView.selectedRange()
-            if range.location < (textView.textStorage?.length ?? 0) {
-                attrs = textView.textStorage?.attributes(at: range.location, effectiveRange: nil) ?? textView.typingAttributes
-            } else {
-                attrs = textView.typingAttributes
-            }
-            let font = (attrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: bodySize)
-            let traits = NSFontManager.shared.traits(of: font)
-            DispatchQueue.main.async {
-                let state = MacFormattingState.shared
-                state.isBold = traits.contains(.boldFontMask)
-                state.isItalic = traits.contains(.italicFontMask)
-                state.isUnderline = (attrs[.underlineStyle] as? Int) == NSUnderlineStyle.single.rawValue
-                state.isTitle = font.pointSize > bodySize + 2
-            }
-        }
-
-        /// Apply the current MacFormattingState to the text view's typing attributes.
-        /// Called when editing begins so pre-selected styles (bold clicked before typing) take effect.
-        func applyFormattingState() {
-            guard let textView = textView else { return }
             let state = MacFormattingState.shared
-            let bodySize = NSFont.systemFont(ofSize: 17).pointSize
-            var attrs = textView.typingAttributes
-            var font = (attrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: bodySize)
-
-            if state.isTitle {
-                font = NSFont.systemFont(ofSize: bodySize * 1.65, weight: .bold)
-            } else {
-                // Apply/remove bold
-                if state.isBold {
-                    font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
-                } else {
-                    font = NSFontManager.shared.convert(font, toNotHaveTrait: .boldFontMask)
-                }
-                // Apply/remove italic
-                if state.isItalic {
-                    font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
-                } else {
-                    font = NSFontManager.shared.convert(font, toNotHaveTrait: .italicFontMask)
-                }
-            }
-            attrs[.font] = font
-            attrs[.underlineStyle] = state.isUnderline ? NSUnderlineStyle.single.rawValue : 0
-            textView.typingAttributes = attrs
+            state.syncState(from: textView)
         }
 
         func textDidChange(_ notification: Notification) {
@@ -2102,7 +1979,7 @@ struct EditableTextView: NSViewRepresentable {
 
 #if os(macOS)
 /// Tracks the active formatting state at the cursor so the inline bar can show indicators.
-/// Also acts as the source of truth for pre-selected styles (before the user types).
+/// Also provides formatting methods that operate directly on the active NSTextView.
 final class MacFormattingState: ObservableObject {
     static let shared = MacFormattingState()
     @Published var isBold = false
@@ -2111,14 +1988,159 @@ final class MacFormattingState: ObservableObject {
     @Published var isTitle = false
     /// True when any NSTextView (section or body) is the active editor.
     @Published var hasActiveEditor = false
+    /// Direct reference to the active text view for formatting commands.
+    weak var activeTextView: NSTextView?
+    /// Saved selection range — preserved so formatting works even if button click collapses selection.
+    var savedSelectedRange: NSRange = NSRange(location: 0, length: 0)
+
+    /// Save the selection range (called from textViewDidChangeSelection).
+    func saveSelection(_ range: NSRange) {
+        if range.length > 0 {
+            savedSelectedRange = range
+        }
+    }
+
+    private var effectiveRange: NSRange {
+        guard let tv = activeTextView else { return NSRange(location: 0, length: 0) }
+        let live = tv.selectedRange()
+        return live.length > 0 ? live : savedSelectedRange
+    }
+
+    // MARK: - Formatting Commands
+
+    func applyBold() { toggleFontTrait(.boldFontMask) }
+    func applyItalic() { toggleFontTrait(.italicFontMask) }
+
+    private func toggleFontTrait(_ trait: NSFontTraitMask) {
+        guard let tv = activeTextView, let storage = tv.textStorage else { return }
+        let range = effectiveRange
+        let textLength = storage.length
+
+        if range.length > 0 && range.location + range.length <= textLength {
+            var allHaveTrait = true
+            storage.enumerateAttribute(.font, in: range, options: []) { value, _, _ in
+                guard let font = value as? NSFont else { allHaveTrait = false; return }
+                if !NSFontManager.shared.traits(of: font).contains(trait) { allHaveTrait = false }
+            }
+            storage.beginEditing()
+            storage.enumerateAttribute(.font, in: range, options: []) { value, subRange, _ in
+                guard let font = value as? NSFont else { return }
+                let newFont = allHaveTrait
+                    ? NSFontManager.shared.convert(font, toNotHaveTrait: trait)
+                    : NSFontManager.shared.convert(font, toHaveTrait: trait)
+                storage.addAttribute(.font, value: newFont, range: subRange)
+            }
+            storage.endEditing()
+        }
+
+        var attrs = tv.typingAttributes
+        let currentFont = (attrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: 17)
+        let hasTrait = NSFontManager.shared.traits(of: currentFont).contains(trait)
+        attrs[.font] = hasTrait
+            ? NSFontManager.shared.convert(currentFont, toNotHaveTrait: trait)
+            : NSFontManager.shared.convert(currentFont, toHaveTrait: trait)
+        tv.typingAttributes = attrs
+
+        finishFormatting(tv, range)
+    }
+
+    func applyUnderline() {
+        guard let tv = activeTextView, let storage = tv.textStorage else { return }
+        let range = effectiveRange
+        let textLength = storage.length
+
+        if range.length > 0 && range.location + range.length <= textLength {
+            var allUnderlined = true
+            storage.enumerateAttribute(.underlineStyle, in: range, options: []) { value, _, _ in
+                if (value as? Int) != NSUnderlineStyle.single.rawValue { allUnderlined = false }
+            }
+            storage.beginEditing()
+            if allUnderlined {
+                storage.removeAttribute(.underlineStyle, range: range)
+            } else {
+                storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+            }
+            storage.endEditing()
+        }
+
+        var attrs = tv.typingAttributes
+        let isUnderlined = (attrs[.underlineStyle] as? Int) == NSUnderlineStyle.single.rawValue
+        attrs[.underlineStyle] = isUnderlined ? 0 : NSUnderlineStyle.single.rawValue
+        tv.typingAttributes = attrs
+
+        finishFormatting(tv, range)
+    }
+
+    func applyTitle() {
+        guard let tv = activeTextView, let storage = tv.textStorage else { return }
+        let bodySize = NSFont.systemFont(ofSize: 17).pointSize
+        let titleSize = bodySize * 1.65
+        let range = effectiveRange
+        let textLength = storage.length
+
+        if range.length > 0 && range.location + range.length <= textLength {
+            var allTitle = true
+            storage.enumerateAttribute(.font, in: range, options: []) { value, _, _ in
+                guard let font = value as? NSFont else { allTitle = false; return }
+                if font.pointSize < bodySize + 2 { allTitle = false }
+            }
+            storage.beginEditing()
+            storage.enumerateAttribute(.font, in: range, options: []) { value, subRange, _ in
+                let newFont: NSFont
+                if allTitle {
+                    let existing = (value as? NSFont) ?? NSFont.systemFont(ofSize: bodySize)
+                    let traits = NSFontManager.shared.traits(of: existing)
+                    var base = NSFont.systemFont(ofSize: bodySize)
+                    if traits.contains(.boldFontMask) { base = NSFontManager.shared.convert(base, toHaveTrait: .boldFontMask) }
+                    if traits.contains(.italicFontMask) { base = NSFontManager.shared.convert(base, toHaveTrait: .italicFontMask) }
+                    newFont = base
+                } else {
+                    newFont = NSFont.systemFont(ofSize: titleSize, weight: .bold)
+                }
+                storage.addAttribute(.font, value: newFont, range: subRange)
+            }
+            storage.endEditing()
+        }
+
+        var attrs = tv.typingAttributes
+        let currentFont = (attrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: bodySize)
+        let isTitle = currentFont.pointSize > bodySize + 2
+        attrs[.font] = isTitle ? NSFont.systemFont(ofSize: bodySize) : NSFont.systemFont(ofSize: titleSize, weight: .bold)
+        tv.typingAttributes = attrs
+
+        finishFormatting(tv, range)
+    }
+
+    private func finishFormatting(_ tv: NSTextView, _ range: NSRange) {
+        tv.window?.makeFirstResponder(tv)
+        tv.setSelectedRange(range)
+        syncState(from: tv)
+        // Persist: serialize rich text and trigger the text view's delegate save path
+        if let delegate = tv.delegate as? EditableTextView.Coordinator {
+            let richText = RichTextHelper.serialize(tv.attributedString())
+            delegate.parent.onContentChange(tv.string, richText)
+        }
+    }
+
+    /// Read attributes from the text view and update published properties.
+    func syncState(from tv: NSTextView) {
+        let bodySize = NSFont.systemFont(ofSize: 17).pointSize
+        let attrs: [NSAttributedString.Key: Any]
+        let range = tv.selectedRange()
+        if range.location < (tv.textStorage?.length ?? 0) {
+            attrs = tv.textStorage?.attributes(at: range.location, effectiveRange: nil) ?? tv.typingAttributes
+        } else {
+            attrs = tv.typingAttributes
+        }
+        let font = (attrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: bodySize)
+        let traits = NSFontManager.shared.traits(of: font)
+        isBold = traits.contains(.boldFontMask)
+        isItalic = traits.contains(.italicFontMask)
+        isUnderline = (attrs[.underlineStyle] as? Int) == NSUnderlineStyle.single.rawValue
+        isTitle = font.pointSize > bodySize + 2
+    }
 }
 
-extension Notification.Name {
-    static let macFormattingBold = Notification.Name("macFormattingBold")
-    static let macFormattingItalic = Notification.Name("macFormattingItalic")
-    static let macFormattingUnderline = Notification.Name("macFormattingUnderline")
-    static let macFormattingTitle = Notification.Name("macFormattingTitle")
-}
 #endif
 
 // MARK: - Template Protected Text View

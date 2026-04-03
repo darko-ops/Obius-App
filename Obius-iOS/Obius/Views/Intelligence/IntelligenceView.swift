@@ -2303,13 +2303,28 @@ struct WorkspaceSheet: View {
         }
     }
 
+    private static let loadingPhrases = [
+        "Looping...", "Dooping...", "Hooping...",
+        "Mooping...", "Zooping...", "Pooping..."
+    ]
+
+    @State private var loadingPhraseIndex = 0
+
     private var loadingIndicator: some View {
         HStack {
             ProgressView()
                 .scaleEffect(0.8)
-            Text("Thinking...")
+            Text(Self.loadingPhrases[loadingPhraseIndex % Self.loadingPhrases.count])
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .onAppear {
+                    loadingPhraseIndex = 0
+                }
+                .onReceive(Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()) { _ in
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        loadingPhraseIndex += 1
+                    }
+                }
             Spacer()
         }
     }

@@ -124,9 +124,9 @@ final class SectionRepository: ObservableObject {
     func updateContent(_ sectionId: String, content: String, richText: String? = nil) async throws {
         try await database.write { db in
             guard var section = try Section.fetchOne(db, key: sectionId) else { return }
-            // Only touch if text content actually changed — prevents spurious sync pushes.
-            // richText=nil means "not provided" (e.g. macOS plain TextEditor), not "clear it".
-            guard section.content != content else { return }
+            // Only touch if text content or rich text actually changed.
+            let richChanged = richText != nil && section.richContent != richText
+            guard section.content != content || richChanged else { return }
             section.content = content
             if let richText = richText {
                 section.richContent = richText

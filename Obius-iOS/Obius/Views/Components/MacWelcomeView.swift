@@ -134,7 +134,7 @@ struct MacWelcomeView: View {
                                             .fill(note.intent.color)
                                             .frame(width: 3, height: 14)
 
-                                        Text(note.displayTitle)
+                                        Text(appState.noteRepository.resolvedTitle(for: note))
                                             .font(.system(size: 13))
                                             .foregroundStyle(Color(white: 0.75))
                                             .lineLimit(1)

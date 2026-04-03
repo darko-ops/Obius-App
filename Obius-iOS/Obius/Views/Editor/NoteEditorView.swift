@@ -761,26 +761,22 @@ private struct NoteEditorContent: View {
 
             macBarDivider
 
-            // Text formatting — always enabled, toggle state immediately for instant feedback
+            // Text formatting — operates directly on the active NSTextView
             macBarButton(icon: "bold", active: macFmtState.isBold, disabled: false) {
-                macFmtState.isBold.toggle()
                 ensureEditorFocused()
-                NotificationCenter.default.post(name: .macFormattingBold, object: nil)
+                macFmtState.applyBold()
             }
             macBarButton(icon: "italic", active: macFmtState.isItalic, disabled: false) {
-                macFmtState.isItalic.toggle()
                 ensureEditorFocused()
-                NotificationCenter.default.post(name: .macFormattingItalic, object: nil)
+                macFmtState.applyItalic()
             }
             macBarButton(icon: "underline", active: macFmtState.isUnderline, disabled: false) {
-                macFmtState.isUnderline.toggle()
                 ensureEditorFocused()
-                NotificationCenter.default.post(name: .macFormattingUnderline, object: nil)
+                macFmtState.applyUnderline()
             }
             macBarButton(icon: "textformat.size", active: macFmtState.isTitle, disabled: false) {
-                macFmtState.isTitle.toggle()
                 ensureEditorFocused()
-                NotificationCenter.default.post(name: .macFormattingTitle, object: nil)
+                macFmtState.applyTitle()
             }
 
             macBarDivider
@@ -835,6 +831,7 @@ private struct NoteEditorContent: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focusable(false)  // Prevent stealing focus from NSTextView
         .disabled(disabled)
     }
 
@@ -1615,12 +1612,7 @@ private struct NoteEditorContent: View {
             bodyText = viewModel.note?.body ?? ""
             // Reset formatting state so no styles are pre-selected on page open
             DispatchQueue.main.async {
-                let fmt = MacFormattingState.shared
-                fmt.isBold = false
-                fmt.isItalic = false
-                fmt.isUnderline = false
-                fmt.isTitle = false
-                fmt.hasActiveEditor = false
+                MacFormattingState.shared.hasActiveEditor = false
             }
             // Auto-focus body after reset so user can type immediately
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
