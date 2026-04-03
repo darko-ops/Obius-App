@@ -152,13 +152,19 @@ class AppState: ObservableObject {
     let insightRepository: InsightRepository
 
     @Published var isInitialized = false
+    /// Set to true if the database had to be recreated from scratch due to corruption.
+    /// The UI can check this to inform the user that local data was reset.
+    @Published var didRecoverFromCorruption = false
 
     init() {
         do {
             // Migrate database from legacy path to App Group container (one-time)
             DatabaseMigrationHelper.migrateIfNeeded()
 
-            self.database = try DatabaseManager()
+            let db = try Self.openDatabase()
+            self.database = db.manager
+            if db.wasRecovered { didRecoverFromCorruption = true }
+
             self.noteRepository = NoteRepository(database: database)
             self.sectionRepository = SectionRepository(database: database)
             self.handleRepository = HandleRepository(database: database)  // Handle Loop support
@@ -202,8 +208,51 @@ class AppState: ObservableObject {
                 commentRepository: commentRepository
             )
         } catch {
-            fatalError("Failed to initialize database: \(error)")
+            fatalError("Failed to initialize database after recovery attempt: \(error)")
         }
+    }
+
+    /// Try to open the database. If it fails (corruption, migration error, etc.),
+    /// back up the broken file and create a fresh database.
+    private static func openDatabase() throws -> (manager: DatabaseManager, wasRecovered: Bool) {
+        do {
+            let manager = try DatabaseManager()
+            return (manager, false)
+        } catch {
+            print("[AppState] Database initialization failed: \(error)")
+            print("[AppState] Attempting corruption recovery...")
+            if DatabaseManager.recoverFromCorruption() {
+                // Retry with a fresh database
+                let manager = try DatabaseManager()
+                print("[AppState] Recovery successful — fresh database created")
+                return (manager, true)
+            }
+            throw error
+        }
+    }
+
+    /// Delete all local data (notes, sections, handles, echoes, etc.) from the device.
+    /// Cloud data is not affected — signing in again will re-sync.
+    func deleteAllLocalData() async throws {
+        try await database.write { db in
+            try db.execute(sql: "DELETE FROM sections")
+            try db.execute(sql: "DELETE FROM notes")
+            try db.execute(sql: "DELETE FROM handles")
+            try db.execute(sql: "DELETE FROM echoes")
+            try db.execute(sql: "DELETE FROM commits")
+            try db.execute(sql: "DELETE FROM media")
+            try db.execute(sql: "DELETE FROM note_media")
+            try db.execute(sql: "DELETE FROM shareLinks")
+            try db.execute(sql: "DELETE FROM comments")
+            try db.execute(sql: "DELETE FROM insights")
+            try db.execute(sql: "DELETE FROM modules")
+            try db.execute(sql: "DELETE FROM syncOperations")
+        }
+        // Clear cold store (commit .obx files)
+        try? coldStore.clearAll()
+        // Cancel pending echo notifications
+        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        print("[AppState] All local data deleted")
     }
 
     func initialize() async {

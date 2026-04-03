@@ -906,6 +906,35 @@ final class DatabaseManager {
         }
     }
 
+    // MARK: - Corruption Recovery
+
+    /// Move the corrupted database aside and return true if recovery was performed.
+    /// The caller should retry initialization after this returns true.
+    static func recoverFromCorruption() -> Bool {
+        guard let dbURL = appGroupDatabaseURL else { return false }
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: dbURL.path) else { return false }
+
+        let backupName = "obius_corrupt_\(Int(Date().timeIntervalSince1970)).sqlite"
+        let backupURL = dbURL.deletingLastPathComponent().appendingPathComponent(backupName)
+
+        do {
+            // Move the corrupted file (and WAL/SHM) to a backup
+            try fm.moveItem(at: dbURL, to: backupURL)
+            let wal = dbURL.appendingPathExtension("wal")
+            let shm = dbURL.appendingPathExtension("shm")
+            if fm.fileExists(atPath: wal.path) { try? fm.removeItem(at: wal) }
+            if fm.fileExists(atPath: shm.path) { try? fm.removeItem(at: shm) }
+            print("[DatabaseManager] Corrupted database backed up to \(backupName)")
+            return true
+        } catch {
+            // Last resort: just delete it
+            try? fm.removeItem(at: dbURL)
+            print("[DatabaseManager] Corrupted database deleted (backup failed: \(error))")
+            return true
+        }
+    }
+
     // MARK: - Read Operations
 
     func read<T>(_ block: (Database) throws -> T) throws -> T {

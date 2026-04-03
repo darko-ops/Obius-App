@@ -12,6 +12,8 @@ struct SwipeableSectionView: View {
     let onToggleCollapse: () -> Void
     let onDelete: () -> Void
     let onFocus: () -> Void
+    var onCopy: () -> Void = {}
+    var onPaste: () -> Void = {}
 
     @State private var content: String
     @State private var swipeOffset: CGFloat = 0
@@ -241,7 +243,8 @@ struct SwipeableSectionView: View {
             case .delete:
                 onDelete()
             case .duplicate:
-                break // TODO: Implement duplicate
+                onCopy()
+                onPaste()
             case .intent(_):
                 break // Intent changes handled via context menu
             case .lock:

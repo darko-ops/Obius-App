@@ -157,8 +157,15 @@ export interface ConflictInfo {
   merged_entity?: Note | Section | Handle | Echo;
 }
 
+export interface AcceptedOp {
+  operation_id: string;
+  entity_id: string;
+  entity_type: string;
+  new_version: number;
+}
+
 export interface SyncPushResponse {
-  accepted: string[]; // operation IDs
+  accepted: AcceptedOp[];
   conflicts: ConflictInfo[];
   server_timestamp: string;
 }

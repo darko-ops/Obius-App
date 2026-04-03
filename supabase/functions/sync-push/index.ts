@@ -14,6 +14,7 @@ import type {
   SyncPushResponse,
   SyncOperation,
   ConflictInfo,
+  AcceptedOp,
   Note,
   Section,
   Handle,
@@ -60,7 +61,7 @@ serve(async (req: Request) => {
     const syncGate = await requireFeature(supabase, userId, 'cloudSync');
     if (syncGate) return syncGate;
 
-    const accepted: string[] = [];
+    const accepted: AcceptedOp[] = [];
     const conflicts: ConflictInfo[] = [];
 
     // Process each operation
@@ -69,7 +70,12 @@ serve(async (req: Request) => {
         const result = await processOperation(supabase, userId, device_id, op);
 
         if (result.success) {
-          accepted.push(op.operation_id);
+          accepted.push({
+            operation_id: op.operation_id,
+            entity_id: op.entity_id,
+            entity_type: op.entity_type,
+            new_version: result.new_version ?? 1,
+          });
         } else if (result.conflict) {
           conflicts.push(result.conflict);
         }
@@ -180,7 +186,7 @@ async function processOperation(
       // Foreign key violation = parent note was deleted; treat as success so the operation doesn't retry forever
       if (error.code === '23503') {
         console.warn(`Skipping orphaned ${op.entity_type} ${op.entity_id}: parent entity missing`);
-        return { success: true };
+        return { success: true, new_version: 1 };
       }
       console.error(`Create error for ${op.entity_id} (${op.entity_type}):`, error, 'payload keys:', Object.keys(insertData));
       return { success: false };
@@ -189,7 +195,7 @@ async function processOperation(
     // Log to changelog
     await logOperation(supabase, userId, deviceId, op, null, 1);
 
-    return { success: true };
+    return { success: true, new_version: 1 };
   }
 
   // UPDATE operation
@@ -291,7 +297,7 @@ async function processOperation(
 
     await logOperation(supabase, userId, deviceId, op, existing.version, existing.version + 1);
 
-    return { success: true };
+    return { success: true, new_version: existing.version + 1 };
   }
 
   // DELETE operation
@@ -306,7 +312,7 @@ async function processOperation(
 
     if (fetchError || !existing) {
       // Already deleted or doesn't exist
-      return { success: true };
+      return { success: true, new_version: 1 };
     }
 
     const { error: deleteError } = await supabase
@@ -326,7 +332,7 @@ async function processOperation(
 
     await logOperation(supabase, userId, deviceId, op, existing.version, existing.version + 1);
 
-    return { success: true };
+    return { success: true, new_version: existing.version + 1 };
   }
 
   return { success: false };

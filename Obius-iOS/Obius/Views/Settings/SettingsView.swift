@@ -188,7 +188,9 @@ struct DataManagementView: View {
         .alert("Delete All Data", isPresented: $showingDeleteConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) {
-                // TODO: Implement delete all
+                Task {
+                    try? await appState.deleteAllLocalData()
+                }
             }
         } message: {
             Text("This cannot be undone. All local notes will be permanently deleted.")
