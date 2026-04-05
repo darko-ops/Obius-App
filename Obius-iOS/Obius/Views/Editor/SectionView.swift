@@ -348,18 +348,18 @@ struct SectionView: View {
         }
         .padding(.leading, CGFloat(section.indentLevel) * 24)
         .onChange(of: isFocused) { _, newValue in
-            // Image/audio sections have no text field — skip focus handling
-            guard section.contentType != .image && section.contentType != .audio else { return }
+            DispatchQueue.main.async {
+                // Image/audio sections have no text field — skip focus handling
+                guard section.contentType != .image && section.contentType != .audio else { return }
 
-            if newValue && (!section.isLocked || isAuthenticated) {
-                // Small delay to ensure view is ready
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    textFieldFocused = true
-                    isEditing = true
+                if newValue && (!section.isLocked || isAuthenticated) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        textFieldFocused = true
+                        isEditing = true
+                    }
+                } else if !newValue && section.isLocked {
+                    biometricManager.lockSection(section.id)
                 }
-            } else if !newValue && section.isLocked {
-                // Auto-lock when focus leaves a locked node
-                biometricManager.lockSection(section.id)
             }
         }
         .onAppear {
@@ -666,7 +666,8 @@ struct SectionView: View {
                 onIndent: onIndent,
                 onOutdent: onOutdent,
                 currentStatus: section.intent,
-                onStatusChange: onIntentChange
+                onStatusChange: onIntentChange,
+                sectionId: section.id
             )
             .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
             #endif
@@ -861,14 +862,16 @@ struct SectionView: View {
 
     /// Calculate estimated height based on content
     private var estimatedHeight: CGFloat {
-        let lineCount = max(1, content.components(separatedBy: "\n").count)
+        // Trim trailing whitespace/newlines so AI-generated content with
+        // trailing \n doesn't create empty space at the bottom of the node.
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lineCount = max(1, trimmed.components(separatedBy: "\n").count)
         #if os(macOS)
-        // macOS has wider windows — use more chars per line estimate
         let avgCharsPerLine: CGFloat = 80
         #else
         let avgCharsPerLine: CGFloat = 40
         #endif
-        let totalChars = CGFloat(content.count)
+        let totalChars = CGFloat(trimmed.count)
         let estimatedWrappedLines = max(1, ceil(totalChars / avgCharsPerLine))
         let visualLines = max(CGFloat(lineCount), estimatedWrappedLines)
         let lineHeight: CGFloat = 22
@@ -933,7 +936,8 @@ struct SectionView: View {
                 onIndent: onIndent,
                 onOutdent: onOutdent,
                 currentStatus: section.intent,
-                onStatusChange: onIntentChange
+                onStatusChange: onIntentChange,
+                sectionId: section.id
             )
             .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
             #endif
@@ -1828,6 +1832,8 @@ struct EditableTextView: NSViewRepresentable {
     var onOutdent: (() -> Void)?
     var currentStatus: IntentType?
     var onStatusChange: ((IntentType) -> Void)?
+    /// Section ID this editor belongs to, or nil for the body editor.
+    var sectionId: String? = nil
     /// Optional binding for dynamic height — when provided, the view reports its content height.
     var dynamicHeight: Binding<CGFloat>? = nil
 
@@ -1854,12 +1860,15 @@ struct EditableTextView: NSViewRepresentable {
         scrollView.drawsBackground = false
 
         // Load rich text if available, otherwise plain text
+        // Suppress textDidChange during initial load
+        context.coordinator.isProgrammaticUpdate = true
         if let richText = richText,
            let attrText = RichTextHelper.deserialize(richText) {
             textView.textStorage?.setAttributedString(attrText)
         } else {
             textView.string = text
         }
+        context.coordinator.isProgrammaticUpdate = false
 
         HashtagHelper.applyHighlighting(to: textView)
         context.coordinator.textView = textView
@@ -1874,12 +1883,16 @@ struct EditableTextView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         // Only update when not focused to prevent cursor jumping
         if textView.window?.firstResponder != textView, textView.string != text {
+            // Suppress textDidChange callback during programmatic updates
+            // to prevent observation → setText → textDidChange → DB write → observation loop
+            context.coordinator.isProgrammaticUpdate = true
             if let richText = richText,
                let attrText = RichTextHelper.deserialize(richText) {
                 textView.textStorage?.setAttributedString(attrText)
             } else {
                 textView.string = text
             }
+            context.coordinator.isProgrammaticUpdate = false
             // Recalculate height after external text change
             DispatchQueue.main.async {
                 context.coordinator.updateDynamicHeight()
@@ -1888,12 +1901,12 @@ struct EditableTextView: NSViewRepresentable {
 
         if isFocused.wrappedValue && textView.window?.firstResponder != textView {
             let coordinator = context.coordinator
-            // Set activeTextView immediately so formatting works even before
-            // the async makeFirstResponder completes.
-            MacFormattingState.shared.activeTextView = textView
-            MacFormattingState.shared.hasActiveEditor = true
             Coordinator.activeCoordinator = coordinator
             DispatchQueue.main.async {
+                // Defer @Published mutations out of the view update cycle
+                MacFormattingState.shared.activeTextView = textView
+                MacFormattingState.shared.hasActiveEditor = true
+                MacFormattingState.shared.activeSectionId = self.sectionId
                 textView.window?.makeFirstResponder(textView)
                 coordinator.syncFormattingState()
             }
@@ -1913,6 +1926,9 @@ struct EditableTextView: NSViewRepresentable {
         /// Debounce timer for expensive per-keystroke work (rich text
         /// serialization, hashtag highlighting, database persistence).
         private var contentDebounceTimer: Timer?
+        /// True when updateNSView is setting text programmatically — suppresses
+        /// textDidChange to prevent observation → write → observation loops.
+        var isProgrammaticUpdate = false
 
         /// Tracks the most recently focused text view coordinator so formatting
         /// buttons can call applyBold/Italic/etc directly on the active editor.
@@ -1955,10 +1971,13 @@ struct EditableTextView: NSViewRepresentable {
             Coordinator.activeCoordinator = self
             parent.isFocused.wrappedValue = true
             parent.onFocusChange(true)
-            let state = MacFormattingState.shared
-            state.hasActiveEditor = true
-            state.activeTextView = textView
-            syncFormattingState()
+            DispatchQueue.main.async {
+                let state = MacFormattingState.shared
+                state.hasActiveEditor = true
+                state.activeSectionId = self.parent.sectionId
+                state.activeTextView = self.textView
+                self.syncFormattingState()
+            }
         }
 
         func textDidEndEditing(_ notification: Notification) {
@@ -1968,31 +1987,52 @@ struct EditableTextView: NSViewRepresentable {
             if Coordinator.activeCoordinator === self {
                 DispatchQueue.main.async {
                     MacFormattingState.shared.hasActiveEditor = false
+                    MacFormattingState.shared.activeSectionId = nil
                 }
             }
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
-            if let textView = textView {
-                let range = textView.selectedRange()
+            guard let textView = textView else { return }
+            let range = textView.selectedRange()
+            if range.length > 0 {
+                savedSelectedRange = range
+            }
+            // Defer all @Published mutations to avoid re-rendering during view updates
+            DispatchQueue.main.async {
                 if range.length > 0 {
-                    savedSelectedRange = range
                     MacFormattingState.shared.savedSelectedRange = range
                 }
-                // Always keep activeTextView current when user interacts
                 MacFormattingState.shared.activeTextView = textView
+                MacFormattingState.shared.activeSectionId = self.parent.sectionId
+                self.syncFormattingState()
             }
-            syncFormattingState()
         }
 
         func syncFormattingState() {
             guard let textView = textView else { return }
+            // Read formatting state from the text view
+            let bodySize = NSFont.systemFont(ofSize: 17).pointSize
+            let attrs: [NSAttributedString.Key: Any]
+            let range = textView.selectedRange()
+            if range.location < (textView.textStorage?.length ?? 0) {
+                attrs = textView.textStorage?.attributes(at: range.location, effectiveRange: nil) ?? textView.typingAttributes
+            } else {
+                attrs = textView.typingAttributes
+            }
+            let font = (attrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: bodySize)
+            let traits = NSFontManager.shared.traits(of: font)
             let state = MacFormattingState.shared
-            state.syncState(from: textView)
+            state.isBold = traits.contains(.boldFontMask)
+            state.isItalic = traits.contains(.italicFontMask)
+            state.isUnderline = (attrs[.underlineStyle] as? Int) == NSUnderlineStyle.single.rawValue
+            state.isTitle = font.pointSize > bodySize + 2
         }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = textView else { return }
+            // Skip when updateNSView is setting text programmatically
+            guard !isProgrammaticUpdate else { return }
             // Update the binding immediately so SwiftUI stays in sync
             let newText = textView.string
             if parent.text != newText {
@@ -2040,6 +2080,8 @@ final class MacFormattingState: ObservableObject {
     @Published var isTitle = false
     /// True when any NSTextView (section or body) is the active editor.
     @Published var hasActiveEditor = false
+    /// The section ID of the currently focused section editor, or nil if body/title is focused.
+    @Published var activeSectionId: String? = nil
     /// Direct reference to the active text view for formatting commands.
     weak var activeTextView: NSTextView?
     /// Saved selection range — preserved so formatting works even if button click collapses selection.
@@ -2463,7 +2505,7 @@ struct TemplateProtectedTextView: View {
                 }
             }
             .onChange(of: text) { _, newValue in
-                onContentChange(newValue, nil)
+                DispatchQueue.main.async { onContentChange(newValue, nil) }
             }
     }
 }

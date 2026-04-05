@@ -14,7 +14,12 @@ enum ModuleStorageType: String, Codable, CaseIterable {
 
     var icon: String {
         switch self {
-        case .local: return "iphone"
+        case .local:
+            #if os(macOS)
+            return "laptopcomputer"
+            #else
+            return "iphone"
+            #endif
         case .cloud: return "cloud"
         }
     }

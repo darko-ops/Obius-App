@@ -106,29 +106,29 @@ struct CompactIntentPicker: View {
 struct IntentTypeMenu: View {
     let currentIntent: IntentType
     let onSelect: (IntentType) -> Void
-    
+
     var body: some View {
         Menu {
             ForEach(IntentType.allCases, id: \.self) { intent in
                 Button {
                     onSelect(intent)
                 } label: {
-                    Label {
-                        HStack {
-                            Text(intent.displayName)
-                            if currentIntent == intent {
-                                Spacer()
-                                Image(systemName: "checkmark")
-                            }
+                    HStack {
+                        Circle()
+                            .fill(intent.color)
+                            .frame(width: 10, height: 10)
+                        Text(intent.displayName)
+                        if currentIntent == intent {
+                            Spacer()
+                            Image(systemName: "checkmark")
                         }
-                    } icon: {
-                        Image(systemName: intent.icon)
                     }
                 }
             }
         } label: {
-            Image(systemName: currentIntent.icon)
-                .foregroundStyle(currentIntent.color)
+            Circle()
+                .fill(currentIntent.color)
+                .frame(width: 12, height: 12)
         }
     }
 }

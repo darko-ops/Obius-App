@@ -26,9 +26,11 @@ struct ContentView: View {
                 .environmentObject(appState)
         }
         .onAppear {
-            if appState.didRecoverFromCorruption {
-                showCorruptionAlert = true
-                appState.didRecoverFromCorruption = false
+            DispatchQueue.main.async {
+                if appState.didRecoverFromCorruption {
+                    showCorruptionAlert = true
+                    appState.didRecoverFromCorruption = false
+                }
             }
         }
         .alert("Database Recovered", isPresented: $showCorruptionAlert) {
@@ -181,8 +183,10 @@ struct MainTabView: View {
             mainNavigation
                 #if os(macOS)
                 .onAppear {
-                    macIsInEditor = false
-                    macSelectedNoteId = nil
+                    DispatchQueue.main.async {
+                        macIsInEditor = false
+                        macSelectedNoteId = nil
+                    }
                 }
                 #endif
 
@@ -225,16 +229,20 @@ struct MainTabView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .echoNotificationTapped)) { notification in
             if let echoId = notification.userInfo?["echoId"] as? String {
-                pendingEchoId = echoId
-                selectedTab = 2
+                DispatchQueue.main.async {
+                    pendingEchoId = echoId
+                    selectedTab = 2
+                }
             }
         }
         .onChange(of: echoManager.firedEcho) { _, echo in
             guard let echo else { return }
-            bannerEcho = echo
-            bannerContexts = []
-            withAnimation(.spring(duration: 0.4)) { showBanner = true }
-            echoManager.firedEcho = nil
+            DispatchQueue.main.async {
+                bannerEcho = echo
+                bannerContexts = []
+                withAnimation(.spring(duration: 0.4)) { showBanner = true }
+                echoManager.firedEcho = nil
+            }
 
             Task {
                 let contexts = await EchoContextCard.buildContexts(
@@ -301,6 +309,7 @@ struct MainTabView: View {
                     .environmentObject(appState)
                 case 0:
                     if let noteId = macSelectedNoteId {
+                        let _ = print("[DEBUG] ContentView rendering NoteEditorView for: \(noteId.prefix(8))")
                         NoteEditorView(noteId: noteId)
                             .id(noteId)
                             .toolbar {

@@ -220,6 +220,8 @@ struct IntelligenceView: View {
         VStack(spacing: 0) {
             ScrollView {
                 LazyVStack(spacing: 16) {
+                    EchoCalendarView()
+
                     activeEchoesSection
 
                     trackedSection
@@ -1323,8 +1325,10 @@ struct WorkspaceSheet: View {
                         .stroke(Color.gray.opacity(0.2), lineWidth: 1)
                 )
                 .onChange(of: editableContent) {
-                    if editingHandleId == handle.id {
-                        contentHasUnsavedChanges = true
+                    DispatchQueue.main.async {
+                        if editingHandleId == handle.id {
+                            contentHasUnsavedChanges = true
+                        }
                     }
                 }
         }
@@ -1347,7 +1351,7 @@ struct WorkspaceSheet: View {
                         .foregroundStyle(.primary)
                         .textFieldStyle(.plain)
                         .onChange(of: editableTitle) { _ in
-                            savePageTitle(noteId: note.id)
+                            DispatchQueue.main.async { savePageTitle(noteId: note.id) }
                         }
                 } else {
                     Text(note.displayTitle)
@@ -1571,7 +1575,7 @@ struct WorkspaceSheet: View {
                         .textFieldStyle(.plain)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .onChange(of: binding.wrappedValue) { _ in
-                            saveSectionContent(sectionId: section.id)
+                            DispatchQueue.main.async { saveSectionContent(sectionId: section.id) }
                         }
                 }
                 .padding(.horizontal, 10)
@@ -1594,7 +1598,7 @@ struct WorkspaceSheet: View {
                         .textFieldStyle(.plain)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .onChange(of: binding.wrappedValue) { _ in
-                            saveSectionContent(sectionId: section.id)
+                            DispatchQueue.main.async { saveSectionContent(sectionId: section.id) }
                         }
                 }
                 .padding(.vertical, 2)
@@ -2318,11 +2322,13 @@ struct WorkspaceSheet: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .onAppear {
-                    loadingPhraseIndex = 0
+                    DispatchQueue.main.async { loadingPhraseIndex = 0 }
                 }
                 .onReceive(Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()) { _ in
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        loadingPhraseIndex += 1
+                    DispatchQueue.main.async {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            loadingPhraseIndex += 1
+                        }
                     }
                 }
             Spacer()

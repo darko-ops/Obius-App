@@ -318,8 +318,6 @@ struct InterstitialTextField: View {
                 onBackspaceEmpty(afterSectionId)
             }
         )
-        .frame(minHeight: 24)
-        .fixedSize(horizontal: false, vertical: true)  // Take natural height
         .contentShape(Rectangle())  // Ensure entire area is tappable
         .padding(.horizontal, 10)
         .animation(nil, value: text)  // Prevent layout animations
@@ -748,14 +746,18 @@ struct InterstitialTextView: View {
     let onContentChange: (String, String?) -> Void
     let onBackspaceEmpty: () -> Void
 
+    @State private var dynamicHeight: CGFloat = 24
+
     var body: some View {
         EditableTextView(
             text: $text,
             isFocused: isFocused,
             richText: richText,
             onContentChange: onContentChange,
-            onFocusChange: { _ in }
+            onFocusChange: { _ in },
+            dynamicHeight: $dynamicHeight
         )
+        .frame(height: max(24, dynamicHeight))
     }
 }
 #endif

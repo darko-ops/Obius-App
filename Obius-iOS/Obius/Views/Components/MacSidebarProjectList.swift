@@ -86,6 +86,30 @@ struct MacSidebarProjectList: View {
 
                 // Pages list — only visible when inside the note editor
                 if isInEditor {
+                    // New page button
+                    Button {
+                        guard TierManager.shared.requireNoteCreation(currentCount: appState.noteRepository.notes.count) else { return }
+                        Task {
+                            if let note = try? await appState.noteRepository.createNote(moduleId: selectedModuleId) {
+                                macSelectedNoteId = note.id
+                                selectedTab = 0
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Color(white: 0.45))
+                            Text("New Page")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Color(white: 0.45))
+                            Spacer()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.plain)
+
                     ScrollView {
                         LazyVStack(spacing: 1) {
                             ForEach(projectNotes) { note in
@@ -93,7 +117,7 @@ struct MacSidebarProjectList: View {
                             }
                         }
                         .padding(.horizontal, 8)
-                        .padding(.top, 6)
+                        .padding(.top, 2)
                     }
                 }
             }
@@ -188,8 +212,10 @@ struct MacSidebarProjectList: View {
             Text("Notes in this project will be moved to Local.")
         }
         .onAppear {
-            if selectedModuleId == nil, let local = moduleRepository.getLocalModule() {
-                selectedModuleId = local.id
+            DispatchQueue.main.async {
+                if selectedModuleId == nil, let local = moduleRepository.getLocalModule() {
+                    selectedModuleId = local.id
+                }
             }
         }
         .sheet(isPresented: $showingSettings) {

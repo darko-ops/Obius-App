@@ -296,22 +296,29 @@ private struct NotesListContent: View {
             )
         }
         .onAppear {
-            // Set initial module to Local if none selected
-            if selectedModuleId == nil, let local = moduleRepository.getLocalModule() {
-                selectedModuleId = local.id
+            DispatchQueue.main.async {
+                if selectedModuleId == nil, let local = moduleRepository.getLocalModule() {
+                    selectedModuleId = local.id
+                }
             }
         }
         .onChange(of: moduleRepository.modules) { _ in
-            // If selected module was deleted, fall back to Local
-            if let id = selectedModuleId,
-               !moduleRepository.modules.contains(where: { $0.id == id }) {
-                selectedModuleId = moduleRepository.getLocalModule()?.id
+            DispatchQueue.main.async {
+                if let id = selectedModuleId,
+                   !moduleRepository.modules.contains(where: { $0.id == id }) {
+                    selectedModuleId = moduleRepository.getLocalModule()?.id
+                }
             }
         }
         #if os(macOS)
         .onChange(of: selectedNote) { _, newValue in
-            macIsInEditor = newValue != nil
-            macSelectedNoteId = newValue?.id
+            let newId = newValue?.id
+            guard macSelectedNoteId != newId else { return }
+            print("[DEBUG] NotesListView .onChange(selectedNote): \(newId?.prefix(8) ?? "nil")")
+            DispatchQueue.main.async {
+                macIsInEditor = newValue != nil
+                macSelectedNoteId = newId
+            }
         }
         #endif
     }

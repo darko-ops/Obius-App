@@ -661,10 +661,15 @@ final class DatabaseManager {
             let localId = UUID().uuidString
             let cloudId = UUID().uuidString
 
+            #if os(macOS)
+            let localIcon = "laptopcomputer"
+            #else
+            let localIcon = "iphone"
+            #endif
             try db.execute(sql: """
                 INSERT INTO modules (id, name, icon, isDefault, orderIndex, createdAt, updatedAt)
-                VALUES (?, 'Local', 'iphone', 1, 0, ?, ?)
-            """, arguments: [localId, now, now])
+                VALUES (?, 'Local', ?, 1, 0, ?, ?)
+            """, arguments: [localId, localIcon, now, now])
 
             try db.execute(sql: """
                 INSERT INTO modules (id, name, icon, isDefault, orderIndex, createdAt, updatedAt)
@@ -964,23 +969,10 @@ final class DatabaseManager {
                     .filter(Note.Columns.deletedAt == nil)
                     .fetchAll(db)
 
-                // Compute engagement scores and sort
-                let now = Date().timeIntervalSince1970 * 1000
-                let sectionCounts = try self.sectionCountsByNote(db)
-                let echoNoteIds = try self.noteIdsWithActiveEchoes(db)
-                let insightCounts = try self.cleanupInsightCountsByNote(db)
-
+                // Sort chronologically: pinned first, then by creation date (newest first)
                 return notes.sorted { a, b in
-                    let scoreA = Self.engagementScore(note: a, now: now,
-                        sectionCount: sectionCounts[a.id] ?? 0,
-                        hasActiveEcho: echoNoteIds.contains(a.id),
-                        insightCount: insightCounts[a.id] ?? 0)
-                    let scoreB = Self.engagementScore(note: b, now: now,
-                        sectionCount: sectionCounts[b.id] ?? 0,
-                        hasActiveEcho: echoNoteIds.contains(b.id),
-                        insightCount: insightCounts[b.id] ?? 0)
-                    if scoreA != scoreB { return scoreA > scoreB }
-                    return a.updatedAt > b.updatedAt
+                    if a.isPinned != b.isPinned { return a.isPinned }
+                    return a.createdAt > b.createdAt
                 }
             }
             .publisher(in: dbQueue, scheduling: .immediate)

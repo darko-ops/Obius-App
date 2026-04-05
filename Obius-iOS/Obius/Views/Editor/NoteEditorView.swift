@@ -100,6 +100,9 @@ private struct NoteEditorContent: View {
     #if os(macOS)
     @State private var showWorkspacePanel = false
     @State private var bodyEditorHeight: CGFloat = 22
+    @State private var showingDeleteConfirmation = false
+    @AppStorage("macSelectedNoteId") private var macSelectedNoteId: String?
+    @AppStorage("macIsInEditor") private var macIsInEditor = false
     #endif
 
     let noteId: String
@@ -159,28 +162,34 @@ private struct NoteEditorContent: View {
             }
             #endif
             .onChange(of: viewModel.focusedSectionId) { _, newValue in
-                focusedSectionId = newValue
+                guard focusedSectionId != newValue else { return }
+                print("[DEBUG] focusedSectionId: vm → local: \(newValue?.prefix(8) ?? "nil")")
+                DispatchQueue.main.async { focusedSectionId = newValue }
             }
             .onChange(of: focusedSectionId) { oldValue, newValue in
-                // Re-lock the previous section if it was locked
-                if let oldId = oldValue,
-                   oldId != newValue,
-                   let oldSection = viewModel.sections.first(where: { $0.id == oldId }),
-                   oldSection.isLocked {
-                    biometricManager.revokeAuthentication(for: oldId)
+                DispatchQueue.main.async {
+                    if let oldId = oldValue,
+                       oldId != newValue,
+                       let oldSection = viewModel.sections.first(where: { $0.id == oldId }),
+                       oldSection.isLocked {
+                        biometricManager.revokeAuthentication(for: oldId)
+                    }
+                    if let newValue = newValue, viewModel.focusedSectionId != newValue {
+                        print("[DEBUG] focusedSectionId: local → vm: \(newValue.prefix(8))")
+                        viewModel.focusedSectionId = newValue
+                    }
                 }
-
-                // Only sync non-nil values back to ViewModel.
-                // The @FocusState isn't bound to section views, so SwiftUI
-                // may reset it to nil — don't let that clear the ViewModel's focus.
-                if let newValue = newValue, viewModel.focusedSectionId != newValue {
-                    viewModel.focusedSectionId = newValue
+            }
+            .onChange(of: bodyFocused) { _, isFocused in
+                if isFocused {
+                    focusedSectionId = nil
+                    viewModel.focusedSectionId = nil
                 }
             }
             .onChange(of: viewModel.isLoading) { _, isLoading in
-                // Sync bodyText when the ViewModel finishes loading from DB
                 if !isLoading, let body = viewModel.note?.body, body != bodyText {
-                    bodyText = body
+                    print("[DEBUG] isLoading → false, syncing bodyText")
+                    DispatchQueue.main.async { bodyText = body }
                 }
             }
             .onAppear {
@@ -281,9 +290,11 @@ private struct NoteEditorContent: View {
             }
             #if os(iOS)
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
-                if pendingShare {
-                    pendingShare = false
-                    showingNativeShare = true
+                DispatchQueue.main.async {
+                    if pendingShare {
+                        pendingShare = false
+                        showingNativeShare = true
+                    }
                 }
             }
             #endif
@@ -343,12 +354,13 @@ private struct NoteEditorContent: View {
             }
             .onChange(of: showingAudioRecorder) { _, isShowing in
                 if !isShowing, let sectionId = audioRecorderTargetSectionId {
-                    // Clean up empty audio section if recorder was cancelled
-                    if let section = viewModel.getSection(sectionId),
-                       section.content.trimmingCharacters(in: .whitespaces).isEmpty {
-                        Task { try? await viewModel.deleteSection(sectionId) }
+                    DispatchQueue.main.async {
+                        if let section = viewModel.getSection(sectionId),
+                           section.content.trimmingCharacters(in: .whitespaces).isEmpty {
+                            Task { try? await viewModel.deleteSection(sectionId) }
+                        }
+                        audioRecorderTargetSectionId = nil
                     }
-                    audioRecorderTargetSectionId = nil
                 }
             }
             #if os(iOS)
@@ -414,13 +426,15 @@ private struct NoteEditorContent: View {
             #endif
             .onChange(of: showingImagePicker) { _, isShowing in
                 if !isShowing {
-                    imagePickerTargetSectionId = nil
-                    imagePickerPreselectedAssetIds = []
+                    DispatchQueue.main.async {
+                        imagePickerTargetSectionId = nil
+                        imagePickerPreselectedAssetIds = []
+                    }
                 }
             }
             .onChange(of: showingHandleSheet) { _, isShowing in
                 if !isShowing {
-                    handleSheetSectionId = nil
+                    DispatchQueue.main.async { handleSheetSectionId = nil }
                 }
             }
     }
@@ -774,6 +788,7 @@ private struct NoteEditorContent: View {
         return section.intent
     }
 
+    @State private var showingMacIntentPopover = false
     @StateObject private var macFmtState = MacFormattingState.shared
 
     @ViewBuilder
@@ -809,26 +824,49 @@ private struct NoteEditorContent: View {
 
             macBarDivider
 
-            // Intent picker (only for sections)
-            Menu {
-                ForEach(IntentType.allCases, id: \.self) { intent in
-                    Button {
-                        if let sectionId = viewModel.focusedSectionId {
-                            Task { try? await viewModel.setSectionIntent(sectionId, intent: intent) }
-                        }
-                    } label: {
-                        Label(intent.displayName, systemImage: intent.icon)
-                    }
-                }
+            // Intent picker (only for sections — enabled only when cursor is in a node)
+            Button {
+                showingMacIntentPopover.toggle()
             } label: {
-                Image(systemName: currentFocusedIntent.icon)
-                    .font(.system(size: 12))
-                    .foregroundStyle(viewModel.focusedSectionId != nil ? currentFocusedIntent.color : Color(white: 0.3))
+                Circle()
+                    .fill(macFmtState.activeSectionId != nil ? currentFocusedIntent.color : Color(white: 0.3))
+                    .frame(width: 10, height: 10)
                     .frame(width: 28, height: 24)
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .disabled(viewModel.focusedSectionId == nil)
+            .buttonStyle(.plain)
+            .disabled(macFmtState.activeSectionId == nil)
+            .popover(isPresented: $showingMacIntentPopover) {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(IntentType.allCases, id: \.self) { intent in
+                        Button {
+                            if let sectionId = macFmtState.activeSectionId {
+                                Task { try? await viewModel.setSectionIntent(sectionId, intent: intent) }
+                            }
+                            showingMacIntentPopover = false
+                        } label: {
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(intent.color)
+                                    .frame(width: 8, height: 8)
+                                Text(intent.displayName)
+                                    .font(.system(size: 13))
+                                Spacer()
+                                if currentFocusedIntent == intent {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 6)
+                .frame(width: 160)
+            }
 
             Spacer()
         }
@@ -881,6 +919,28 @@ private struct NoteEditorContent: View {
             }
         }
 
+        #if os(macOS)
+        Button {
+            showingDeleteConfirmation = true
+        } label: {
+            Image(systemName: "trash")
+                .foregroundStyle(.red.opacity(0.7))
+        }
+        .confirmationDialog("Delete this page?", isPresented: $showingDeleteConfirmation, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                Task {
+                    try? await appState.noteRepository.deleteNote(noteId)
+                    appState.syncLogger.logNoteDelete(noteId)
+                    await MainActor.run {
+                        macSelectedNoteId = nil
+                        macIsInEditor = false
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        #endif
+
         mainMenu
     }
 
@@ -921,38 +981,61 @@ private struct NoteEditorContent: View {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
 
-            Divider()
-
-            Button(role: .destructive) {
-                // Delete note with confirmation
-            } label: {
-                Label("Delete Note", systemImage: "trash")
-            }
         } label: {
             Image(systemName: "ellipsis.circle")
         }
     }
 
+    @State private var showingIntentPopover = false
+
     @ViewBuilder
     private var intentPickerMenu: some View {
-        Menu {
-            ForEach(IntentType.allCases, id: \.self) { intent in
-                Button {
-                    Task { try? await viewModel.setIntent(intent) }
-                } label: {
-                    HStack {
-                        Image(systemName: intent.icon)
-                            .foregroundStyle(intent.color)
-                        Text(intent.displayName)
-                        if viewModel.note?.intent == intent {
-                            Spacer()
-                            Image(systemName: "checkmark")
+        let hasFocus = viewModel.focusedSectionId != nil
+        let currentIntent: IntentType = {
+            guard let id = viewModel.focusedSectionId,
+                  let section = viewModel.getSection(id) else { return .idea }
+            return section.intent
+        }()
+
+        Button {
+            showingIntentPopover.toggle()
+        } label: {
+            Circle()
+                .fill(hasFocus ? currentIntent.color : Color.gray.opacity(0.3))
+                .frame(width: 12, height: 12)
+        }
+        .disabled(!hasFocus)
+        .popover(isPresented: $showingIntentPopover) {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(IntentType.allCases, id: \.self) { intent in
+                    Button {
+                        if let id = viewModel.focusedSectionId {
+                            Task { try? await viewModel.setSectionIntent(id, intent: intent) }
                         }
+                        showingIntentPopover = false
+                    } label: {
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(intent.color)
+                                .frame(width: 8, height: 8)
+                            Text(intent.displayName)
+                                .font(.system(size: 13))
+                            Spacer()
+                            if currentIntent == intent {
+                                Image(systemName: "checkmark")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
                 }
             }
-        } label: {
-            Label("Status", systemImage: "paintpalette")
+            .padding(.vertical, 6)
+            .frame(width: 160)
         }
     }
 
@@ -1392,7 +1475,10 @@ private struct NoteEditorContent: View {
                         }
                     }
                     .onChange(of: titleFocused) { _, isFocused in
-                        if !isFocused {
+                        if isFocused {
+                            focusedSectionId = nil
+                            viewModel.focusedSectionId = nil
+                        } else {
                             saveTitle()
                         }
                     }
@@ -1601,9 +1687,9 @@ private struct NoteEditorContent: View {
         }
         .onReceive(viewModel.$note) { note in
             if let body = note?.body, body != bodyText {
-                print("[Sync] Editor body updated from observation: \(body.prefix(50))")
-                isExternalBodyUpdate = true
+                print("[DEBUG] .onReceive(note) body changed: \(body.prefix(50))")
                 DispatchQueue.main.async {
+                    isExternalBodyUpdate = true
                     bodyText = body
                 }
             }
@@ -1615,14 +1701,21 @@ private struct NoteEditorContent: View {
             richText: viewModel.note?.bodyRichText,
             onContentChange: { newValue, richText in
                 guard !isExternalBodyUpdate else {
+                    print("[DEBUG] onContentChange SKIPPED (external update)")
                     isExternalBodyUpdate = false
                     return
                 }
+                print("[DEBUG] onContentChange → updateBody: \(newValue.prefix(50))")
                 Task {
                     try? await viewModel.updateBody(newValue, richText: richText)
                 }
             },
-            onFocusChange: { _ in },
+            onFocusChange: { focused in
+                if focused {
+                    focusedSectionId = nil
+                    viewModel.focusedSectionId = nil
+                }
+            },
             dynamicHeight: $bodyEditorHeight
         )
         .frame(height: max(isPageEmpty ? 100 : 22, bodyEditorHeight))
@@ -1649,7 +1742,8 @@ private struct NoteEditorContent: View {
         }
         .onChange(of: viewModel.note?.body) { _, newBody in
             if let newBody = newBody, newBody != bodyText {
-                print("[Sync] Editor body updated from observation: \(newBody.prefix(50))")
+                print("[DEBUG] .onChange(note.body) → bodyText: \(newBody.prefix(50))")
+                isExternalBodyUpdate = true
                 DispatchQueue.main.async {
                     bodyText = newBody
                 }
@@ -2291,8 +2385,10 @@ struct AddContentBar: View {
         .padding(.vertical, 4)
         #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-            if isExpanded {
-                withAnimation(.easeOut(duration: 0.2)) { isExpanded = false }
+            DispatchQueue.main.async {
+                if isExpanded {
+                    withAnimation(.easeOut(duration: 0.2)) { isExpanded = false }
+                }
             }
         }
         #endif
