@@ -16,6 +16,7 @@ import type {
   Section,
   Handle,
   Echo,
+  CalendarMemo,
 } from '../_shared/types.ts';
 import { requireFeature } from '../_shared/entitlements.ts';
 
@@ -121,6 +122,21 @@ serve(async (req: Request) => {
       return errorResponse('DB_ERROR', 'Failed to fetch echoes', 500);
     }
 
+    // Fetch updated calendar memos
+    const { data: calendarMemos, error: calendarMemosError } = await supabase
+      .from('calendar_memos')
+      .select('*')
+      .eq('user_id', userId)
+      .gt('updated_at', sinceTimestamp.toISOString())
+      .is('deleted_at', null)
+      .order('updated_at', { ascending: true })
+      .limit(MAX_ITEMS_PER_SYNC);
+
+    if (calendarMemosError) {
+      console.error('Error fetching calendar memos:', calendarMemosError);
+      return errorResponse('DB_ERROR', 'Failed to fetch calendar memos', 500);
+    }
+
     // Fetch deleted items from changelog
     const { data: deletions, error: deletionsError } = await supabase
       .from('sync_changelog')
@@ -140,6 +156,7 @@ serve(async (req: Request) => {
     const deletedSectionIds: string[] = [];
     const deletedHandleIds: string[] = [];
     const deletedEchoIds: string[] = [];
+    const deletedCalendarMemoIds: string[] = [];
 
     for (const deletion of deletions || []) {
       if (deletion.entity_type === 'note') {
@@ -150,6 +167,8 @@ serve(async (req: Request) => {
         deletedHandleIds.push(deletion.entity_id);
       } else if (deletion.entity_type === 'echo') {
         deletedEchoIds.push(deletion.entity_id);
+      } else if (deletion.entity_type === 'calendar_memo') {
+        deletedCalendarMemoIds.push(deletion.entity_id);
       }
     }
 
@@ -158,13 +177,17 @@ serve(async (req: Request) => {
     const filteredSections = filterByVersion(sections || [], known_versions);
     const filteredHandles = filterByVersion(handles || [], known_versions);
     const filteredEchoes = filterByVersion(echoes || [], known_versions);
+    const filteredCalendarMemos = filterByVersion(calendarMemos || [], known_versions);
+
+    console.log(`[sync-pull] Returning ${filteredNotes.length} notes, ${filteredSections.length} sections, ${filteredHandles.length} handles, ${filteredEchoes.length} echoes, ${filteredCalendarMemos.length} calendar_memos`);
 
     // Check if there are more items to sync
     const hasMore =
       (notes?.length || 0) >= MAX_ITEMS_PER_SYNC ||
       (sections?.length || 0) >= MAX_ITEMS_PER_SYNC ||
       (echoes?.length || 0) >= MAX_ITEMS_PER_SYNC ||
-      (handles?.length || 0) >= MAX_ITEMS_PER_SYNC;
+      (handles?.length || 0) >= MAX_ITEMS_PER_SYNC ||
+      (calendarMemos?.length || 0) >= MAX_ITEMS_PER_SYNC;
 
     // Update device last sync time
     await supabase
@@ -182,10 +205,12 @@ serve(async (req: Request) => {
       })) as Section[],
       handles: filteredHandles as Handle[],
       echoes: filteredEchoes as Echo[],
+      calendar_memos: filteredCalendarMemos as CalendarMemo[],
       deleted_note_ids: deletedNoteIds,
       deleted_section_ids: deletedSectionIds,
       deleted_handle_ids: deletedHandleIds,
       deleted_echo_ids: deletedEchoIds,
+      deleted_calendar_memo_ids: deletedCalendarMemoIds,
       server_timestamp: new Date().toISOString(),
       has_more: hasMore,
     };

@@ -181,16 +181,35 @@ struct ImageNodeView: View {
 
     private func loadImages() {
         var didLoadNew = false
+        var missingHashes: [String] = []
         for hash in imageHashes where loadedImages[hash] == nil {
             if let data = try? mediaRepository.getMediaData(hash: hash),
                let image = PlatformImage(data: data) {
                 loadedImages[hash] = image
                 didLoadNew = true
+            } else {
+                missingHashes.append(hash)
             }
         }
         if didLoadNew {
             computeDominantColor()
             notifyCurrentImage()
+        }
+        // Try cloud download for any missing images
+        if !missingHashes.isEmpty {
+            let repo = mediaRepository
+            Task {
+                for hash in missingHashes {
+                    if let data = await repo.getMediaDataWithCloudFallback(hash: hash),
+                       let image = PlatformImage(data: data) {
+                        await MainActor.run {
+                            loadedImages[hash] = image
+                            computeDominantColor()
+                            notifyCurrentImage()
+                        }
+                    }
+                }
+            }
         }
     }
 

@@ -120,9 +120,16 @@ struct MacSidebarProjectList: View {
                         .padding(.top, 2)
                     }
                 }
+            } else {
+                // Sidebar week calendar — at top, visible when not in editor
+                ScrollView {
+                    MacSidebarWeekCalendar(calendarMemoRepository: appState.calendarMemoRepository, selectedTab: $selectedTab)
+                        .padding(.horizontal, 8)
+                        .padding(.top, 8)
+                }
             }
 
-            Spacer()
+            Spacer(minLength: 0)
 
             // Navigation tabs at bottom
             VStack(spacing: 2) {
@@ -389,6 +396,149 @@ struct MacSidebarProjectList: View {
         Task {
             try? await moduleRepository.createModule(name: name, storageType: storageType)
         }
+    }
+}
+
+// MARK: - Sidebar Week Calendar
+
+/// Compact vertical week calendar for the macOS sidebar.
+/// Matches the EchoCalendarView style and navigates to the Insights tab on tap.
+struct MacSidebarWeekCalendar: View {
+    @StateObject private var echoManager = EchoManager.shared
+    @ObservedObject var calendarMemoRepository: CalendarMemoRepository
+    @Binding var selectedTab: Int
+
+    private let weekdaySymbols = Calendar.current.shortWeekdaySymbols
+
+    private var weekDates: [Date] {
+        let cal = Calendar.current
+        guard let interval = cal.dateInterval(of: .weekOfYear, for: Date()) else { return [] }
+        return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: interval.start) }
+    }
+
+    private var memos: [String: String] {
+        calendarMemoRepository.memos
+    }
+
+    private func dayKey(_ date: Date) -> String {
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        return "\(c.year!)-\(c.month!)-\(c.day!)"
+    }
+
+    private func echoHandleNames(for date: Date) -> [String] {
+        let cal = Calendar.current
+        let dayStart = cal.startOfDay(for: date)
+        guard let dayEnd = cal.date(byAdding: .day, value: 1, to: dayStart) else { return [] }
+        var names: [String] = []
+        var seen = Set<String>()
+        for echo in echoManager.activeEchoes {
+            if !echo.fireDatesInRange(start: dayStart, end: dayEnd).isEmpty, !seen.contains(echo.id) {
+                seen.insert(echo.id)
+                names.append(echoManager.getHandleName(for: echo))
+            }
+        }
+        return names
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            Button {
+                selectedTab = 1
+            } label: {
+                HStack {
+                    Text("THIS WEEK")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color(white: 0.4))
+
+                    Spacer()
+
+                    Image(systemName: "calendar")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color(white: 0.4))
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 4)
+            .padding(.bottom, 8)
+
+            // Day cards
+            VStack(spacing: 4) {
+                ForEach(Array(weekDates.enumerated()), id: \.offset) { _, date in
+                    Button {
+                        selectedTab = 1
+                    } label: {
+                        dayCard(date)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func dayCard(_ date: Date) -> some View {
+        let cal = Calendar.current
+        let isToday = cal.isDateInToday(date)
+        let dayNum = cal.component(.day, from: date)
+        let weekdayIndex = cal.component(.weekday, from: date) - 1
+        let weekday = weekdaySymbols[weekdayIndex]
+        let memo = memos[dayKey(date)]
+        let hasMemo = memo != nil && !memo!.isEmpty
+        let handles = echoHandleNames(for: date)
+
+        return VStack(alignment: .leading, spacing: 4) {
+            // Top row: weekday + day number
+            HStack(spacing: 0) {
+                Text(weekday)
+                    .font(.system(size: 10, weight: isToday ? .bold : .medium))
+                    .foregroundColor(isToday ? .blue : Color(white: 0.45))
+
+                Spacer()
+
+                Text("\(dayNum)")
+                    .font(.system(size: 12, weight: isToday ? .bold : .medium))
+                    .foregroundColor(isToday ? .blue : .blue.opacity(0.6))
+            }
+
+            // Echo handles
+            if !handles.isEmpty {
+                HStack(spacing: 3) {
+                    ForEach(handles.prefix(2), id: \.self) { name in
+                        Text("@\(name)")
+                            .font(.system(size: 8))
+                            .foregroundColor(.yellow)
+                            .lineLimit(1)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(Color.yellow.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+
+            // Memo
+            if hasMemo {
+                Text(memo!)
+                    .font(.system(size: 9))
+                    .foregroundColor(.white)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isToday ? Color.blue.opacity(0.1) : Color(white: 0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(
+                    isToday ? Color.blue.opacity(0.3) : Color(white: 0.1),
+                    lineWidth: 0.5
+                )
+        )
     }
 }
 

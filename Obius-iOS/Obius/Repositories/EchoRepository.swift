@@ -51,6 +51,7 @@ final class EchoRepository: ObservableObject {
             )
             echo.updateNextFireDate()
             try echo.insert(db)
+            try Self.recomputeScoresForHandle(handleId, in: db)
             return echo
         }
         syncLogger?.logEchoCreate(echo)
@@ -93,6 +94,7 @@ final class EchoRepository: ObservableObject {
 
             // Dismiss upcomingEcho insights for this echo's handle
             Self.dismissEchoInsights(handleId: echo.handleId, db: db)
+            try Self.recomputeScoresForHandle(echo.handleId, in: db)
             return echo
         }
         if let echo = updatedEcho {
@@ -172,6 +174,7 @@ final class EchoRepository: ObservableObject {
 
             if let handleId = echo?.handleId {
                 Self.dismissEchoInsights(handleId: handleId, db: db)
+                try Self.recomputeScoresForHandle(handleId, in: db)
             }
         }
         syncLogger?.logEchoDelete(id)
@@ -188,10 +191,23 @@ final class EchoRepository: ObservableObject {
                 .deleteAll(db)
 
             Self.dismissEchoInsights(handleId: handleId, db: db)
+            try Self.recomputeScoresForHandle(handleId, in: db)
             return ids
         }
         for echoId in echoIds {
             syncLogger?.logEchoDelete(echoId)
+        }
+    }
+
+    // MARK: - Engagement Score
+
+    /// Recompute engagement scores for all notes linked to a handle via sections.
+    private static func recomputeScoresForHandle(_ handleId: String, in db: Database) throws {
+        let noteIds = try Row.fetchAll(db, sql: """
+            SELECT DISTINCT noteId FROM sections WHERE handleId = ? AND deletedAt IS NULL
+        """, arguments: [handleId]).compactMap { $0["noteId"] as String? }
+        for noteId in noteIds {
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 

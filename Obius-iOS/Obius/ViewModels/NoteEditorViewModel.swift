@@ -295,13 +295,44 @@ final class NoteEditorViewModel: ObservableObject {
     }
 
     func deleteSection(_ sectionId: String) async throws {
-        // Also delete all child sections
-        let children = getDescendants(of: sectionId)
-        for child in children {
-            try await sectionRepository.deleteSection(child.id)
-        }
+        if let index = sections.firstIndex(where: { $0.id == sectionId }) {
+            let section = sections[index]
 
-        try await sectionRepository.deleteSection(sectionId)
+            // 1. Reparent direct children to the deleted section's parent
+            //    so they move up instead of being deleted with the node.
+            let directChildren = getChildren(of: sectionId)
+            for child in directChildren {
+                try? await sectionRepository.reparentSection(child.id, newParentId: section.parentSectionId)
+            }
+
+            // 2. Preserve interstitial content after the deleted section.
+            let deletedKey = "after_\(sectionId)"
+            let orphanedText = note?.interstitialContent[deletedKey] ?? ""
+            let orphanedRich = note?.interstitialRichContent[deletedKey]
+
+            if !orphanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if index > 0 {
+                    let prevId = sections[index - 1].id
+                    let prevKey = "after_\(prevId)"
+                    let existingText = note?.interstitialContent[prevKey] ?? ""
+                    let merged = existingText.isEmpty ? orphanedText : existingText + "\n" + orphanedText
+                    let mergedRich = existingText.isEmpty ? orphanedRich : nil
+                    try? await noteRepository.updateInterstitialContent(noteId, afterSectionId: prevId, content: merged, richText: mergedRich)
+                } else {
+                    let existingBody = note?.body ?? ""
+                    let merged = existingBody.isEmpty ? orphanedText : existingBody + "\n" + orphanedText
+                    try? await noteRepository.updateNoteBody(noteId, body: merged, clearRichText: true)
+                }
+            }
+
+            // 3. Clean up the orphaned interstitial key
+            try? await noteRepository.updateInterstitialContent(noteId, afterSectionId: sectionId, content: "")
+
+            // 4. Delete only this section (children have been reparented)
+            try await sectionRepository.deleteSection(sectionId)
+        } else {
+            try await sectionRepository.deleteSection(sectionId)
+        }
     }
     
     /// Check whether a section is "dangling" — empty with no content anywhere after it.
@@ -761,32 +792,12 @@ final class NoteEditorViewModel: ObservableObject {
 
     func handleBackspace(sectionId: String, isEmpty: Bool) async throws {
         if isEmpty && sections.count > 1 {
-            // Preserve interstitial content after the deleted section by merging it
-            // into the previous section's interstitial (or the previous section's content)
-            if let index = sections.firstIndex(where: { $0.id == sectionId }) {
-                let deletedKey = "after_\(sectionId)"
-                let orphanedText = note?.interstitialContent[deletedKey] ?? ""
-                let orphanedRich = note?.interstitialRichContent[deletedKey]
-
-                if !orphanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    if index > 0 {
-                        // Merge into the previous section's interstitial
-                        let prevId = sections[index - 1].id
-                        let prevKey = "after_\(prevId)"
-                        let existingText = note?.interstitialContent[prevKey] ?? ""
-                        let merged = existingText.isEmpty ? orphanedText : existingText + "\n" + orphanedText
-                        // Use the orphaned rich text if there's no existing content, otherwise drop rich (plain merge)
-                        let mergedRich = existingText.isEmpty ? orphanedRich : nil
-                        try? await noteRepository.updateInterstitialContent(noteId, afterSectionId: prevId, content: merged, richText: mergedRich)
-                    }
-                }
-                // Clean up the orphaned interstitial key
-                try? await noteRepository.updateInterstitialContent(noteId, afterSectionId: sectionId, content: "")
-
-                if index > 0 {
-                    focusedSectionId = sections[index - 1].id
-                }
+            // Focus the previous section before deleting
+            if let index = sections.firstIndex(where: { $0.id == sectionId }),
+               index > 0 {
+                focusedSectionId = sections[index - 1].id
             }
+            // deleteSection handles reparenting children and preserving interstitial content
             try await deleteSection(sectionId)
         }
     }

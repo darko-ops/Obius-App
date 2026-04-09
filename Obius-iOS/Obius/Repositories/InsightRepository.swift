@@ -65,14 +65,22 @@ final class InsightRepository: ObservableObject {
 
         try await database.write { db in
             try insight.insert(db)
+            if let noteId = sourceNoteId {
+                try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
+            }
         }
     }
 
     func createInsights(_ insights: [Insight]) async throws {
         guard !insights.isEmpty else { return }
         try await database.write { db in
+            var affectedNoteIds = Set<String>()
             for insight in insights {
                 try insight.insert(db)
+                if let noteId = insight.sourceNoteId { affectedNoteIds.insert(noteId) }
+            }
+            for noteId in affectedNoteIds {
+                try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
             }
         }
     }
@@ -84,6 +92,9 @@ final class InsightRepository: ObservableObject {
             guard var insight = try Insight.fetchOne(db, key: id) else { return }
             insight.track()
             try insight.update(db)
+            if let noteId = insight.sourceNoteId {
+                try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
+            }
         }
     }
 
@@ -92,6 +103,9 @@ final class InsightRepository: ObservableObject {
             guard var insight = try Insight.fetchOne(db, key: id) else { return }
             insight.dismiss()
             try insight.update(db)
+            if let noteId = insight.sourceNoteId {
+                try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
+            }
         }
     }
 
@@ -101,6 +115,9 @@ final class InsightRepository: ObservableObject {
             insight.status = .surfaced
             insight.touch()
             try insight.update(db)
+            if let noteId = insight.sourceNoteId {
+                try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
+            }
         }
     }
 
@@ -120,6 +137,12 @@ final class InsightRepository: ObservableObject {
 
             return try query.fetchCount(db) > 0
         }
+    }
+
+    // MARK: - Per-Note Query
+
+    func insightsForNote(_ noteId: String) async throws -> [Insight] {
+        try database.fetchInsightsForNote(noteId)
     }
 
     // MARK: - Batch Dedup

@@ -36,6 +36,9 @@ struct DraggableSectionList: View {
     let getInterstitialRichContent: (String?) -> String?  // Get rich text after section (nil = end)
     let onInterstitialContentChange: (String?, String, String?) -> Void  // Update text after section (id, content, richText)
     let onInterstitialBackspaceEmpty: (String?) -> Void  // Backspace on empty interstitial
+    var insightHighlights: [String: Color] = [:]  // sectionId → tint color for insight radar
+    var sectionInsights: [String: [Insight]] = [:]  // sectionId → insights for inline chips
+    var onInsightTap: ((Insight) -> Void)? = nil
 
     @State private var draggingSection: Section?
     @State private var dragOffset: CGFloat = 0
@@ -85,10 +88,18 @@ struct DraggableSectionList: View {
                         hasCopiedSection: hasCopiedSection,
                         onImageTap: { onImageTap(section.id) },
                         mediaRepository: mediaRepository,
-                        onResolveConflict: { onResolveConflict(section.id) }
+                        onResolveConflict: { onResolveConflict(section.id) },
+                        insightTintColor: insightHighlights[section.id]
                     )
                     .id(section.id)  // For ScrollViewReader
                     .zIndex(draggingSection?.id == section.id ? 1 : 0)
+
+                    // Inline insight chips for this section
+                    if let insights = sectionInsights[section.id], !insights.isEmpty {
+                        InlineInsightChips(insights: insights, onTap: onInsightTap)
+                            .padding(.leading, 16)
+                            .padding(.vertical, 2)
+                    }
 
                     // Interstitial text field after this section
                     InterstitialTextField(
@@ -181,6 +192,7 @@ struct DraggableSectionRow: View {
     let onImageTap: () -> Void  // Image node tap
     let mediaRepository: MediaRepository?  // For image nodes
     var onResolveConflict: () -> Void = {}
+    var insightTintColor: Color? = nil  // Insight radar highlight
 
     @State private var dragAmount = CGSize.zero
     @GestureState private var isLongPressing = false
@@ -227,6 +239,7 @@ struct DraggableSectionRow: View {
             }
         }
         .background(rowBackground)
+        .overlay(insightHighlightOverlay)
         .overlay(dropIndicator)
         .clipped()  // Prevent gesture recognizers from extending beyond row bounds
         .contentShape(Rectangle())  // Constrain hit-testing to the row's frame
@@ -278,6 +291,19 @@ struct DraggableSectionRow: View {
     }
 
     @ViewBuilder
+    private var insightHighlightOverlay: some View {
+        if let tint = insightTintColor {
+            HStack(spacing: 0) {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(tint)
+                    .frame(width: 2.5)
+                Spacer()
+            }
+            .allowsHitTesting(false)
+        }
+    }
+
+    @ViewBuilder
     private var dropIndicator: some View {
         if isDropTarget && !isDragging {
             VStack {
@@ -291,6 +317,40 @@ struct DraggableSectionRow: View {
         }
     }
     
+}
+
+// MARK: - Inline Insight Chips
+
+/// Compact insight chips shown inline below a section when radar is active.
+struct InlineInsightChips: View {
+    let insights: [Insight]
+    let onTap: ((Insight) -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(insights) { insight in
+                HStack(spacing: 4) {
+                    Image(systemName: insight.displayIcon)
+                        .font(.system(size: 8))
+                    Text(insight.title)
+                        .font(.system(size: 10, weight: .medium))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(insight.displayTint.color)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(insight.displayTint.color.opacity(0.1))
+                .clipShape(Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(insight.displayTint.color.opacity(0.25), lineWidth: 0.5)
+                )
+                .contentShape(Capsule())
+                .simultaneousGesture(TapGesture().onEnded { onTap?(insight) })
+            }
+        }
+        .transition(.opacity)
+    }
 }
 
 // MARK: - Interstitial Text Field

@@ -5,7 +5,7 @@ import Combine
 final class DatabaseManager {
     private let migrator: DatabaseMigrator
 
-    static let schemaVersion = 36
+    static let schemaVersion = 37
 
     /// The App Group container path for the shared database
     static var appGroupDatabaseURL: URL? {
@@ -903,6 +903,132 @@ final class DatabaseManager {
             try db.execute(sql: "UPDATE syncMetadata SET schemaVersion = 36")
         }
 
+        // v37: Add cached engagementScore column to notes
+        migrator.registerMigration("v37_notes_engagement_score") { db in
+            try db.alter(table: "notes") { t in
+                t.add(column: "engagementScore", .double).notNull().defaults(to: 0)
+            }
+
+            // Back-fill scores for existing notes
+            let now = Double(Int64(Date().timeIntervalSince1970 * 1000))
+
+            let sectionCounts = try Row.fetchAll(db, sql: """
+                SELECT noteId, COUNT(*) as cnt FROM sections
+                WHERE deletedAt IS NULL GROUP BY noteId
+            """)
+            var secMap: [String: Int] = [:]
+            for row in sectionCounts { secMap[row["noteId"]] = row["cnt"] }
+
+            let echoRows = try Row.fetchAll(db, sql: """
+                SELECT DISTINCT s.noteId FROM sections s
+                JOIN echoes e ON e.handleId = s.handleId
+                WHERE s.deletedAt IS NULL AND s.handleId IS NOT NULL AND e.isActive = 1
+            """)
+            let echoSet = Set(echoRows.compactMap { $0["noteId"] as String? })
+
+            // Insight feedback maps: cleanup, safety, tracked, dismissed
+            let cleanupRows = try Row.fetchAll(db, sql: """
+                SELECT sourceNoteId, COUNT(*) as cnt FROM insights
+                WHERE insightType = 'cleanup' AND status = 'surfaced'
+                GROUP BY sourceNoteId
+            """)
+            var cleanupMap: [String: Int] = [:]
+            for row in cleanupRows {
+                if let nid: String = row["sourceNoteId"] { cleanupMap[nid] = row["cnt"] }
+            }
+
+            let safetyRows = try Row.fetchAll(db, sql: """
+                SELECT sourceNoteId, COUNT(*) as cnt FROM insights
+                WHERE insightType = 'safety' AND status = 'surfaced'
+                GROUP BY sourceNoteId
+            """)
+            var safetyMap: [String: Int] = [:]
+            for row in safetyRows {
+                if let nid: String = row["sourceNoteId"] { safetyMap[nid] = row["cnt"] }
+            }
+
+            let trackedRows = try Row.fetchAll(db, sql: """
+                SELECT sourceNoteId, COUNT(*) as cnt FROM insights
+                WHERE status = 'tracked'
+                GROUP BY sourceNoteId
+            """)
+            var trackedMap: [String: Int] = [:]
+            for row in trackedRows {
+                if let nid: String = row["sourceNoteId"] { trackedMap[nid] = row["cnt"] }
+            }
+
+            let dismissedRows = try Row.fetchAll(db, sql: """
+                SELECT sourceNoteId, COUNT(*) as cnt FROM insights
+                WHERE status = 'dismissed'
+                GROUP BY sourceNoteId
+            """)
+            var dismissedMap: [String: Int] = [:]
+            for row in dismissedRows {
+                if let nid: String = row["sourceNoteId"] { dismissedMap[nid] = row["cnt"] }
+            }
+
+            let notes = try Row.fetchAll(db, sql: """
+                SELECT id, isPinned, updatedAt, viewCount FROM notes WHERE deletedAt IS NULL
+            """)
+            for note in notes {
+                let id: String = note["id"]
+                let isPinned: Bool = note["isPinned"]
+                let updatedAt: Int64 = note["updatedAt"]
+                let viewCount: Int = note["viewCount"]
+
+                let pinBoost: Double = isPinned ? 1000 : 0
+                let ageMs = max(now - Double(updatedAt), 0)
+                let ageDays = ageMs / (1000 * 60 * 60 * 24)
+                let recencyBoost = 100 * exp(-ageDays / 7)
+                let viewBoost = min(Double(viewCount) * 2, 100)
+                let sectionBoost = Double(secMap[id] ?? 0)
+                let echoBoost: Double = echoSet.contains(id) ? 50 : 0
+                let cleanupPenalty = Double(cleanupMap[id] ?? 0) * -20
+                let safetyPenalty = Double(safetyMap[id] ?? 0) * -30
+                let trackedBoost = min(Double(trackedMap[id] ?? 0) * 30, 90)
+                let dismissedPenalty = max(Double(dismissedMap[id] ?? 0) * -5, -25)
+
+                let score = pinBoost + recencyBoost + viewBoost + sectionBoost + echoBoost
+                          + cleanupPenalty + safetyPenalty + trackedBoost + dismissedPenalty
+
+                try db.execute(sql: "UPDATE notes SET engagementScore = ? WHERE id = ?", arguments: [score, id])
+            }
+
+            try db.execute(sql: "UPDATE syncMetadata SET schemaVersion = 37")
+        }
+
+        // v38: Calendar day memos table for cloud sync
+        migrator.registerMigration("v38_calendar_memos") { db in
+            try db.create(table: "calendarMemos") { t in
+                t.column("id", .text).primaryKey()
+                t.column("dateKey", .text).notNull().unique()
+                t.column("content", .text).notNull().defaults(to: "")
+                t.column("createdAt", .integer).notNull()
+                t.column("updatedAt", .integer).notNull()
+                t.column("localVersion", .integer).notNull().defaults(to: 1)
+                t.column("serverVersion", .integer)
+                t.column("syncStatus", .text).notNull().defaults(to: "pending")
+            }
+
+            try db.create(index: "idx_calendar_memos_date_key", on: "calendarMemos", columns: ["dateKey"], unique: true)
+
+            // Migrate existing @AppStorage memos into the new table
+            if let json = UserDefaults.standard.string(forKey: "calendarDayMemos"),
+               let data = json.data(using: .utf8),
+               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
+                let now = Int64(Date().timeIntervalSince1970 * 1000)
+                for (dateKey, content) in dict where !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    try db.execute(sql: """
+                        INSERT OR IGNORE INTO calendarMemos (id, dateKey, content, createdAt, updatedAt, localVersion, syncStatus)
+                        VALUES (?, ?, ?, ?, ?, 1, 'pending')
+                    """, arguments: [UUID().uuidString, dateKey, content, now, now])
+                }
+                print("[Migration v38] Migrated \(dict.count) calendar memos from UserDefaults")
+            }
+
+            try db.execute(sql: "UPDATE syncMetadata SET schemaVersion = 38")
+        }
+
         self.migrator = migrator
 
         // Extensions open read-only and must not run migrations
@@ -965,73 +1091,81 @@ final class DatabaseManager {
     func observeNotes() -> AnyPublisher<[Note], Error> {
         ValueObservation
             .tracking { db in
-                let notes = try Note
+                try Note
                     .filter(Note.Columns.deletedAt == nil)
+                    .order(Note.Columns.engagementScore.desc)
                     .fetchAll(db)
-
-                // Sort chronologically: pinned first, then by creation date (newest first)
-                return notes.sorted { a, b in
-                    if a.isPinned != b.isPinned { return a.isPinned }
-                    return a.createdAt > b.createdAt
-                }
             }
             .publisher(in: dbQueue, scheduling: .immediate)
             .eraseToAnyPublisher()
     }
 
-    private static func engagementScore(
-        note: Note, now: Double,
-        sectionCount: Int, hasActiveEcho: Bool, insightCount: Int
-    ) -> Double {
-        let pinBoost: Double = note.isPinned ? 1000 : 0
+    /// Recompute and persist the cached engagement score for a single note.
+    /// Call this inside an existing write transaction after mutating a note,
+    /// its sections, echoes, or insights.
+    static func recomputeEngagementScore(noteId: String, in db: Database) throws {
+        guard let row = try Row.fetchOne(db, sql: """
+            SELECT isPinned, updatedAt, viewCount FROM notes WHERE id = ?
+        """, arguments: [noteId]) else { return }
 
-        // Recency: exponential decay over 7 days
-        let ageMs = max(now - Double(note.updatedAt), 0)
+        let isPinned: Bool = row["isPinned"]
+        let updatedAt: Int64 = row["updatedAt"]
+        let viewCount: Int = row["viewCount"]
+
+        let sectionCount: Int = try Int.fetchOne(db, sql: """
+            SELECT COUNT(*) FROM sections WHERE noteId = ? AND deletedAt IS NULL
+        """, arguments: [noteId]) ?? 0
+
+        let hasActiveEcho: Bool = try Int.fetchOne(db, sql: """
+            SELECT COUNT(*) FROM sections s
+            JOIN echoes e ON e.handleId = s.handleId
+            WHERE s.noteId = ? AND s.deletedAt IS NULL AND s.handleId IS NOT NULL AND e.isActive = 1
+        """, arguments: [noteId]).map { $0 > 0 } ?? false
+
+        // Insight feedback signals: surfaced problems penalize, tracked insights boost,
+        // repeatedly-dismissed insights indicate noise.
+        let surfacedCleanupCount: Int = try Int.fetchOne(db, sql: """
+            SELECT COUNT(*) FROM insights
+            WHERE sourceNoteId = ? AND insightType = 'cleanup' AND status = 'surfaced'
+        """, arguments: [noteId]) ?? 0
+
+        let surfacedSafetyCount: Int = try Int.fetchOne(db, sql: """
+            SELECT COUNT(*) FROM insights
+            WHERE sourceNoteId = ? AND insightType = 'safety' AND status = 'surfaced'
+        """, arguments: [noteId]) ?? 0
+
+        let trackedCount: Int = try Int.fetchOne(db, sql: """
+            SELECT COUNT(*) FROM insights
+            WHERE sourceNoteId = ? AND status = 'tracked'
+        """, arguments: [noteId]) ?? 0
+
+        let dismissedCount: Int = try Int.fetchOne(db, sql: """
+            SELECT COUNT(*) FROM insights
+            WHERE sourceNoteId = ? AND status = 'dismissed'
+        """, arguments: [noteId]) ?? 0
+
+        let now = Double(Int64(Date().timeIntervalSince1970 * 1000))
+        let pinBoost: Double = isPinned ? 1000 : 0
+        let ageMs = max(now - Double(updatedAt), 0)
         let ageDays = ageMs / (1000 * 60 * 60 * 24)
         let recencyBoost = 100 * exp(-ageDays / 7)
-
-        let viewBoost = Double(note.viewCount) * 2
-        let sectionBoost = Double(sectionCount) * 1
+        let viewBoost = min(Double(viewCount) * 2, 100)
+        let sectionBoost = Double(sectionCount)
         let echoBoost: Double = hasActiveEcho ? 50 : 0
-        let insightPenalty = Double(insightCount) * -5
 
-        return pinBoost + recencyBoost + viewBoost + sectionBoost + echoBoost + insightPenalty
-    }
+        // Feedback loop:
+        // - Surfaced cleanup/safety insights penalize (unresolved problems)
+        // - Tracked insights boost (user confirmed value, capped at 90)
+        // - Dismissed insights mildly penalize (note generates noise, capped at -25)
+        let cleanupPenalty = Double(surfacedCleanupCount) * -20
+        let safetyPenalty = Double(surfacedSafetyCount) * -30
+        let trackedBoost = min(Double(trackedCount) * 30, 90)
+        let dismissedPenalty = max(Double(dismissedCount) * -5, -25)
 
-    private func sectionCountsByNote(_ db: Database) throws -> [String: Int] {
-        let rows = try Row.fetchAll(db, sql: """
-            SELECT noteId, COUNT(*) as cnt FROM sections
-            WHERE deletedAt IS NULL GROUP BY noteId
-        """)
-        var result: [String: Int] = [:]
-        for row in rows {
-            result[row["noteId"]] = row["cnt"]
-        }
-        return result
-    }
+        let score = pinBoost + recencyBoost + viewBoost + sectionBoost + echoBoost
+                  + cleanupPenalty + safetyPenalty + trackedBoost + dismissedPenalty
 
-    private func noteIdsWithActiveEchoes(_ db: Database) throws -> Set<String> {
-        let rows = try Row.fetchAll(db, sql: """
-            SELECT DISTINCT s.noteId FROM sections s
-            JOIN echoes e ON e.handleId = s.handleId
-            WHERE s.deletedAt IS NULL AND s.handleId IS NOT NULL
-        """)
-        return Set(rows.compactMap { $0["noteId"] as String? })
-    }
-
-    private func cleanupInsightCountsByNote(_ db: Database) throws -> [String: Int] {
-        let rows = try Row.fetchAll(db, sql: """
-            SELECT sourceNoteId, COUNT(*) as cnt FROM insights
-            WHERE insightType = 'cleanup' AND status = 'surfaced'
-            GROUP BY sourceNoteId
-        """)
-        var result: [String: Int] = [:]
-        for row in rows {
-            if let noteId: String = row["sourceNoteId"] {
-                result[noteId] = row["cnt"]
-            }
-        }
-        return result
+        try db.execute(sql: "UPDATE notes SET engagementScore = ? WHERE id = ?", arguments: [score, noteId])
     }
 
     func observeNote(id: String) -> AnyPublisher<Note?, Error> {
@@ -1096,6 +1230,19 @@ final class DatabaseManager {
             .eraseToAnyPublisher()
     }
 
+    // MARK: - Calendar Memo Observation
+
+    func observeCalendarMemos() -> AnyPublisher<[CalendarMemo], Error> {
+        ValueObservation
+            .tracking { db in
+                try CalendarMemo
+                    .order(CalendarMemo.Columns.dateKey)
+                    .fetchAll(db)
+            }
+            .publisher(in: dbQueue, scheduling: .immediate)
+            .eraseToAnyPublisher()
+    }
+
     // MARK: - Module Observation
 
     func observeAllModules() -> AnyPublisher<[Module], Error> {
@@ -1136,6 +1283,16 @@ final class DatabaseManager {
             }
             .publisher(in: dbQueue, scheduling: .immediate)
             .eraseToAnyPublisher()
+    }
+
+    func fetchInsightsForNote(_ noteId: String) throws -> [Insight] {
+        try dbQueue.read { db in
+            try Insight
+                .filter(Insight.Columns.sourceNoteId == noteId)
+                .filter(Insight.Columns.status != InsightStatus.dismissed.rawValue)
+                .order(Insight.Columns.createdAt.desc)
+                .fetchAll(db)
+        }
     }
 
     // MARK: - Full-Text Search

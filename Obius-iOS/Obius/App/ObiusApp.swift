@@ -150,6 +150,7 @@ class AppState: ObservableObject {
     let commitModule: CommitModule
     let autoCommitManager: AutoCommitManager
     let insightRepository: InsightRepository
+    let calendarMemoRepository: CalendarMemoRepository
 
     @Published var isInitialized = false
     /// Set to true if the database had to be recreated from scratch due to corruption.
@@ -195,6 +196,8 @@ class AppState: ObservableObject {
                 coldStore: coldStore
             )
             self.insightRepository = InsightRepository(database: database)
+            self.calendarMemoRepository = CalendarMemoRepository(database: database)
+            self.calendarMemoRepository.syncLogger = syncLogger
 
             // Initialize HandleManager singleton with repository
             HandleManager.shared.initialize(handleRepository: handleRepository)
@@ -274,6 +277,9 @@ class AppState: ObservableObject {
         // Auto-commit check (creates commits for notes modified before today)
         await autoCommitManager.checkAndAutoCommit()
 
+        // Clean up expired versions based on retention settings
+        _ = await VersionRetentionManager.runCleanup(commitRepository: commitRepository, coldStore: coldStore)
+
         // Auto-sync if authenticated and tier allows it
         let isAuthed = AuthManager.shared.isAuthenticated
         let canSync = TierManager.shared.limits.cloudSync
@@ -286,6 +292,11 @@ class AppState: ObservableObject {
         // Sync profile images from cloud (downloads if they exist remotely but not locally)
         if AuthManager.shared.isAuthenticated {
             await ProfileImageManager.shared.syncFromCloud()
+        }
+
+        // Upload existing local media to cloud for cross-device sync (one-time)
+        if AuthManager.shared.isAuthenticated && TierManager.shared.limits.cloudSync {
+            Task { await mediaRepository.syncExistingMediaToCloud() }
         }
 
         // Seed first-run demo note

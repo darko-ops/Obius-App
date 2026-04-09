@@ -2,7 +2,7 @@ import SwiftUI
 
 struct EchoCalendarView: View {
     @StateObject private var echoManager = EchoManager.shared
-    @AppStorage("calendarDayMemos") private var memosJSON: String = "{}"
+    @ObservedObject var calendarMemoRepository: CalendarMemoRepository
 
     enum CalendarMode: String {
         case month = "Month"
@@ -28,22 +28,12 @@ struct EchoCalendarView: View {
     // MARK: - Memo Storage
 
     private var memos: [String: String] {
-        guard let data = memosJSON.data(using: .utf8),
-              let dict = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
-        return dict
+        calendarMemoRepository.memos
     }
 
     private func saveMemo(_ text: String, for date: Date) {
-        var dict = memos
         let key = dayKey(date)
-        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            dict.removeValue(forKey: key)
-        } else {
-            dict[key] = text
-        }
-        if let data = try? JSONEncoder().encode(dict), let json = String(data: data, encoding: .utf8) {
-            memosJSON = json
-        }
+        Task { await calendarMemoRepository.saveMemo(text, for: key) }
     }
 
     // MARK: - Computed
@@ -277,7 +267,7 @@ struct EchoCalendarView: View {
 
     private var weekdayHeaders: some View {
         LazyVGrid(columns: columns, spacing: 2) {
-            ForEach(weekdaySymbols, id: \.self) { symbol in
+            ForEach(Array(weekdaySymbols.enumerated()), id: \.offset) { _, symbol in
                 Text(symbol)
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
@@ -331,7 +321,7 @@ struct EchoCalendarView: View {
                 // Day number
                 Text("\(dayNum)")
                     .font(.system(size: 10, weight: isToday ? .bold : .regular))
-                    .foregroundColor(isSelected ? .yellow : isToday ? .white : Color(white: 0.5))
+                    .foregroundColor(isSelected ? .yellow : isToday ? .blue : .blue.opacity(0.6))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, 4)
                     .padding(.top, 3)
@@ -358,7 +348,7 @@ struct EchoCalendarView: View {
                 if hasMemo {
                     Text(memo!)
                         .font(.system(size: 7))
-                        .foregroundColor(Color(white: 0.55))
+                        .foregroundColor(.white)
                         .lineLimit(mode == .week ? 6 : 3)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 3)
@@ -403,26 +393,35 @@ struct EchoCalendarView: View {
                         .foregroundColor(Color(white: 0.35))
                         .padding(.top, 6)
 
-                    TextField("Add a note...", text: $editingMemo, axis: .vertical)
-                        .font(.system(size: 12))
-                        .foregroundColor(.white)
-                        .lineLimit(1...4)
-                        .textFieldStyle(.plain)
-                        #if os(iOS)
-                        .toolbar {
-                            ToolbarItemGroup(placement: .keyboard) {
-                                Spacer()
-                                Button {
-                                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                                } label: {
-                                    Image(systemName: "keyboard.chevron.compact.down")
+                    ZStack(alignment: .topLeading) {
+                        if editingMemo.isEmpty {
+                            Text("Add a note...")
+                                .font(.system(size: 12))
+                                .foregroundColor(Color(white: 0.25))
+                                .padding(.top, 1)
+                        }
+                        TextEditor(text: $editingMemo)
+                            .font(.system(size: 12))
+                            .foregroundColor(.white)
+                            .scrollContentBackground(.hidden)
+                            .frame(minHeight: 20, maxHeight: 80)
+                            .fixedSize(horizontal: false, vertical: true)
+                            #if os(iOS)
+                            .toolbar {
+                                ToolbarItemGroup(placement: .keyboard) {
+                                    Spacer()
+                                    Button {
+                                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                    } label: {
+                                        Image(systemName: "keyboard.chevron.compact.down")
+                                    }
                                 }
                             }
-                        }
-                        #endif
-                        .onChange(of: editingMemo) { _, newValue in
-                            saveMemo(newValue, for: selected)
-                        }
+                            #endif
+                            .onChange(of: editingMemo) { _, newValue in
+                                saveMemo(newValue, for: selected)
+                            }
+                    }
                 }
                 .padding(8)
                 .background(Color(white: 0.04))
@@ -488,7 +487,7 @@ struct EchoCalendarView: View {
 }
 
 #Preview {
-    EchoCalendarView()
+    EchoCalendarView(calendarMemoRepository: CalendarMemoRepository(database: try! DatabaseManager()))
         .padding()
         .background(Color.black)
         .preferredColorScheme(.dark)

@@ -68,6 +68,18 @@ export interface Echo {
   last_modified_by: string | null;
 }
 
+export interface CalendarMemo {
+  id: string;
+  user_id: string;
+  date_key: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  version: number;
+  last_modified_by: string | null;
+}
+
 export interface Device {
   id: string;
   user_id: string;
@@ -107,9 +119,9 @@ export interface SyncState {
 
 // Enums
 export type ColorIntent = 'default' | 'important' | 'idea' | 'task' | 'reference';
-export type ContentType = 'text' | 'checklist' | 'code' | 'quote';
+export type ContentType = 'text' | 'checklist' | 'code' | 'quote' | 'image' | 'audio';
 export type Platform = 'ios' | 'android' | 'web';
-export type EntityType = 'note' | 'section' | 'echo' | 'handle';
+export type EntityType = 'note' | 'section' | 'echo' | 'handle' | 'calendar_memo';
 export type Operation = 'create' | 'update' | 'delete';
 
 // Sync Request/Response Types
@@ -124,10 +136,12 @@ export interface SyncPullResponse {
   sections: Section[];
   handles: Handle[];
   echoes: Echo[];
+  calendar_memos: CalendarMemo[];
   deleted_note_ids: string[];
   deleted_section_ids: string[];
   deleted_handle_ids: string[];
   deleted_echo_ids: string[];
+  deleted_calendar_memo_ids: string[];
   server_timestamp: string;
   has_more: boolean;
 }

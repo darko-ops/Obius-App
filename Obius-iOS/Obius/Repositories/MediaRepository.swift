@@ -4,10 +4,12 @@ import Combine
 
 /// Repository for managing Media records and note-media relationships.
 /// Works with ColdStore for content-addressable media storage.
+/// Syncs media to/from Supabase Storage for cross-device availability.
 @MainActor
 final class MediaRepository: ObservableObject {
     private let database: DatabaseManager
     private let coldStore: ColdStore
+    private static let storageBucket = "note-media"
 
     init(database: DatabaseManager, coldStore: ColdStore) {
         self.database = database
@@ -33,6 +35,13 @@ final class MediaRepository: ObservableObject {
         // Save to Hot Store (ignore conflict if already exists - same content = same hash)
         try await database.write { db in
             try media.insert(db, onConflict: .ignore)
+        }
+
+        // Upload to cloud storage for cross-device sync (fire and forget)
+        let hash = media.hash
+        let mime = mimeType
+        Task.detached {
+            await MediaRepository.uploadToCloud(data: data, hash: hash, mimeType: mime)
         }
 
         return media
@@ -137,11 +146,98 @@ final class MediaRepository: ObservableObject {
         try coldStore.readMedia(hash: hash)
     }
 
+    /// Reads media data, falling back to cloud download if missing locally.
+    /// - Parameter hash: The media hash
+    /// - Returns: The raw media data, or nil if unavailable
+    func getMediaDataWithCloudFallback(hash: String) async -> Data? {
+        // Try local first
+        if let data = try? coldStore.readMedia(hash: hash) {
+            return data
+        }
+
+        // Try downloading from cloud
+        return await MediaRepository.downloadFromCloud(hash: hash, coldStore: coldStore)
+    }
+
     /// Checks if media data exists in Cold Store.
     /// - Parameter hash: The media hash
     /// - Returns: true if the media file exists
     func mediaDataExists(hash: String) -> Bool {
         coldStore.mediaExists(hash: hash)
+    }
+
+    // MARK: - Cloud Storage
+
+    /// Uploads media data to Supabase Storage for cross-device sync.
+    private static func uploadToCloud(data: Data, hash: String, mimeType: String) async {
+        guard SupabaseManager.shared.isAuthenticated,
+              let userId = SupabaseManager.shared.currentUser?.id.uuidString.lowercased() else { return }
+
+        let hashValue = hash.replacingOccurrences(of: "sha256:", with: "")
+        let path = "\(userId)/\(hashValue)"
+
+        do {
+            try await SupabaseManager.shared.client.storage
+                .from(storageBucket)
+                .upload(
+                    path: path,
+                    file: data,
+                    options: .init(contentType: mimeType, upsert: true)
+                )
+            print("[Media] Uploaded \(hashValue.prefix(12)) to cloud (\(data.count) bytes)")
+        } catch {
+            print("[Media] Cloud upload failed for \(hashValue.prefix(12)): \(error.localizedDescription)")
+        }
+    }
+
+    /// Uploads all existing local media to cloud storage (one-time migration).
+    /// Call on app launch to ensure media created before cloud sync was added gets uploaded.
+    func syncExistingMediaToCloud() async {
+        let syncKey = "hasUploadedExistingMedia_v1"
+        guard !UserDefaults.standard.bool(forKey: syncKey) else { return }
+        guard SupabaseManager.shared.isAuthenticated else { return }
+
+        do {
+            let allMedia = try await getAllMedia()
+            guard !allMedia.isEmpty else {
+                UserDefaults.standard.set(true, forKey: syncKey)
+                return
+            }
+
+            var uploaded = 0
+            for media in allMedia {
+                guard let data = try? coldStore.readMedia(hash: media.hash) else { continue }
+                await MediaRepository.uploadToCloud(data: data, hash: media.hash, mimeType: media.mimeType)
+                uploaded += 1
+            }
+            print("[Media] Uploaded \(uploaded)/\(allMedia.count) existing media files to cloud")
+            UserDefaults.standard.set(true, forKey: syncKey)
+        } catch {
+            print("[Media] Failed to sync existing media: \(error.localizedDescription)")
+        }
+    }
+
+    /// Downloads media data from Supabase Storage and saves to local Cold Store.
+    private static func downloadFromCloud(hash: String, coldStore: ColdStore) async -> Data? {
+        guard SupabaseManager.shared.isAuthenticated,
+              let userId = SupabaseManager.shared.currentUser?.id.uuidString.lowercased() else { return nil }
+
+        let hashValue = hash.replacingOccurrences(of: "sha256:", with: "")
+        let path = "\(userId)/\(hashValue)"
+
+        do {
+            let data = try await SupabaseManager.shared.client.storage
+                .from(storageBucket)
+                .download(path: path)
+
+            // Save to local Cold Store so subsequent reads are instant
+            _ = try? coldStore.writeMedia(data: data, filename: hashValue, mimeType: "image/jpeg")
+            print("[Media] Downloaded \(hashValue.prefix(12)) from cloud (\(data.count) bytes)")
+            return data
+        } catch {
+            print("[Media] Cloud download failed for \(hashValue.prefix(12)): \(error.localizedDescription)")
+            return nil
+        }
     }
 
     // MARK: - Delete

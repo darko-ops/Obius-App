@@ -72,10 +72,8 @@ final class NoteRepository: ObservableObject {
 
         try await database.write { db in
             try note.insert(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: note.id, in: db)
         }
-
-        // No longer create initial section - user can type directly on the note
-        // and add sections manually via "Add section" button
 
         return note
     }
@@ -87,21 +85,25 @@ final class NoteRepository: ObservableObject {
             note.syncStatus = .pending
             note.updatedAt = Int64(Date().timeIntervalSince1970 * 1000)
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
-    func updateNoteBody(_ noteId: String, body: String, richText: String? = nil) async throws {
+    func updateNoteBody(_ noteId: String, body: String, richText: String? = nil, clearRichText: Bool = false) async throws {
         try await database.write { db in
             guard var note = try Note.fetchOne(db, key: noteId) else { return }
             // Only touch if body text or rich text actually changed.
             let richChanged = richText != nil && note.bodyRichText != richText
-            guard note.body != body || richChanged else { return }
+            guard note.body != body || richChanged || clearRichText else { return }
             note.body = body
             if let richText = richText {
                 note.bodyRichText = richText
+            } else if clearRichText {
+                note.bodyRichText = nil
             }
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -126,6 +128,7 @@ final class NoteRepository: ObservableObject {
             }
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -159,6 +162,7 @@ final class NoteRepository: ObservableObject {
 
         try await database.write { db in
             try updated.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: note.id, in: db)
         }
     }
 
@@ -175,6 +179,7 @@ final class NoteRepository: ObservableObject {
             note.title = title
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -184,6 +189,7 @@ final class NoteRepository: ObservableObject {
             note.aiTitle = aiTitle
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -193,6 +199,7 @@ final class NoteRepository: ObservableObject {
             note.aiTags = aiTags
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -202,6 +209,7 @@ final class NoteRepository: ObservableObject {
                 sql: "UPDATE notes SET viewCount = viewCount + 1 WHERE id = ?",
                 arguments: [noteId]
             )
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -211,6 +219,7 @@ final class NoteRepository: ObservableObject {
             note.isPinned.toggle()
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -220,6 +229,7 @@ final class NoteRepository: ObservableObject {
             note.intent = intent
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -229,6 +239,7 @@ final class NoteRepository: ObservableObject {
             note.tags = tags
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -239,6 +250,7 @@ final class NoteRepository: ObservableObject {
             note.isPinned = groupName != nil  // Grouped notes are always pinned
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -248,6 +260,7 @@ final class NoteRepository: ObservableObject {
             note.moduleId = moduleId
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -373,6 +386,7 @@ final class NoteRepository: ObservableObject {
             note.isPinned = isPinned
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: id, in: db)
         }
     }
 }

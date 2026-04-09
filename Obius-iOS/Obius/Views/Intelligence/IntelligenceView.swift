@@ -220,7 +220,7 @@ struct IntelligenceView: View {
         VStack(spacing: 0) {
             ScrollView {
                 LazyVStack(spacing: 16) {
-                    EchoCalendarView()
+                    EchoCalendarView(calendarMemoRepository: appState.calendarMemoRepository)
 
                     activeEchoesSection
 

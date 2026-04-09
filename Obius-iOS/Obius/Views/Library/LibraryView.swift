@@ -9,7 +9,7 @@ struct LibraryView: View {
     @State private var searchQuery = ""
     @State private var showingEditProfile = false
     @State private var selectedEcho: Echo?
-    @StateObject private var profileImages = ProfileImageManager.shared
+    @ObservedObject private var profileImages = ProfileImageManager.shared
     var pendingEchoId: Binding<String?> = .constant(nil)
 
     enum LibrarySection: String, CaseIterable {
@@ -723,7 +723,9 @@ struct CommitsListView: View {
             await loadCommits()
         }
         .sheet(item: $selectedCommit) { commit in
-            CommitDetailSheet(commit: commit, noteName: noteNames[commit.noteId])
+            CommitDetailSheet(commit: commit, noteName: noteNames[commit.noteId]) {
+                commits.removeAll { $0.id == commit.id }
+            }
         }
         .sheet(item: $shareSheetLink) { link in
             NodeShareSheet(
@@ -1020,6 +1022,7 @@ struct CommitDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     let commit: Commit
     let noteName: String?
+    var onDelete: (() -> Void)?
 
     @State private var content: CommitContent?
     @State private var isLoading = true
@@ -1030,6 +1033,7 @@ struct CommitDetailSheet: View {
     @State private var shareURL: URL?
     @State private var shareTitle: String = ""
     @State private var sharePreview: String = ""
+    @State private var showingDeleteConfirmation = false
     @FocusState private var isCommentFocused: Bool
 
     private var creatorName: String {
@@ -1081,6 +1085,14 @@ struct CommitDetailSheet: View {
                 await loadContent()
                 await loadComments()
             }
+            .alert("Delete Version", isPresented: $showingDeleteConfirmation) {
+                Button("Delete", role: .destructive) {
+                    Task { await deleteCommit() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This version will be permanently removed from this device. This cannot be undone.")
+            }
             .platformFullScreenCover(isPresented: $showingShareSheet) {
                 if let url = shareURL {
                     NodeShareSheet(
@@ -1090,6 +1102,19 @@ struct CommitDetailSheet: View {
                     )
                 }
             }
+        }
+    }
+
+    private func deleteCommit() async {
+        do {
+            // Delete from cold store (.obx file)
+            try appState.coldStore.deleteCommit(hash: commit.hash)
+            // Delete from hot store (database index)
+            try await appState.commitRepository.deleteCommit(id: commit.id)
+            onDelete?()
+            dismiss()
+        } catch {
+            print("Failed to delete commit: \(error)")
         }
     }
 
@@ -1276,6 +1301,27 @@ struct CommitDetailSheet: View {
                         await addComment(body: body)
                     }
                 )
+
+                Divider()
+                    .padding(.vertical, 8)
+
+                // Delete version
+                Button(role: .destructive) {
+                    showingDeleteConfirmation = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "trash")
+                            .font(.caption)
+                        Text("Delete Version from Device")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.red.opacity(0.1))
+                    .foregroundStyle(.red)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
 
                 Spacer(minLength: 40)
             }

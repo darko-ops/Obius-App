@@ -1836,6 +1836,8 @@ struct EditableTextView: NSViewRepresentable {
     var sectionId: String? = nil
     /// Optional binding for dynamic height — when provided, the view reports its content height.
     var dynamicHeight: Binding<CGFloat>? = nil
+    /// Insight radar highlight ranges — (NSRange, PlatformColor) pairs for inline highlighting.
+    var insightHighlightRanges: [(NSRange, PlatformColor)] = []
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSTextView.scrollableTextView()
@@ -1881,22 +1883,64 @@ struct EditableTextView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
-        // Only update when not focused to prevent cursor jumping
-        if textView.window?.firstResponder != textView, textView.string != text {
+        let isFirstResponder = textView.window?.firstResponder == textView
+        // Only update when not focused, OR when focused and the text has changed
+        // significantly (e.g. external merge). Skip small diffs while focused to
+        // avoid visual glitches during normal typing.
+        let textDiffers = textView.string != text
+        let shouldUpdate = textDiffers && (!isFirstResponder || abs(textView.string.count - text.count) > 1)
+        if shouldUpdate {
             // Suppress textDidChange callback during programmatic updates
             // to prevent observation → setText → textDidChange → DB write → observation loop
             context.coordinator.isProgrammaticUpdate = true
-            if let richText = richText,
-               let attrText = RichTextHelper.deserialize(richText) {
-                textView.textStorage?.setAttributedString(attrText)
-            } else {
+            if isFirstResponder {
+                // Preserve cursor/selection when updating while focused
+                let selectedRanges = textView.selectedRanges
                 textView.string = text
+                // Restore selection, clamping to new text length
+                let maxLen = textView.string.count
+                let restored = selectedRanges.compactMap { rangeValue -> NSValue? in
+                    let r = rangeValue.rangeValue
+                    let loc = min(r.location, maxLen)
+                    let len = min(r.length, maxLen - loc)
+                    return NSValue(range: NSRange(location: loc, length: len))
+                }
+                if !restored.isEmpty {
+                    textView.setSelectedRanges(restored, affinity: .downstream, stillSelecting: false)
+                }
+            } else {
+                if let richText = richText,
+                   let attrText = RichTextHelper.deserialize(richText) {
+                    textView.textStorage?.setAttributedString(attrText)
+                } else {
+                    textView.string = text
+                }
             }
             context.coordinator.isProgrammaticUpdate = false
             // Recalculate height after external text change
             DispatchQueue.main.async {
                 context.coordinator.updateDynamicHeight()
             }
+            HashtagHelper.applyHighlighting(to: textView)
+        }
+
+        // Apply insight radar highlights — subtle background tint
+        if let textStorage = textView.textStorage {
+            let fullRange = NSRange(location: 0, length: textStorage.length)
+            textStorage.beginEditing()
+            // Clear previous insight highlights
+            textStorage.enumerateAttribute(.insightHighlight, in: fullRange, options: []) { value, range, _ in
+                guard value != nil else { return }
+                textStorage.removeAttribute(.backgroundColor, range: range)
+                textStorage.removeAttribute(.insightHighlight, range: range)
+            }
+            // Apply subtle background tint
+            for (range, color) in insightHighlightRanges {
+                guard range.location + range.length <= textStorage.length else { continue }
+                textStorage.addAttribute(.backgroundColor, value: color.withAlphaComponent(0.06), range: range)
+                textStorage.addAttribute(.insightHighlight, value: true, range: range)
+            }
+            textStorage.endEditing()
         }
 
         if isFocused.wrappedValue && textView.window?.firstResponder != textView {

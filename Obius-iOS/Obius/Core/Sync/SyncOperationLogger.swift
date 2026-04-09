@@ -167,6 +167,35 @@ final class SyncOperationLogger {
         )
     }
 
+    // MARK: - CalendarMemo Operations
+
+    func logCalendarMemoCreate(_ memo: CalendarMemo) {
+        logOperation(
+            entityType: "calendar_memo",
+            entityId: memo.id,
+            operationType: "create",
+            payload: calendarMemoToPayload(memo)
+        )
+    }
+
+    func logCalendarMemoUpdate(_ memo: CalendarMemo) {
+        logOperation(
+            entityType: "calendar_memo",
+            entityId: memo.id,
+            operationType: "update",
+            payload: calendarMemoToPayload(memo)
+        )
+    }
+
+    func logCalendarMemoDelete(_ memoId: String) {
+        logOperation(
+            entityType: "calendar_memo",
+            entityId: memoId,
+            operationType: "delete",
+            payload: [:]
+        )
+    }
+
     // MARK: - ShareLink Operations
 
     func logShareLinkCreate(_ shareLink: ShareLink) {
@@ -383,6 +412,15 @@ final class SyncOperationLogger {
         }
 
         return payload
+    }
+
+    private func calendarMemoToPayload(_ memo: CalendarMemo) -> [String: Any] {
+        [
+            "date_key": memo.dateKey,
+            "content": memo.content,
+            "created_at": formatTimestamp(memo.createdAt),
+            "updated_at": formatTimestamp(memo.updatedAt)
+        ]
     }
 
     private func formatTimestamp(_ millis: Int64) -> String {

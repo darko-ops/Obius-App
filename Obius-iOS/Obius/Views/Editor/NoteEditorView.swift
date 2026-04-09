@@ -96,6 +96,9 @@ private struct NoteEditorContent: View {
     @State private var emptyPlaceholder: String = PlaceholderProvider.next()
     @State private var titleVisible = true
     @State private var showingHistory = false
+    @State private var showInsightRadar = false
+    @State private var radarInsights: [Insight] = []
+    @State private var selectedRadarInsight: Insight?
     @State private var showWorkspaceSheet = false
     #if os(macOS)
     @State private var showWorkspacePanel = false
@@ -217,6 +220,7 @@ private struct NoteEditorContent: View {
             }
             .task {
                 try? await appState.noteRepository.incrementViewCount(noteId)
+                await loadRadarInsights()
             }
             .task {
                 // Scroll to target section from insight navigation
@@ -287,6 +291,29 @@ private struct NoteEditorContent: View {
                 if let url = shareURL {
                     NodeShareSheet(url: url, title: shareTitle, preview: sharePreview)
                 }
+            }
+            .sheet(item: $selectedRadarInsight) { insight in
+                InsightDetailSheet(
+                    insight: insight,
+                    onTrack: {
+                        Task {
+                            try? await appState.insightRepository.trackInsight(insight.id)
+                            await loadRadarInsights()
+                        }
+                    },
+                    onDismiss: {
+                        Task {
+                            try? await appState.insightRepository.dismissInsight(insight.id)
+                            await loadRadarInsights()
+                        }
+                    },
+                    onUntrack: {
+                        Task {
+                            try? await appState.insightRepository.untrackInsight(insight.id)
+                            await loadRadarInsights()
+                        }
+                    }
+                )
             }
             #if os(iOS)
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
@@ -557,6 +584,11 @@ private struct NoteEditorContent: View {
                 titleView
                 loopsAndTagsView
                 noteBodyEditor
+                    .overlay(alignment: .topLeading) {
+                        if showInsightRadar {
+                            bodyInsightBoxOverlay
+                        }
+                    }
             }
             .padding(.horizontal)
             .zIndex(1)  // Keep header above section list for hit testing so title/body stay tappable when image nodes exist
@@ -695,6 +727,11 @@ private struct NoteEditorContent: View {
                 } else if let lastSection = viewModel.sections.last {
                     viewModel.focusedSectionId = lastSection.id
                 }
+            },
+            insightHighlights: insightHighlightMap,
+            sectionInsights: sectionInsightMap,
+            onInsightTap: { insight in
+                selectedRadarInsight = insight
             }
         )
     }
@@ -941,7 +978,446 @@ private struct NoteEditorContent: View {
         }
         #endif
 
+        insightRadarButton
+
         mainMenu
+    }
+
+    // MARK: - Insight Radar
+
+    @ViewBuilder
+    private var insightRadarButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showInsightRadar.toggle()
+            }
+            if showInsightRadar {
+                Task { await loadRadarInsights() }
+            }
+        } label: {
+            Image(systemName: "dot.radiowaves.left.and.right")
+                .foregroundStyle(showInsightRadar ? .white : .secondary)
+        }
+        .overlay(alignment: .topTrailing) {
+            if !showInsightRadar && !radarInsights.isEmpty {
+                Circle()
+                    .fill(.orange)
+                    .frame(width: 6, height: 6)
+                    .offset(x: 3, y: -3)
+            }
+        }
+    }
+
+    private func loadRadarInsights() async {
+        do {
+            radarInsights = try await appState.insightRepository.insightsForNote(noteId)
+            resolvedInsightLocations = resolveInsightLocations()
+        } catch {
+            print("[InsightRadar] Failed to load: \(error)")
+        }
+    }
+
+    // MARK: - Insight Location Resolution
+
+    /// Resolved location for each insight: either a section ID, "__body__", or nil (unresolved).
+    @State private var resolvedInsightLocations: [String: String] = [:]
+
+    /// Pattern-match page-level insights against body text and section content
+    /// to determine where they actually belong.
+    private func resolveInsightLocations() -> [String: String] {
+        let sectionIds = Set(viewModel.sections.map(\.id))
+        var locations: [String: String] = [:]
+
+        for insight in radarInsights {
+            // Already has a real section ID
+            if let sectionId = insight.sourceSectionId, sectionIds.contains(sectionId) {
+                locations[insight.id] = sectionId
+                continue
+            }
+
+            // For safety insights, pattern-match to find the actual source
+            if insight.insightType == .safety {
+                if let loc = locateSafetyInsight(insight) {
+                    locations[insight.id] = loc
+                    continue
+                }
+            }
+
+            // For list insights without a section match, try content matching
+            if insight.insightType == .list {
+                if let loc = locateByContentMatch(insight) {
+                    locations[insight.id] = loc
+                    continue
+                }
+            }
+
+            // Default: body-level
+            locations[insight.id] = "__body__"
+        }
+        return locations
+    }
+
+    /// Locate a safety insight by re-running its pattern against body and each section.
+    private func locateSafetyInsight(_ insight: Insight) -> String? {
+        let patterns: [NSRegularExpression]
+        switch insight.sourceSectionId {
+        case "api_key":
+            patterns = [
+                try! NSRegularExpression(pattern: #"sk-[a-zA-Z0-9]{20,}"#),
+                try! NSRegularExpression(pattern: #"pk_[a-zA-Z0-9]{20,}"#),
+                try! NSRegularExpression(pattern: #"AKIA[0-9A-Z]{16}"#),
+            ]
+        case "password":
+            patterns = [
+                try! NSRegularExpression(pattern: #"(?:password|pwd|secret|token)\s*[:=]\s*\S+"#, options: [.caseInsensitive])
+            ]
+        case "personal_data":
+            patterns = [
+                try! NSRegularExpression(pattern: #"\b\d{3}-\d{2}-\d{4}\b"#),
+                try! NSRegularExpression(pattern: #"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b"#),
+                try! NSRegularExpression(pattern: #"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}"#),
+            ]
+        default:
+            return nil
+        }
+
+        // Check each section first
+        for section in viewModel.sections {
+            guard section.contentType == .text else { continue }
+            let text = section.content
+            guard !text.isEmpty else { continue }
+            let range = NSRange(text.startIndex..<text.endIndex, in: text)
+            for pattern in patterns {
+                if pattern.firstMatch(in: text, range: range) != nil {
+                    return section.id
+                }
+            }
+        }
+
+        // Check body text
+        let body = bodyText
+        if !body.isEmpty {
+            let range = NSRange(body.startIndex..<body.endIndex, in: body)
+            for pattern in patterns {
+                if pattern.firstMatch(in: body, range: range) != nil {
+                    return "__body__"
+                }
+            }
+        }
+
+        return nil
+    }
+
+    /// Try to locate an insight by searching for keywords from its title in section content.
+    private func locateByContentMatch(_ insight: Insight) -> String? {
+        for section in viewModel.sections {
+            guard section.contentType == .text, !section.content.isEmpty else { continue }
+            // Check if the section content is referenced in the insight body
+            let sectionWords = Set(section.content.lowercased().split(separator: " ").prefix(5).map(String.init))
+            let insightWords = Set(insight.body.lowercased().split(separator: " ").map(String.init))
+            if sectionWords.count >= 3 && !sectionWords.intersection(insightWords).isEmpty {
+                return section.id
+            }
+        }
+        return nil
+    }
+
+    /// Build a map of sectionId → tint color for left-border highlights.
+    private var insightHighlightMap: [String: Color] {
+        guard showInsightRadar else { return [:] }
+        var map: [String: Color] = [:]
+        for insight in radarInsights {
+            if let loc = resolvedInsightLocations[insight.id],
+               loc != "__body__",
+               viewModel.sections.contains(where: { $0.id == loc }) {
+                map[loc] = insight.displayTint.color
+            }
+        }
+        return map
+    }
+
+    /// Build a map of sectionId → [Insight] for inline chips.
+    private var sectionInsightMap: [String: [Insight]] {
+        guard showInsightRadar else { return [:] }
+        var map: [String: [Insight]] = [:]
+        for insight in radarInsights {
+            if let loc = resolvedInsightLocations[insight.id],
+               loc != "__body__",
+               viewModel.sections.contains(where: { $0.id == loc }) {
+                map[loc, default: []].append(insight)
+            }
+        }
+        return map
+    }
+
+    /// Insights resolved to the body text area.
+    private var bodyInsights: [Insight] {
+        guard showInsightRadar else { return [] }
+        return radarInsights.filter { resolvedInsightLocations[$0.id] == "__body__" }
+    }
+
+    /// Compute highlight ranges in the body text for each body-level insight.
+    private var bodyInsightHighlightRanges: [(NSRange, PlatformColor)] {
+        guard showInsightRadar else { return [] }
+        let text = bodyText
+        guard !text.isEmpty else { return [] }
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        var ranges: [(NSRange, PlatformColor)] = []
+
+        for insight in bodyInsights {
+            var patterns: [NSRegularExpression] = []
+            let color: PlatformColor
+
+            switch insight.insightType {
+            case .safety:
+                color = .systemRed
+                switch insight.sourceSectionId {
+                case "api_key":
+                    patterns = [
+                        try! NSRegularExpression(pattern: #"sk-[a-zA-Z0-9]{20,}"#),
+                        try! NSRegularExpression(pattern: #"pk_[a-zA-Z0-9]{20,}"#),
+                        try! NSRegularExpression(pattern: #"AKIA[0-9A-Z]{16}"#),
+                    ]
+                case "password":
+                    patterns = [
+                        try! NSRegularExpression(pattern: #"(?:password|pwd|secret|token)\s*[:=]\s*\S+"#, options: [.caseInsensitive])
+                    ]
+                case "personal_data":
+                    patterns = [
+                        try! NSRegularExpression(pattern: #"\b\d{3}-\d{2}-\d{4}\b"#),
+                        try! NSRegularExpression(pattern: #"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b"#),
+                        try! NSRegularExpression(pattern: #"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}"#),
+                    ]
+                default:
+                    break
+                }
+            case .list:
+                color = .systemBlue
+                patterns = [
+                    try! NSRegularExpression(pattern: #"(?m)^[\s]*[-•*]\s+.+"#),
+                    try! NSRegularExpression(pattern: #"(?m)^[\s]*\d+[.)]\s+.+"#),
+                ]
+            case .cleanup:
+                color = .systemOrange
+            case .drift:
+                color = .systemPurple
+            case .link:
+                color = .systemGreen
+            case .progress:
+                color = .systemTeal
+            default:
+                color = .systemGray
+            }
+
+            // Pattern-based matching for types with patterns
+            for pattern in patterns {
+                let matches = pattern.matches(in: text, range: fullRange)
+                for match in matches {
+                    ranges.append((match.range, color))
+                }
+            }
+
+            // Keyword-based fallback for insights without specific patterns:
+            // Extract key phrases from the insight body and highlight their occurrence in the text.
+            if patterns.isEmpty {
+                let keywords = extractKeywords(from: insight)
+                for keyword in keywords {
+                    let escaped = NSRegularExpression.escapedPattern(for: keyword)
+                    guard let regex = try? NSRegularExpression(pattern: #"\b"# + escaped + #"\b"#, options: [.caseInsensitive]) else { continue }
+                    let matches = regex.matches(in: text, range: fullRange)
+                    for match in matches {
+                        ranges.append((match.range, color))
+                    }
+                }
+            }
+        }
+        return ranges
+    }
+
+    /// Extract key phrases from an insight's body text for keyword-based matching.
+    private func extractKeywords(from insight: Insight) -> [String] {
+        let stopWords: Set<String> = ["the", "a", "an", "is", "are", "was", "were", "be", "been",
+                                       "has", "have", "had", "do", "does", "did", "will", "would",
+                                       "could", "should", "may", "might", "can", "this", "that",
+                                       "with", "from", "for", "and", "but", "or", "not", "in",
+                                       "on", "at", "to", "of", "it", "its", "by", "as", "if",
+                                       "your", "you", "their", "there", "here", "about", "into"]
+        let words = insight.body
+            .components(separatedBy: .whitespacesAndNewlines)
+            .map { $0.trimmingCharacters(in: .punctuationCharacters) }
+            .filter { $0.count > 3 && !stopWords.contains($0.lowercased()) }
+
+        // Return unique multi-word phrases (2-3 consecutive significant words)
+        // or single significant words if content is short
+        if words.count <= 3 { return words }
+
+        // Use the longest significant words as keywords
+        let sorted = Array(Set(words)).sorted { $0.count > $1.count }
+        return Array(sorted.prefix(5))
+    }
+
+    @ViewBuilder
+    private var bodyInsightChips: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(bodyInsights) { insight in
+                HStack(spacing: 4) {
+                    Image(systemName: insight.displayIcon)
+                        .font(.system(size: 9))
+                    Text(insight.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(insight.displayTint.color)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(insight.displayTint.color.opacity(0.1))
+                .clipShape(Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(insight.displayTint.color.opacity(0.25), lineWidth: 0.5)
+                )
+                .contentShape(Capsule())
+                .simultaneousGesture(TapGesture().onEnded { selectedRadarInsight = insight })
+            }
+        }
+    }
+
+    /// SwiftUI overlay that draws thin bordered boxes around insight-highlighted body text regions.
+    @ViewBuilder
+    private var bodyInsightBoxOverlay: some View {
+        let boxes = bodyInsightBoxes
+        if !boxes.isEmpty {
+            GeometryReader { geo in
+                let totalLines = max(1, bodyText.components(separatedBy: "\n").count)
+                let lineHeight = geo.size.height / CGFloat(totalLines)
+
+                ForEach(Array(boxes.enumerated()), id: \.offset) { _, box in
+                    let topY = CGFloat(box.firstLine) * lineHeight
+                    let height = CGFloat(box.lastLine - box.firstLine + 1) * lineHeight
+                    let tint = box.insight.displayTint.color
+
+                    VStack(spacing: 0) {
+                        // The bordered box
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(tint.opacity(0.4), lineWidth: 1)
+                            .frame(height: height)
+                            .allowsHitTesting(false)
+
+                        // Tag label attached to the bottom
+                        HStack(spacing: 3) {
+                            Image(systemName: box.insight.displayIcon)
+                                .font(.system(size: 8))
+                            Text(box.insight.displayLabel)
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .foregroundStyle(tint)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(tint.opacity(0.08))
+                        .clipShape(Capsule())
+                        .overlay(Capsule().stroke(tint.opacity(0.25), lineWidth: 0.5))
+                        .padding(.top, 2)
+                        .contentShape(Capsule())
+                        .onTapGesture { selectedRadarInsight = box.insight }
+                    }
+                    .offset(y: topY)
+                }
+            }
+        }
+    }
+
+    /// Per-insight bounding line ranges in the body text, used for drawing box overlays.
+    /// Returns the first and last line indices that each insight covers.
+    private var bodyInsightBoxes: [(insight: Insight, firstLine: Int, lastLine: Int)] {
+        guard showInsightRadar else { return [] }
+        let text = bodyText
+        guard !text.isEmpty else { return [] }
+
+        // Build a line-start offset table
+        let lines = text.components(separatedBy: "\n")
+        var lineStarts: [Int] = []
+        var offset = 0
+        for line in lines {
+            lineStarts.append(offset)
+            offset += line.count + 1 // +1 for "\n"
+        }
+
+        var result: [(Insight, Int, Int)] = []
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+
+        for insight in bodyInsights {
+            // Re-run the same pattern matching to find ranges for this insight
+            let ranges = highlightRangesForInsight(insight, in: text, nsText: nsText, fullRange: fullRange)
+            guard !ranges.isEmpty else { continue }
+
+            // Find the line indices that these ranges span
+            var minLine = lines.count
+            var maxLine = 0
+            for range in ranges {
+                let startOffset = range.location
+                let endOffset = range.location + range.length
+                for (i, lineStart) in lineStarts.enumerated() {
+                    let lineEnd = lineStart + lines[i].count
+                    if startOffset <= lineEnd && endOffset >= lineStart {
+                        minLine = min(minLine, i)
+                        maxLine = max(maxLine, i)
+                    }
+                }
+            }
+            if minLine <= maxLine {
+                result.append((insight, minLine, maxLine))
+            }
+        }
+        return result
+    }
+
+    /// Get highlight ranges for a single insight (shared logic with bodyInsightHighlightRanges).
+    private func highlightRangesForInsight(_ insight: Insight, in text: String, nsText: NSString, fullRange: NSRange) -> [NSRange] {
+        var patterns: [NSRegularExpression] = []
+
+        switch insight.insightType {
+        case .safety:
+            switch insight.sourceSectionId {
+            case "api_key":
+                patterns = [
+                    try! NSRegularExpression(pattern: #"sk-[a-zA-Z0-9]{20,}"#),
+                    try! NSRegularExpression(pattern: #"pk_[a-zA-Z0-9]{20,}"#),
+                    try! NSRegularExpression(pattern: #"AKIA[0-9A-Z]{16}"#),
+                ]
+            case "password":
+                patterns = [try! NSRegularExpression(pattern: #"(?:password|pwd|secret|token)\s*[:=]\s*\S+"#, options: [.caseInsensitive])]
+            case "personal_data":
+                patterns = [
+                    try! NSRegularExpression(pattern: #"\b\d{3}-\d{2}-\d{4}\b"#),
+                    try! NSRegularExpression(pattern: #"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b"#),
+                    try! NSRegularExpression(pattern: #"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}"#),
+                ]
+            default: break
+            }
+        case .list:
+            patterns = [
+                try! NSRegularExpression(pattern: #"(?m)^[\s]*[-•*]\s+.+"#),
+                try! NSRegularExpression(pattern: #"(?m)^[\s]*\d+[.)]\s+.+"#),
+            ]
+        default: break
+        }
+
+        var ranges: [NSRange] = []
+        for pattern in patterns {
+            ranges += pattern.matches(in: text, range: fullRange).map { $0.range }
+        }
+
+        if patterns.isEmpty {
+            let keywords = extractKeywords(from: insight)
+            for keyword in keywords {
+                let escaped = NSRegularExpression.escapedPattern(for: keyword)
+                guard let regex = try? NSRegularExpression(pattern: #"\b"# + escaped + #"\b"#, options: [.caseInsensitive]) else { continue }
+                ranges += regex.matches(in: text, range: fullRange).map { $0.range }
+            }
+        }
+        return ranges
     }
 
     @ViewBuilder
@@ -1668,7 +2144,8 @@ private struct NoteEditorContent: View {
                 Task {
                     try? await viewModel.updateBody(newValue, richText: richText)
                 }
-            }
+            },
+            insightHighlightRanges: bodyInsightHighlightRanges
         )
         .frame(minHeight: isPageEmpty ? 100 : 44)
         .padding(.horizontal, 10)
@@ -1716,7 +2193,8 @@ private struct NoteEditorContent: View {
                     viewModel.focusedSectionId = nil
                 }
             },
-            dynamicHeight: $bodyEditorHeight
+            dynamicHeight: $bodyEditorHeight,
+            insightHighlightRanges: bodyInsightHighlightRanges
         )
         .frame(height: max(isPageEmpty ? 100 : 22, bodyEditorHeight))
         .padding(.horizontal, 10)
@@ -2067,13 +2545,13 @@ private class BodyKeyboardToolbar: UIToolbar {
     }
 }
 
-/// UITextView wrapper for the note body with formatting toolbar
 struct BodyTextView: UIViewRepresentable {
     @Binding var text: String
     var isFocused: FocusState<Bool>.Binding
     var richText: String?
     let minHeight: CGFloat
     let onContentChange: (String, String?) -> Void
+    var insightHighlightRanges: [(NSRange, PlatformColor)] = []
 
     func makeUIView(context: Context) -> SelfSizingTextView {
         // Use SelfSizingTextView which has proper single-tap handling
@@ -2123,11 +2601,40 @@ struct BodyTextView: UIViewRepresentable {
             }
             HashtagHelper.applyHighlighting(to: textView)
         }
+
+        // Apply or clear insight radar highlights
+        applyInsightHighlights(to: textView)
+
         textView.invalidateIntrinsicContentSize()
 
         if isFocused.wrappedValue && !textView.isFirstResponder {
             textView.becomeFirstResponder()
         }
+    }
+
+    private func applyInsightHighlights(to textView: UITextView) {
+        guard let attributed = textView.attributedText, attributed.length > 0 else { return }
+        let fullRange = NSRange(location: 0, length: attributed.length)
+        let mutable = NSMutableAttributedString(attributedString: attributed)
+
+        // Clear previous insight highlights (tagged by our marker attribute)
+        mutable.enumerateAttribute(.insightHighlight, in: fullRange, options: []) { value, range, _ in
+            guard value != nil else { return }
+            mutable.removeAttribute(.backgroundColor, range: range)
+            mutable.removeAttribute(.insightHighlight, range: range)
+        }
+
+        // Apply subtle background tint to highlighted ranges
+        for (range, color) in insightHighlightRanges {
+            guard range.location + range.length <= mutable.length else { continue }
+            mutable.addAttribute(.backgroundColor, value: color.withAlphaComponent(0.06), range: range)
+            mutable.addAttribute(.insightHighlight, value: true, range: range)
+        }
+
+        if mutable.isEqual(to: attributed) { return }
+        let savedRange = textView.selectedRange
+        textView.attributedText = mutable
+        textView.selectedRange = savedRange
     }
 
     func makeCoordinator() -> Coordinator {
@@ -2176,6 +2683,13 @@ struct BodyTextView: UIViewRepresentable {
     }
 }
 #endif
+
+// MARK: - Insight Highlight Attribute
+
+extension NSAttributedString.Key {
+    /// Marker attribute to tag insight radar background highlights for cleanup.
+    static let insightHighlight = NSAttributedString.Key("com.obius.insightHighlight")
+}
 
 // MARK: - PageCommitItem
 
@@ -2461,6 +2975,12 @@ struct PageHistorySheet: View {
                                         } label: {
                                             Label("Hide", systemImage: "eye.slash")
                                         }
+
+                                        Button(role: .destructive) {
+                                            Task { await deleteCommit(commit) }
+                                        } label: {
+                                            Label("Delete from Device", systemImage: "trash")
+                                        }
                                     }
                             }
                         }
@@ -2485,7 +3005,9 @@ struct PageHistorySheet: View {
                 await loadCommits()
             }
             .sheet(item: $selectedCommit) { commit in
-                CommitDetailSheet(commit: commit, noteName: noteName)
+                CommitDetailSheet(commit: commit, noteName: noteName) {
+                    commits.removeAll { $0.id == commit.id }
+                }
                     .environmentObject(appState)
                     .environmentObject(AuthManager.shared)
             }
@@ -2510,6 +3032,16 @@ struct PageHistorySheet: View {
             commits.removeAll { $0.id == commit.id }
         } catch {
             print("Failed to hide commit: \(error)")
+        }
+    }
+
+    private func deleteCommit(_ commit: Commit) async {
+        do {
+            try appState.coldStore.deleteCommit(hash: commit.hash)
+            try await appState.commitRepository.deleteCommit(id: commit.id)
+            commits.removeAll { $0.id == commit.id }
+        } catch {
+            print("Failed to delete commit: \(error)")
         }
     }
 }

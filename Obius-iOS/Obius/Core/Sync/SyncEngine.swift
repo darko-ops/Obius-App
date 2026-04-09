@@ -25,6 +25,8 @@ actor SyncEngine {
     private var realtimeTask: Task<Void, Never>?
     private var debouncedSyncTask: Task<Void, Never>?
     private var lastPushTime: Date = .distantPast
+    // Periodic pull fallback (in case realtime events are missed)
+    private var periodicPullTask: Task<Void, Never>?
 
     // Published state (use MainActor for UI updates)
     @MainActor @Published private(set) var syncState: SyncState = .idle
@@ -85,7 +87,7 @@ actor SyncEngine {
             }
 
             // Nuclear reset: delete all old syncOperations and re-enqueue everything.
-            let resetKey = "hasResetSyncOps_v23"
+            let resetKey = "hasResetSyncOps_v24"
             if !UserDefaults.standard.bool(forKey: resetKey) {
                 // Delete sync operations in its own transaction
                 try? await database.write { db in
@@ -334,12 +336,44 @@ actor SyncEngine {
                     """, arguments: [UUID().uuidString, echoId, payloadString, timestamp])
                 }
 
+                // Find ALL calendar memos that don't have a pending or completed syncOperation
+                let unsyncedMemos = try Row.fetchAll(db, sql: """
+                    SELECT m.id, m.dateKey, m.content, m.createdAt, m.updatedAt
+                    FROM calendarMemos m
+                    WHERE m.syncStatus != 'synced'
+                    AND NOT EXISTS (
+                        SELECT 1 FROM syncOperations so
+                        WHERE so.entityId = m.id
+                    )
+                """)
+
+                for memo in unsyncedMemos {
+                    let memoId = memo["id"] as? String ?? ""
+                    let timestamp = memo["updatedAt"] as? Int64 ?? Int64(Date().timeIntervalSince1970 * 1000)
+
+                    let payload: [String: Any] = [
+                        "date_key": memo["dateKey"] as? String ?? "",
+                        "content": memo["content"] as? String ?? "",
+                        "created_at": formatter.string(from: Date(timeIntervalSince1970: Double(memo["createdAt"] as? Int64 ?? 0) / 1000)),
+                        "updated_at": formatter.string(from: Date(timeIntervalSince1970: Double(timestamp) / 1000)),
+                    ]
+
+                    let payloadData = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
+                    let payloadString = String(data: payloadData, encoding: .utf8) ?? "{}"
+
+                    try db.execute(sql: """
+                        INSERT OR IGNORE INTO syncOperations (operationId, entityType, entityId, operationType, payload, timestamp, synced)
+                        VALUES (?, 'calendar_memo', ?, 'create', ?, ?, 0)
+                    """, arguments: [UUID().uuidString, memoId, payloadString, timestamp])
+                }
+
                 let noteCount = unsyncedNotes.count
                 let sectionCount = unsyncedSections.count
                 let handleCount = unsyncedHandles.count
                 let echoCount = unsyncedEchoes.count
-                if noteCount > 0 || sectionCount > 0 || handleCount > 0 || echoCount > 0 {
-                    print("[Sync] Enqueued \(noteCount) notes, \(sectionCount) sections, \(handleCount) handles, and \(echoCount) echoes for initial sync")
+                let memoCount = unsyncedMemos.count
+                if noteCount > 0 || sectionCount > 0 || handleCount > 0 || echoCount > 0 || memoCount > 0 {
+                    print("[Sync] Enqueued \(noteCount) notes, \(sectionCount) sections, \(handleCount) handles, \(echoCount) echoes, and \(memoCount) calendar memos for initial sync")
                 }
             }
         } catch {
@@ -666,6 +700,7 @@ actor SyncEngine {
                         }
                     }
                     try noteToInsert.insert(db)
+                    try DatabaseManager.recomputeEngagementScore(noteId: noteToInsert.id, in: db)
                     print("[Sync] Inserted new note \(localNote.id.prefix(8)) into module \(noteToInsert.moduleId?.prefix(8) ?? "nil")")
                 }
             }
@@ -675,22 +710,44 @@ actor SyncEngine {
                 for remoteHandle in remoteHandles {
                     let localHandle = remoteHandle.toLocal()
 
-                    if let existing = try Handle.fetchOne(db, key: localHandle.id) {
-                        if existing.syncStatus == .pending {
-                            print("[Sync] Skipped handle \(localHandle.id.prefix(8)) — has pending local changes")
-                            continue
+                    do {
+                        if let existing = try Handle.fetchOne(db, key: localHandle.id) {
+                            if existing.syncStatus == .pending {
+                                print("[Sync] Skipped handle \(localHandle.id.prefix(8)) — has pending local changes")
+                                continue
+                            }
+                            if (existing.serverVersion ?? 0) < localHandle.localVersion {
+                                try localHandle.update(db)
+                            }
+                        } else {
+                            try localHandle.insert(db)
                         }
-                        if (existing.serverVersion ?? 0) < localHandle.localVersion {
-                            try localHandle.update(db)
+                    } catch {
+                        // Handle UNIQUE constraint on name: a local handle with the same name
+                        // but different ID already exists. Update the existing one's ID to match.
+                        if error.localizedDescription.contains("UNIQUE constraint failed: handles.name") {
+                            if let existingByName = try? Handle
+                                .filter(Column("name") == localHandle.name)
+                                .fetchOne(db) {
+                                // Update sections that reference the old handle ID
+                                try? db.execute(sql: """
+                                    UPDATE sections SET handleId = ? WHERE handleId = ?
+                                """, arguments: [localHandle.id, existingByName.id])
+                                // Delete the old handle and insert the server version
+                                try? Handle.deleteOne(db, key: existingByName.id)
+                                try? localHandle.insert(db)
+                                print("[Sync] Merged duplicate handle '\(localHandle.name)' (\(existingByName.id.prefix(8)) → \(localHandle.id.prefix(8)))")
+                            }
+                        } else {
+                            print("[Sync] Skipping handle \(localHandle.id.prefix(8)): \(error.localizedDescription)")
                         }
-                    } else {
-                        try localHandle.insert(db)
                     }
                 }
             }
 
             // Apply echo updates/creates (Echo cloud sync)
             if let remoteEchoes = response.echoes {
+                print("[Sync] Processing \(remoteEchoes.count) echoes from server")
                 for remoteEcho in remoteEchoes {
                     let localEcho = remoteEcho.toLocal()
 
@@ -702,14 +759,43 @@ actor SyncEngine {
                             }
                             if (existing.serverVersion ?? 0) < localEcho.localVersion {
                                 try localEcho.update(db)
-                                print("[Sync] Updated echo \(localEcho.id.prefix(8))")
+                                print("[Sync] Updated echo \(localEcho.id.prefix(8)) (v\(existing.serverVersion ?? 0) → v\(localEcho.localVersion))")
+                            } else {
+                                print("[Sync] Echo \(localEcho.id.prefix(8)) already at v\(existing.serverVersion ?? 0), skipping")
                             }
                         } else {
                             try localEcho.insert(db)
-                            print("[Sync] Inserted new echo \(localEcho.id.prefix(8))")
+                            print("[Sync] Inserted new echo \(localEcho.id.prefix(8)) handleId=\(localEcho.handleId.prefix(8)) isActive=\(localEcho.isActive)")
                         }
                     } catch {
-                        print("[Sync] Skipping echo \(localEcho.id): \(error.localizedDescription)")
+                        print("[Sync] FAILED to apply echo \(localEcho.id.prefix(8)): \(error)")
+                    }
+                }
+            } else {
+                print("[Sync] No echoes in pull response (field was nil)")
+            }
+
+            // Apply calendar memo updates/creates
+            if let remoteMemos = response.calendarMemos {
+                for remoteMemo in remoteMemos {
+                    let localMemo = remoteMemo.toLocal()
+                    do {
+                        if let existing = try CalendarMemo.fetchOne(db, key: localMemo.id) {
+                            if existing.syncStatus == .pending { continue }
+                            if (existing.serverVersion ?? 0) < localMemo.localVersion {
+                                try localMemo.update(db)
+                            }
+                        } else {
+                            // Check for existing memo with same dateKey (different ID)
+                            if let byDate = try CalendarMemo
+                                .filter(CalendarMemo.Columns.dateKey == localMemo.dateKey)
+                                .fetchOne(db), byDate.syncStatus != .pending {
+                                try byDate.delete(db)
+                            }
+                            try localMemo.insert(db)
+                        }
+                    } catch {
+                        print("[Sync] Skipping calendar memo \(localMemo.id.prefix(8)): \(error.localizedDescription)")
                     }
                 }
             }
@@ -744,7 +830,8 @@ actor SyncEngine {
             let pulledSectionIds = response.sections.map { $0.id.uppercased() }
             let pulledHandleIds = (response.handles ?? []).map { $0.id.uppercased() }
             let pulledEchoIds = (response.echoes ?? []).map { $0.id.uppercased() }
-            let allPulledIds = pulledNoteIds + pulledSectionIds + pulledHandleIds + pulledEchoIds
+            let pulledCalendarMemoIds = (response.calendarMemos ?? []).map { $0.id.uppercased() }
+            let allPulledIds = pulledNoteIds + pulledSectionIds + pulledHandleIds + pulledEchoIds + pulledCalendarMemoIds
             if !allPulledIds.isEmpty {
                 // Collect IDs of entities that still have pending local changes — don't purge their ops
                 var pendingIds = Set<String>()
@@ -762,6 +849,10 @@ actor SyncEngine {
                 }
                 for id in pulledEchoIds {
                     if let status = try String.fetchOne(db, sql: "SELECT syncStatus FROM echoes WHERE id = ?", arguments: [id]),
+                       status == "pending" { pendingIds.insert(id) }
+                }
+                for id in pulledCalendarMemoIds {
+                    if let status = try String.fetchOne(db, sql: "SELECT syncStatus FROM calendarMemos WHERE id = ?", arguments: [id]),
                        status == "pending" { pendingIds.insert(id) }
                 }
                 let safeToPurge = allPulledIds.filter { !pendingIds.contains($0) }
@@ -820,8 +911,14 @@ actor SyncEngine {
             if let deletedEchoIds = response.deletedEchoIds {
                 for echoId in deletedEchoIds {
                     let normalizedId = echoId.uppercased()
-                    // Hard delete echoes (they don't have soft-delete semantics locally)
                     try db.execute(sql: "DELETE FROM echoes WHERE id = ?", arguments: [normalizedId])
+                }
+            }
+
+            if let deletedMemoIds = response.deletedCalendarMemoIds {
+                for memoId in deletedMemoIds {
+                    let normalizedId = memoId.uppercased()
+                    try db.execute(sql: "DELETE FROM calendarMemos WHERE id = ?", arguments: [normalizedId])
                 }
             }
 
@@ -847,7 +944,7 @@ actor SyncEngine {
             try SyncOperationRecord.fetchAll(db, sql: """
                 SELECT * FROM syncOperations
                 WHERE synced = 0
-                ORDER BY CASE entityType WHEN 'note' THEN 0 WHEN 'handle' THEN 1 WHEN 'echo' THEN 2 ELSE 3 END, timestamp
+                ORDER BY CASE entityType WHEN 'note' THEN 0 WHEN 'handle' THEN 1 WHEN 'echo' THEN 2 WHEN 'calendar_memo' THEN 3 ELSE 4 END, timestamp
                 LIMIT 10
             """)
         }
@@ -862,7 +959,15 @@ actor SyncEngine {
         let entityVersions = try await database.read { db -> [String: Int] in
             var versions: [String: Int] = [:]
             for op in operations {
-                let table = op.entityType == "note" ? "notes" : (op.entityType == "handle" ? "handles" : (op.entityType == "echo" ? "echoes" : "sections"))
+                let table: String = {
+                    switch op.entityType {
+                    case "note": return "notes"
+                    case "handle": return "handles"
+                    case "echo": return "echoes"
+                    case "calendar_memo": return "calendarMemos"
+                    default: return "sections"
+                    }
+                }()
                 if let version = try Int.fetchOne(db, sql: "SELECT COALESCE(serverVersion, 1) FROM \(table) WHERE id = ?", arguments: [op.entityId]) {
                     versions[op.entityId] = version
                 }
@@ -904,7 +1009,8 @@ actor SyncEngine {
             return
         }
         let response: SyncPushResponse = try await supabase.invokeFunction("sync-push", body: request)
-        print("[Sync] Push result: \(response.accepted.count) accepted, \(response.conflicts.count) conflicts")
+        let acceptedTypes = Dictionary(grouping: response.accepted, by: { $0.entityType }).mapValues(\.count)
+        print("[Sync] Push result: \(response.accepted.count) accepted \(acceptedTypes), \(response.conflicts.count) conflicts")
         if !response.accepted.isEmpty {
             lastPushTime = Date()
         }
@@ -924,6 +1030,7 @@ actor SyncEngine {
                 case "section": table = "sections"
                 case "handle": table = "handles"
                 case "echo": table = "echoes"
+                case "calendar_memo": table = "calendarMemos"
                 default: table = "sections"
                 }
                 try db.execute(sql: """
@@ -1112,6 +1219,9 @@ actor SyncEngine {
         let echoChanges = channel.postgresChange(
             AnyAction.self, schema: "public", table: "echoes"
         )
+        let calendarMemoChanges = channel.postgresChange(
+            AnyAction.self, schema: "public", table: "calendar_memos"
+        )
 
         realtimeTask = Task {
             async let noteLoop: Void = {
@@ -1134,12 +1244,31 @@ actor SyncEngine {
                     await self.scheduleRealtimeSync()
                 }
             }()
-            _ = await (noteLoop, sectionLoop, handleLoop, echoLoop)
+            async let calendarMemoLoop: Void = {
+                for await _ in calendarMemoChanges {
+                    await self.scheduleRealtimeSync()
+                }
+            }()
+            _ = await (noteLoop, sectionLoop, handleLoop, echoLoop, calendarMemoLoop)
         }
 
         await channel.subscribe()
         self.realtimeChannel = channel
         print("[Sync] Realtime subscribed")
+
+        // Start periodic pull as fallback for missed realtime events
+        startPeriodicPull()
+    }
+
+    private func startPeriodicPull() {
+        periodicPullTask?.cancel()
+        periodicPullTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 30_000_000_000) // 30 seconds
+                guard !Task.isCancelled, !isSyncing else { continue }
+                await sync()
+            }
+        }
     }
 
     /// Unsubscribe from Realtime when app enters background
@@ -1148,6 +1277,8 @@ actor SyncEngine {
         debouncedSyncTask = nil
         realtimeTask?.cancel()
         realtimeTask = nil
+        periodicPullTask?.cancel()
+        periodicPullTask = nil
         if let channel = realtimeChannel {
             await supabase.client.realtimeV2.removeChannel(channel)
             self.realtimeChannel = nil
