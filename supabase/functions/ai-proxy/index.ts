@@ -322,7 +322,7 @@ async function handleSendWithTools(body: ActionRequest, userId: string, supabase
     }
   );
 
-  logUsage({ supabase, userId, action: 'chat', inputTokens: raw.usage.input_tokens, outputTokens: raw.usage.output_tokens, model: raw.model }).catch(() => {});
+  logUsage({ supabase, userId, action: 'chat', inputTokens: raw.usage.input_tokens, outputTokens: raw.usage.output_tokens, model: raw.model, cacheCreationInputTokens: raw.usage.cache_creation_input_tokens, cacheReadInputTokens: raw.usage.cache_read_input_tokens }).catch(() => {});
 
   return jsonResponse({ content: raw.content });
 }
@@ -352,7 +352,7 @@ async function handleSendChat(body: ActionRequest, userId: string, supabase: Sup
     .map((b) => b.text || '')
     .join('');
 
-  logUsage({ supabase, userId, action: 'chat_convo', inputTokens: raw.usage.input_tokens, outputTokens: raw.usage.output_tokens, model: raw.model }).catch(() => {});
+  logUsage({ supabase, userId, action: 'chat_convo', inputTokens: raw.usage.input_tokens, outputTokens: raw.usage.output_tokens, model: raw.model, cacheCreationInputTokens: raw.usage.cache_creation_input_tokens, cacheReadInputTokens: raw.usage.cache_read_input_tokens }).catch(() => {});
 
   return jsonResponse({ text });
 }

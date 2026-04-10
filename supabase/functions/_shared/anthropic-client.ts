@@ -10,23 +10,24 @@ export interface ClaudeMessage {
   content: string;
 }
 
+export interface ClaudeUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+}
+
 export interface ClaudeResponse {
   content: string;
   model: string;
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-  };
+  usage: ClaudeUsage;
   stop_reason: string;
 }
 
 export interface ClaudeRawResponse {
   content: unknown[];
   model: string;
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-  };
+  usage: ClaudeUsage;
   stop_reason: string;
 }
 
@@ -220,6 +221,8 @@ export async function logUsage(params: {
   inputTokens: number;
   outputTokens: number;
   model: string;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
 }): Promise<void> {
   try {
     const { error } = await params.supabase.from('usage_log').insert({
@@ -228,6 +231,8 @@ export async function logUsage(params: {
       input_tokens: params.inputTokens,
       output_tokens: params.outputTokens,
       model: params.model,
+      cache_creation_input_tokens: params.cacheCreationInputTokens ?? 0,
+      cache_read_input_tokens: params.cacheReadInputTokens ?? 0,
     });
     if (error) {
       console.error('logUsage insert error:', error.message);
