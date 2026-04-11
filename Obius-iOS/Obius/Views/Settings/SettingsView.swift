@@ -9,6 +9,7 @@ struct SettingsView: View {
     @State private var showingSignOut = false
     @State private var showingAuth = false
     @State private var showingEditProfile = false
+    @State private var showingChangePassword = false
     @State private var settingsPath: [SettingsDestination] = []
 
     enum SettingsDestination: Hashable {
@@ -44,6 +45,12 @@ struct SettingsView: View {
                         showingEditProfile = true
                     } label: {
                         Label("Edit Profile", systemImage: "pencil")
+                    }
+
+                    Button {
+                        showingChangePassword = true
+                    } label: {
+                        Label("Change Password", systemImage: "lock.rotation")
                     }
 
                     Button(role: .destructive) {
@@ -112,11 +119,11 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Link(destination: URL(string: "https://obius.io/privacy")!) {
+                Link(destination: URL(string: "https://docs.google.com/document/d/e/2PACX-1vRbJ9cYTWnyQSYeL8JrTOizC0eC-f8rhoicqh3GttTDIrbNlesR-_auwkFz2OLsTTzguDG3YLtzwnEY/pub")!) {
                     Label("Privacy Policy", systemImage: "doc.text")
                 }
 
-                Link(destination: URL(string: "https://obius.io/terms")!) {
+                Link(destination: URL(string: "https://docs.google.com/document/d/e/2PACX-1vRq_bt_Z_V7ci7lS3hHLzq4QjRrDFJsJu6Ab-oedeeSakGPGcx_dJlG3EDAzdetptd21GPyEtzTxKbg/pub")!) {
                     Label("Terms of Service", systemImage: "doc.text")
                 }
             }
@@ -160,6 +167,123 @@ struct SettingsView: View {
         .sheet(isPresented: $showingEditProfile) {
             EditProfileView()
                 .environmentObject(authManager)
+        }
+        .sheet(isPresented: $showingChangePassword) {
+            ChangePasswordView()
+                .environmentObject(authManager)
+        }
+    }
+}
+
+// MARK: - Change Password View
+
+struct ChangePasswordView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var authManager: AuthManager
+
+    @State private var currentPassword = ""
+    @State private var newPassword = ""
+    @State private var confirmPassword = ""
+    @State private var errorMessage: String?
+    @State private var isLoading = false
+    @State private var didSucceed = false
+
+    private var isValid: Bool {
+        !currentPassword.isEmpty && newPassword.count >= 6 && newPassword == confirmPassword
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                SwiftUI.Section {
+                    SecureField("Current Password", text: $currentPassword)
+                        .textContentType(.password)
+                } header: {
+                    Text("Verify Identity")
+                }
+
+                SwiftUI.Section {
+                    SecureField("New Password", text: $newPassword)
+                        .textContentType(.newPassword)
+                    SecureField("Confirm New Password", text: $confirmPassword)
+                        .textContentType(.newPassword)
+                } header: {
+                    Text("New Password")
+                } footer: {
+                    if newPassword.count > 0 && newPassword.count < 6 {
+                        Text("Password must be at least 6 characters.")
+                            .foregroundStyle(.red)
+                    } else if !confirmPassword.isEmpty && newPassword != confirmPassword {
+                        Text("Passwords do not match.")
+                            .foregroundStyle(.red)
+                    }
+                }
+
+                if let error = errorMessage {
+                    SwiftUI.Section {
+                        Text(error)
+                            .foregroundStyle(.red)
+                            .font(.caption)
+                    }
+                }
+
+                if didSucceed {
+                    SwiftUI.Section {
+                        Label("Password changed successfully.", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle("Change Password")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if didSucceed {
+                        Button("Done") { dismiss() }
+                    } else {
+                        Button("Save") {
+                            changePassword()
+                        }
+                        .disabled(!isValid || isLoading)
+                    }
+                }
+            }
+            .disabled(isLoading)
+            .overlay {
+                if isLoading {
+                    ProgressView()
+                }
+            }
+        }
+    }
+
+    private func changePassword() {
+        errorMessage = nil
+        isLoading = true
+
+        Task {
+            do {
+                try await authManager.changePassword(
+                    currentPassword: currentPassword,
+                    newPassword: newPassword
+                )
+                await MainActor.run {
+                    isLoading = false
+                    didSucceed = true
+                }
+            } catch {
+                await MainActor.run {
+                    isLoading = false
+                    if error.localizedDescription.contains("Invalid login") {
+                        errorMessage = "Current password is incorrect."
+                    } else {
+                        errorMessage = error.localizedDescription
+                    }
+                }
+            }
         }
     }
 }

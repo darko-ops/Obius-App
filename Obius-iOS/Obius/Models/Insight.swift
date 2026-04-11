@@ -14,6 +14,7 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable, Ident
     case weeklyReport   // Activity digest (Phase 2: AI)
     case progress       // Project health score (Phase 2: AI)
     case upcomingEcho   // Dashboard element — fires within 24h
+    case schedule       // Date/time found in page — offer to create echo
 
     var icon: String {
         switch self {
@@ -25,6 +26,7 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable, Ident
         case .weeklyReport: return "chart.bar.doc.horizontal"
         case .progress:     return "gauge.with.dots.needle.33percent"
         case .upcomingEcho: return "bell.badge"
+        case .schedule:     return "calendar.badge.clock"
         }
     }
 
@@ -38,6 +40,7 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable, Ident
         case .weeklyReport: return "Weekly"
         case .progress:     return "Progress"
         case .upcomingEcho: return "Echo"
+        case .schedule:     return "Schedule"
         }
     }
 
@@ -51,6 +54,7 @@ enum InsightType: String, Codable, DatabaseValueConvertible, CaseIterable, Ident
         case .weeklyReport: return .purple
         case .progress:     return .green
         case .upcomingEcho: return .orange
+        case .schedule:     return .orange
         }
     }
 }
@@ -141,6 +145,9 @@ extension Insight {
         case .link:
             // Link insights dedup by the pair of notes (relatedNoteId holds the second note)
             return "\(insightType.rawValue)|\(sourceNoteId ?? "")|\(relatedNoteId ?? "")"
+        case .schedule:
+            // Schedule insights dedup by note + detected timestamp (stored in relatedNoteId)
+            return "\(insightType.rawValue)|\(sourceNoteId ?? "")|\(relatedNoteId ?? "")"
         default:
             return "\(insightType.rawValue)|\(sourceNoteId ?? "")|\(sourceSectionId ?? "")"
         }
@@ -178,6 +185,8 @@ extension Insight {
             case "personal_data": return "person.badge.shield.checkmark"
             default:              return insightType.icon
             }
+        case .schedule:
+            return "calendar.badge.clock"
         default:
             return insightType.icon
         }
@@ -211,6 +220,8 @@ extension Insight {
             case "personal_data": return "Personal Data"
             default:              return insightType.label
             }
+        case .schedule:
+            return "Schedule"
         default:
             return insightType.label
         }
@@ -252,6 +263,8 @@ extension Insight {
             return 3 // P3 — informational
         case .link:
             return 3 // P3 — informational
+        case .schedule:
+            return 2 // P2 — actionable, time-sensitive
         case .cleanup:
             switch subtype {
             case "nonsense": return 4 // P4 — housekeeping

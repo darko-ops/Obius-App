@@ -61,6 +61,8 @@ private struct NoteEditorContent: View {
     @StateObject private var biometricManager = BiometricManager.shared
     @StateObject private var handleManager = HandleManager.shared
     @StateObject private var möbiusNavigation = MöbiusNavigationState()
+    @Environment(\.undoManager) private var undoManager
+    @Environment(\.dismiss) private var dismiss
     @State private var editingTitle = false
     @State private var titleText = ""
     @State private var bodyText = ""
@@ -100,10 +102,12 @@ private struct NoteEditorContent: View {
     @State private var radarInsights: [Insight] = []
     @State private var selectedRadarInsight: Insight?
     @State private var showWorkspaceSheet = false
+    @State private var showingAIWorkspace = false
+    @State private var aiEditSectionId: String?
+    @State private var showingDeleteConfirmation = false
     #if os(macOS)
     @State private var showWorkspacePanel = false
     @State private var bodyEditorHeight: CGFloat = 22
-    @State private var showingDeleteConfirmation = false
     @AppStorage("macSelectedNoteId") private var macSelectedNoteId: String?
     @AppStorage("macIsInEditor") private var macIsInEditor = false
     #endif
@@ -421,9 +425,17 @@ private struct NoteEditorContent: View {
             .overlay {
                 WorkspaceFAB { showWorkspaceSheet = true }
             }
-            .sheet(isPresented: $showWorkspaceSheet) {
+            .sheet(isPresented: $showWorkspaceSheet, onDismiss: resyncFromViewModel) {
                 WorkspaceSheet(handles: handleManager.handles, preselectedPageId: noteId)
                     .environmentObject(appState)
+            }
+            .sheet(isPresented: $showingAIWorkspace, onDismiss: resyncFromViewModel) {
+                WorkspaceSheet(
+                    handles: handleManager.handles,
+                    preselectedPageId: noteId,
+                    preselectedSectionId: aiEditSectionId
+                )
+                .environmentObject(appState)
             }
             #else
             .overlay(alignment: .bottomTrailing) {
@@ -604,7 +616,7 @@ private struct NoteEditorContent: View {
     @ViewBuilder
     private func sectionListView(nonEmptySections: [Section], visibleSections: [Section]) -> some View {
         DraggableSectionList(
-            sections: .constant(nonEmptySections),
+            sections: Binding(get: { nonEmptySections }, set: { _ in }),
             focusedSectionId: viewModel.focusedSectionId,
             isAuthenticated: { biometricManager.isAuthenticated(sectionId: $0) },
             hasChildren: { viewModel.hasChildren($0) },
@@ -727,6 +739,10 @@ private struct NoteEditorContent: View {
                 } else if let lastSection = viewModel.sections.last {
                     viewModel.focusedSectionId = lastSection.id
                 }
+            },
+            onEditWithAI: { sectionId in
+                aiEditSectionId = sectionId
+                showingAIWorkspace = true
             },
             insightHighlights: insightHighlightMap,
             sectionInsights: sectionInsightMap,
@@ -905,6 +921,18 @@ private struct NoteEditorContent: View {
                 .frame(width: 160)
             }
 
+            macBarDivider
+
+            macBarButton(icon: "arrow.uturn.backward", active: false, disabled: undoManager?.canUndo != true) {
+                undoManager?.undo()
+            }
+            .keyboardShortcut("z", modifiers: .command)
+
+            macBarButton(icon: "arrow.uturn.forward", active: false, disabled: undoManager?.canRedo != true) {
+                undoManager?.redo()
+            }
+            .keyboardShortcut("z", modifiers: [.command, .shift])
+
             Spacer()
         }
         .padding(.vertical, 4)
@@ -978,8 +1006,6 @@ private struct NoteEditorContent: View {
         }
         #endif
 
-        insightRadarButton
-
         mainMenu
     }
 
@@ -995,7 +1021,7 @@ private struct NoteEditorContent: View {
                 Task { await loadRadarInsights() }
             }
         } label: {
-            Image(systemName: "dot.radiowaves.left.and.right")
+            Image(systemName: "magnifyingglass")
                 .foregroundStyle(showInsightRadar ? .white : .secondary)
         }
         .overlay(alignment: .topTrailing) {
@@ -1457,9 +1483,29 @@ private struct NoteEditorContent: View {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
 
+            Divider()
+
+            Button(role: .destructive) {
+                showingDeleteConfirmation = true
+            } label: {
+                Label("Delete Page", systemImage: "trash")
+            }
+
         } label: {
             Image(systemName: "ellipsis.circle")
         }
+        #if os(iOS)
+        .confirmationDialog("Delete this page?", isPresented: $showingDeleteConfirmation, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                Task {
+                    try? await appState.noteRepository.deleteNote(noteId)
+                    appState.syncLogger.logNoteDelete(noteId)
+                    await MainActor.run { dismiss() }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        #endif
     }
 
     @State private var showingIntentPopover = false
@@ -1545,6 +1591,22 @@ private struct NoteEditorContent: View {
         Spacer()
 
         Button {
+            undoManager?.undo()
+        } label: {
+            Image(systemName: "arrow.uturn.backward")
+                .foregroundStyle(undoManager?.canUndo == true ? .primary : .tertiary)
+        }
+        .disabled(undoManager?.canUndo != true)
+
+        Button {
+            undoManager?.redo()
+        } label: {
+            Image(systemName: "arrow.uturn.forward")
+                .foregroundStyle(undoManager?.canRedo == true ? .primary : .tertiary)
+        }
+        .disabled(undoManager?.canRedo != true)
+
+        Button {
             dismissKeyboard()
         } label: {
             Image(systemName: "keyboard.chevron.compact.down")
@@ -1564,6 +1626,35 @@ private struct NoteEditorContent: View {
     }
     
     // MARK: - Helper Methods
+
+    /// Force re-sync local @State from the ViewModel after the workspace sheet dismisses.
+    /// The ViewModel's GRDB observation may have already received DB updates while the
+    /// sheet was presented, but the editor's @State text fields could be stale.
+    private func resyncFromViewModel() {
+        #if os(macOS)
+        // Resign first responder so the text view takes the clean (non-focused)
+        // update path in updateNSView — avoids cursor/scroll issues.
+        if let window = NSApp.keyWindow {
+            window.makeFirstResponder(nil)
+        }
+        #endif
+        // Defer state mutations to the next run-loop tick so the sheet
+        // dismissal animation completes first, avoiding a layout conflict
+        // that can freeze the scroll view.
+        DispatchQueue.main.async {
+            if let body = viewModel.note?.body, body != bodyText {
+                isExternalBodyUpdate = true
+                bodyText = body
+                // Delay reset to absorb the full cascade of onContentChange events
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    isExternalBodyUpdate = false
+                }
+            }
+            if let title = viewModel.note?.title, title != titleText {
+                titleText = title
+            }
+        }
+    }
 
     private func getCurrentSectionIntent() -> IntentType {
         guard let id = focusedSectionId,
@@ -2137,8 +2228,12 @@ private struct NoteEditorContent: View {
             richText: viewModel.note?.bodyRichText,
             minHeight: isPageEmpty ? 100 : 44,
             onContentChange: { newValue, richText in
+                // Don't write to DB while workspace is open or during external updates
+                guard !showWorkspaceSheet && !showingAIWorkspace else { return }
                 guard !isExternalBodyUpdate else {
-                    isExternalBodyUpdate = false
+                    // Keep the guard up — reset after a delay to absorb all writeback events
+                    // from the programmatic text update cascade (multiple onContentChange calls
+                    // fire when rich text is loaded externally).
                     return
                 }
                 Task {
@@ -2148,6 +2243,7 @@ private struct NoteEditorContent: View {
             insightHighlightRanges: bodyInsightHighlightRanges
         )
         .frame(minHeight: isPageEmpty ? 100 : 44)
+        .animation(nil, value: bodyText) // Prevent ambient animations from animating height changes
         .padding(.horizontal, 10)
         .overlay(alignment: .topLeading) {
             if isPageEmpty && !bodyFocused {
@@ -2163,11 +2259,18 @@ private struct NoteEditorContent: View {
             bodyText = viewModel.note?.body ?? ""
         }
         .onReceive(viewModel.$note) { note in
+            // Skip live updates while workspace is open — resyncFromViewModel handles dismiss
+            guard !showWorkspaceSheet && !showingAIWorkspace else { return }
             if let body = note?.body, body != bodyText {
                 print("[DEBUG] .onReceive(note) body changed: \(body.prefix(50))")
                 DispatchQueue.main.async {
                     isExternalBodyUpdate = true
                     bodyText = body
+                }
+                // Delay reset to absorb the full cascade of onContentChange events
+                // that fire when the BodyTextView reloads rich text programmatically.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    isExternalBodyUpdate = false
                 }
             }
         }
@@ -2177,9 +2280,10 @@ private struct NoteEditorContent: View {
             isFocused: $bodyFocused,
             richText: viewModel.note?.bodyRichText,
             onContentChange: { newValue, richText in
+                // Don't write to DB while workspace is open or during external updates
+                guard !showWorkspaceSheet && !showingAIWorkspace else { return }
                 guard !isExternalBodyUpdate else {
                     print("[DEBUG] onContentChange SKIPPED (external update)")
-                    isExternalBodyUpdate = false
                     return
                 }
                 print("[DEBUG] onContentChange → updateBody: \(newValue.prefix(50))")
@@ -2219,11 +2323,17 @@ private struct NoteEditorContent: View {
             }
         }
         .onChange(of: viewModel.note?.body) { _, newBody in
+            // Skip live updates while workspace is open — resyncFromViewModel handles dismiss
+            guard !showWorkspaceSheet && !showingAIWorkspace else { return }
             if let newBody = newBody, newBody != bodyText {
                 print("[DEBUG] .onChange(note.body) → bodyText: \(newBody.prefix(50))")
                 isExternalBodyUpdate = true
                 DispatchQueue.main.async {
                     bodyText = newBody
+                }
+                // Delay reset to absorb the full cascade of onContentChange events
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    isExternalBodyUpdate = false
                 }
             }
         }
@@ -2255,7 +2365,7 @@ private class BodyKeyboardToolbar: UIToolbar {
     }
 
     private var titleFontSize: CGFloat {
-        UIFont.preferredFont(forTextStyle: .body).pointSize * 2
+        UIFont.preferredFont(forTextStyle: .body).pointSize * 1.65
     }
 
     override init(frame: CGRect) {
@@ -2585,27 +2695,45 @@ struct BodyTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: SelfSizingTextView, context: Context) {
-        if textView.text != text {
-            // Update text even when focused — needed for sync updates from other devices.
-            // Preserve cursor position as best we can.
+        let textChanged = textView.text != text
+        let richTextChanged = richText != context.coordinator.lastAppliedRichText
+
+        // When the user is actively typing, skip redundant updates that are just
+        // the DB round-trip echo (onContentChange → DB → ViewModel → binding).
+        // textViewDidChange already handled the text, layout, and invalidation.
+        // Only apply external updates (rich text changes from AI/sync).
+        if textView.isFirstResponder && textChanged && !richTextChanged {
+            // Text diverged due to the binding round-trip — sync the coordinator
+            // state without touching the text view or triggering a layout pass.
+            context.coordinator.lastAppliedRichText = richText
+            applyInsightHighlights(to: textView)
+            return
+        }
+
+        if textChanged || richTextChanged {
+            // External update (sync, AI edit, rich text change) — apply it.
+            // Suppress delegate to prevent textViewDidChange from firing during
+            // programmatic updates, which would trigger a DB write-back loop.
             let selectedRange = textView.selectedRange
+            textView.delegate = nil
             if let richText = richText,
                let attrText = RichTextHelper.deserialize(richText) {
                 textView.attributedText = attrText
             } else {
                 textView.text = text
             }
+            textView.delegate = context.coordinator
+            context.coordinator.lastAppliedRichText = richText
             // Restore cursor if still valid
             if selectedRange.location + selectedRange.length <= (textView.text?.count ?? 0) {
                 textView.selectedRange = selectedRange
             }
             HashtagHelper.applyHighlighting(to: textView)
+            textView.invalidateIntrinsicContentSize()
         }
 
         // Apply or clear insight radar highlights
         applyInsightHighlights(to: textView)
-
-        textView.invalidateIntrinsicContentSize()
 
         if isFocused.wrappedValue && !textView.isFirstResponder {
             textView.becomeFirstResponder()
@@ -2643,9 +2771,11 @@ struct BodyTextView: UIViewRepresentable {
 
     class Coordinator: NSObject, UITextViewDelegate {
         var parent: BodyTextView
+        var lastAppliedRichText: String?
 
         init(_ parent: BodyTextView) {
             self.parent = parent
+            self.lastAppliedRichText = parent.richText
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
@@ -2672,13 +2802,47 @@ struct BodyTextView: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             HashtagHelper.applyHighlighting(to: textView)
-            let newText = textView.text ?? ""
-            let richText = RichTextHelper.serialize(textView.attributedText)
-            if parent.text != newText {
-                parent.text = newText
-            }
-            parent.onContentChange(newText, richText)
             textView.invalidateIntrinsicContentSize()
+
+            let newText = textView.text ?? ""
+            // Update the binding inside a non-animated transaction so that
+            // ambient withAnimation contexts (e.g. scrollTo calls) can't
+            // animate the height change — which causes a flicker on the last line.
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                if parent.text != newText {
+                    parent.text = newText
+                }
+            }
+            // Skip expensive RTF serialization during active typing — pass nil
+            // so only the plain text is persisted. Rich text is saved on focus
+            // loss (textViewDidEndEditing) which already does full serialization.
+            parent.onContentChange(newText, nil)
+
+            // Scroll the caret into view after the text grows — SwiftUI's
+            // ScrollView doesn't auto-track the cursor when a child view's
+            // intrinsic size changes, so the last visible line flickers without this.
+            Self.scrollCaretToVisible(in: textView)
+        }
+
+        /// Finds the parent UIScrollView and scrolls the caret rect into view.
+        private static func scrollCaretToVisible(in textView: UITextView) {
+            guard let selectedRange = textView.selectedTextRange else { return }
+            let caretRect = textView.caretRect(for: selectedRange.end)
+            guard !caretRect.isNull && !caretRect.isInfinite else { return }
+            // Walk up to find the SwiftUI ScrollView's underlying UIScrollView
+            var view: UIView? = textView.superview
+            while let v = view {
+                if let scrollView = v as? UIScrollView {
+                    let rectInScroll = textView.convert(caretRect, to: scrollView)
+                    // Pad so the caret isn't jammed at the very edge
+                    let visible = rectInScroll.insetBy(dx: 0, dy: -20)
+                    scrollView.scrollRectToVisible(visible, animated: false)
+                    return
+                }
+                view = v.superview
+            }
         }
     }
 }

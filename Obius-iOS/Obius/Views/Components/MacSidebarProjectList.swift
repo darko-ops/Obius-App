@@ -169,8 +169,7 @@ struct MacSidebarProjectList: View {
         .navigationSplitViewColumnWidth(min: 180, ideal: 200)
         .alert("New Project", isPresented: $showingAddModule) {
             TextField("Project name", text: $newModuleName)
-            Button("Local") { createModule(storageType: .local) }
-            Button("Cloud") { createModule(storageType: .cloud) }
+            Button("Create") { createModule(storageType: .cloud) }
             Button("Cancel", role: .cancel) { newModuleName = "" }
         } message: {
             Text("Enter a name for the new project")
@@ -202,11 +201,12 @@ struct MacSidebarProjectList: View {
                         selectedModuleId = moduleRepository.getLocalModule()?.id
                     }
                     Task {
-                        let movedNoteIds = (try? await moduleRepository.deleteModule(id: module.id)) ?? []
-                        for noteId in movedNoteIds {
-                            if let note = try? await appState.noteRepository.getNote(id: noteId) {
-                                await appState.syncLogger.logNoteUpdateSync(note)
-                            }
+                        let deleted = (try? await moduleRepository.deleteModule(id: module.id)) ?? ([], [])
+                        for noteId in deleted.0 {
+                            appState.syncLogger.logNoteDelete(noteId)
+                        }
+                        for sectionId in deleted.1 {
+                            appState.syncLogger.logSectionDelete(sectionId)
                         }
                         try? await Task.sleep(for: .milliseconds(200))
                         await appState.triggerSync()
@@ -216,7 +216,7 @@ struct MacSidebarProjectList: View {
             }
             Button("Cancel", role: .cancel) { moduleToDelete = nil }
         } message: {
-            Text("Notes in this project will be moved to Local.")
+            Text("This will permanently delete all notes and blocks in this project.")
         }
         .onAppear {
             DispatchQueue.main.async {
@@ -292,11 +292,6 @@ struct MacSidebarProjectList: View {
                     .foregroundStyle(isSelected ? .white : Color(white: 0.7))
                     .lineLimit(1)
 
-                if module.storageType == .cloud {
-                    Image(systemName: "cloud")
-                        .font(.system(size: 8))
-                        .foregroundStyle(.blue.opacity(0.7))
-                }
 
                 Spacer()
 

@@ -68,6 +68,9 @@
 		B8A1D0010000000000000056 /* Echo.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000056 /* Echo.swift */; };
 		B8A1D0010000000000000400 /* CalendarMemo.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000400 /* CalendarMemo.swift */; };
 		B8A1D0010000000000000401 /* CalendarMemoRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000401 /* CalendarMemoRepository.swift */; };
+		B8A1D0010000000000000500 /* NoteIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000500 /* NoteIndex.swift */; };
+		B8A1D0010000000000000501 /* NoteIndexRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000501 /* NoteIndexRepository.swift */; };
+		B8A1D0010000000000000502 /* ContextAssembler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000502 /* ContextAssembler.swift */; };
 		B8A1D0010000000000000057 /* EchoRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000057 /* EchoRepository.swift */; };
 		B8A1D0010000000000000058 /* EchoManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000058 /* EchoManager.swift */; };
 		B8A1D0010000000000000059 /* EchoConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000059 /* EchoConfigSheet.swift */; };
@@ -213,6 +216,9 @@
 		B8A1F0010000000000000056 /* Echo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Echo.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000400 /* CalendarMemo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarMemo.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000401 /* CalendarMemoRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarMemoRepository.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000500 /* NoteIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteIndex.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000501 /* NoteIndexRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteIndexRepository.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000502 /* ContextAssembler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextAssembler.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000057 /* EchoRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoRepository.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000058 /* EchoManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoManager.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000059 /* EchoConfigSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoConfigSheet.swift; sourceTree = "<group>"; };
@@ -352,6 +358,7 @@
 				B8A1G0010000000000000009 /* Sync */,
 				B8A1G0010000000000000010 /* Utilities */,
 				B8A1F0090000000000000003 /* InsightEngine.swift */,
+				B8A1F0010000000000000502 /* ContextAssembler.swift */,
 				B8A1F0200000000000000090 /* TierManager.swift */,
 				B8A1F0200000000000000091 /* StoreManager.swift */,
 				B8A1F0200000000000000094 /* SubscriptionAnalytics.swift */,
@@ -444,6 +451,7 @@
 				B8A1F0090000000000000001 /* Insight.swift */,
 				B8A1F0090000000000000030 /* SuggestedAction.swift */,
 				B8A1F0090000000000000032 /* ExtractedEntity.swift */,
+				B8A1F0010000000000000500 /* NoteIndex.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -462,6 +470,7 @@
 				B8A1F0020000000000000004 /* CommentRepository.swift */,
 				B8A1F0020000000000000003 /* ShareLinkRepository.swift */,
 				B8A1F0090000000000000002 /* InsightRepository.swift */,
+				B8A1F0010000000000000501 /* NoteIndexRepository.swift */,
 			);
 			path = Repositories;
 			sourceTree = "<group>";
@@ -837,6 +846,9 @@
 				B8A1D0090000000000000001 /* Insight.swift in Sources */,
 				B8A1D0090000000000000002 /* InsightRepository.swift in Sources */,
 				B8A1D0090000000000000003 /* InsightEngine.swift in Sources */,
+				B8A1D0010000000000000500 /* NoteIndex.swift in Sources */,
+				B8A1D0010000000000000501 /* NoteIndexRepository.swift in Sources */,
+				B8A1D0010000000000000502 /* ContextAssembler.swift in Sources */,
 				B8A1D0090000000000000004 /* InsightCardView.swift in Sources */,
 				B8A1D0090000000000000030 /* SuggestedAction.swift in Sources */,
 				B8A1D0090000000000000031 /* ActionCardView.swift in Sources */,

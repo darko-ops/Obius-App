@@ -151,6 +151,8 @@ class AppState: ObservableObject {
     let autoCommitManager: AutoCommitManager
     let insightRepository: InsightRepository
     let calendarMemoRepository: CalendarMemoRepository
+    let noteIndexRepository: NoteIndexRepository
+    let contextAssembler: ContextAssembler
 
     @Published var isInitialized = false
     /// Set to true if the database had to be recreated from scratch due to corruption.
@@ -177,6 +179,7 @@ class AppState: ObservableObject {
             self.syncLogger = SyncOperationLogger(database: database)
             self.handleRepository.syncLogger = syncLogger  // Wire up handle cloud sync
             self.echoRepository.syncLogger = syncLogger  // Wire up echo cloud sync
+            self.moduleRepository.syncLogger = syncLogger  // Wire up module rename sync
 
             // Initialize Split-Storage Engine
             self.coldStore = ColdStore.shared
@@ -198,6 +201,17 @@ class AppState: ObservableObject {
             self.insightRepository = InsightRepository(database: database)
             self.calendarMemoRepository = CalendarMemoRepository(database: database)
             self.calendarMemoRepository.syncLogger = syncLogger
+
+            // Smart context assembly for AI Workspace
+            self.noteIndexRepository = NoteIndexRepository(database: database)
+            self.contextAssembler = ContextAssembler(
+                noteIndexRepo: noteIndexRepository,
+                sectionRepository: sectionRepository,
+                noteRepository: noteRepository,
+                handleRepository: handleRepository,
+                database: database,
+                syncEngine: syncEngine
+            )
 
             // Initialize HandleManager singleton with repository
             HandleManager.shared.initialize(handleRepository: handleRepository)

@@ -532,6 +532,11 @@ struct CreateEchoSheet: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var handleManager = HandleManager.shared
 
+    var prefillName: String?
+    var prefillContent: String?
+    var prefillDate: Date?
+    var onCreated: (() -> Void)?
+
     @State private var useExistingHandle = true
     @State private var selectedHandleId: String?
     @State private var newHandleName = ""
@@ -664,7 +669,18 @@ struct CreateEchoSheet: View {
         }
         .presentationDetents([.large])
         .onAppear {
-            if handles.isEmpty { useExistingHandle = false }
+            if let prefillName {
+                useExistingHandle = false
+                newHandleName = prefillName
+            } else if handles.isEmpty {
+                useExistingHandle = false
+            }
+            if let prefillContent {
+                content = prefillContent
+            }
+            if let prefillDate {
+                startDate = prefillDate
+            }
         }
     }
 
@@ -692,6 +708,7 @@ struct CreateEchoSheet: View {
                     intervals: isRecurring ? intervals : [],
                     fireDate: startDate
                 )
+                onCreated?()
                 dismiss()
             } catch {
                 errorMessage = error.localizedDescription

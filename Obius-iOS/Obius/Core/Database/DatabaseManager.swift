@@ -5,7 +5,7 @@ import Combine
 final class DatabaseManager {
     private let migrator: DatabaseMigrator
 
-    static let schemaVersion = 37
+    static let schemaVersion = 39
 
     /// The App Group container path for the shared database
     static var appGroupDatabaseURL: URL? {
@@ -1029,6 +1029,26 @@ final class DatabaseManager {
             try db.execute(sql: "UPDATE syncMetadata SET schemaVersion = 38")
         }
 
+        // v39: Local note index for smart context assembly (AI Workspace)
+        migrator.registerMigration("v39_note_index") { db in
+            try db.create(table: "note_index") { t in
+                t.column("id", .text).primaryKey()
+                t.column("entityType", .text).notNull()        // 'note_body', 'section', 'handle'
+                t.column("noteId", .text).references("notes", onDelete: .cascade)
+                t.column("contentHash", .text).notNull()        // SHA-256 of content
+                t.column("tokenCount", .integer).notNull()      // pre-counted for budget management
+                t.column("intent", .text)
+                t.column("handleId", .text)
+                t.column("lastIndexedAt", .integer).notNull()   // ms since epoch
+            }
+
+            try db.create(index: "idx_note_index_note", on: "note_index", columns: ["noteId"])
+            try db.create(index: "idx_note_index_type", on: "note_index", columns: ["entityType"])
+            try db.create(index: "idx_note_index_handle", on: "note_index", columns: ["handleId"])
+
+            try db.execute(sql: "UPDATE syncMetadata SET schemaVersion = 39")
+        }
+
         self.migrator = migrator
 
         // Extensions open read-only and must not run migrations
@@ -1093,7 +1113,7 @@ final class DatabaseManager {
             .tracking { db in
                 try Note
                     .filter(Note.Columns.deletedAt == nil)
-                    .order(Note.Columns.engagementScore.desc)
+                    .order(Note.Columns.updatedAt.desc)
                     .fetchAll(db)
             }
             .publisher(in: dbQueue, scheduling: .immediate)

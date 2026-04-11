@@ -90,6 +90,7 @@ final class InsightEngine {
         if hasFullInsights {
             newInsights.append(contentsOf: detectUpcomingEchoes(sectionsByNote: sectionsByNote))
             newInsights.append(contentsOf: detectLinks(notes: notes, sectionsByNote: sectionsByNote))
+            newInsights.append(contentsOf: detectScheduleDates(notes: notes, sectionsByNote: sectionsByNote))
         }
         // Phase 2 stubs:
         // newInsights.append(contentsOf: await detectDrift(...))
@@ -346,61 +347,49 @@ final class InsightEngine {
             "thing", "things", "way", "one", "two", "first", "last", "new"
         ]
 
-        // Max word count for a line to qualify as a plain-text list item.
-        // Real list items are terse; full sentences are not list items.
-        let plainItemMaxWords = 8
-
         var insights: [Insight] = []
 
         for note in notes {
             let sections = sectionsByNote[note.id] ?? []
             let pageTitle = note.displayTitle(sections: sections)
 
-            /// Scans text for consecutive list runs and appends an insight per list.
+            /// Scans text for consecutive prefixed list runs (bullets, numbers, checklists)
+            /// and appends an insight per list. Only detects explicitly prefixed items —
+            /// plain short lines are NOT treated as list items to avoid false positives.
             func scanForLists(_ text: String, sectionId: String? = nil) {
                 let lines = text.components(separatedBy: .newlines)
-                var prefixedList: [String] = []
-                var plainList: [String] = []
+                var currentList: [String] = []
+                // Track whether we've seen a non-list line before the first list item.
+                // If the line immediately before a list run is short and unprefixed,
+                // it's likely a title/header — don't include it.
+                var previousNonListLine: String?
 
-                func flushPrefixed() {
-                    guard prefixedList.count >= 3 else {
-                        prefixedList.removeAll()
+                func flushList() {
+                    guard currentList.count >= 3 else {
+                        currentList.removeAll()
                         return
                     }
-                    appendListInsight(items: prefixedList, sectionId: sectionId)
-                    prefixedList.removeAll()
-                }
-
-                func flushPlain() {
-                    guard plainList.count >= 3 else {
-                        plainList.removeAll()
-                        return
-                    }
-                    appendListInsight(items: plainList, sectionId: sectionId)
-                    plainList.removeAll()
-                }
-
-                func appendListInsight(items: [String], sectionId: String?) {
                     let miniTitle = Self.listMiniTitle(
-                        items: items,
+                        items: currentList,
                         prefixStrip: prefixStrip,
                         stopWords: listStopWords
                     )
-                    let body = items.joined(separator: "\n")
+                    let body = currentList.joined(separator: "\n")
                     insights.append(Insight(
                         insightType: .list,
-                        title: "\(items.count) items in '\(pageTitle)' — \(miniTitle)",
+                        title: "\(currentList.count) items in '\(pageTitle)' — \(miniTitle)",
                         body: body,
                         sourceNoteId: note.id,
                         sourceSectionId: sectionId ?? "list"
                     ))
+                    currentList.removeAll()
                 }
 
                 for line in lines {
                     let trimmed = line.trimmingCharacters(in: .whitespaces)
                     guard !trimmed.isEmpty else {
-                        flushPrefixed()
-                        flushPlain()
+                        flushList()
+                        previousNonListLine = nil
                         continue
                     }
 
@@ -411,30 +400,15 @@ final class InsightEngine {
                     let isChecklist = trimmed.hasPrefix("[ ]") || trimmed.hasPrefix("[x]") || trimmed.hasPrefix("[X]")
 
                     if isBullet || isNumbered || isLettered || isChecklist {
-                        // Prefixed item — flush any ongoing plain run
-                        flushPlain()
-                        prefixedList.append(String(trimmed.prefix(120)))
+                        currentList.append(String(trimmed.prefix(120)))
+                        previousNonListLine = nil
                     } else {
-                        // Flush any ongoing prefixed run
-                        flushPrefixed()
-
-                        // Check if this line looks like a plain-text list item:
-                        // short (≤ N words), no ending punctuation that signals a sentence
-                        let wordCount = trimmed.split(separator: " ").count
-                        let endsLikeSentence = trimmed.hasSuffix(".")
-                            || trimmed.hasSuffix("!")
-                            || trimmed.hasSuffix("?")
-                        let isShortItem = wordCount <= plainItemMaxWords && !endsLikeSentence
-
-                        if isShortItem {
-                            plainList.append(String(trimmed.prefix(120)))
-                        } else {
-                            flushPlain()
-                        }
+                        // Non-list line — flush any ongoing list
+                        flushList()
+                        previousNonListLine = trimmed
                     }
                 }
-                flushPrefixed()
-                flushPlain()
+                flushList()
             }
 
             // Check note body
@@ -443,14 +417,8 @@ final class InsightEngine {
                 scanForLists(bodyText)
             }
 
-            // Check sections — scan titles and content (skip checklist content, already structured)
+            // Check section content only (not titles — they aren't list items)
             for section in sections {
-                if let sectionTitle = section.title {
-                    let trimmedTitle = sectionTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmedTitle.isEmpty {
-                        scanForLists(trimmedTitle, sectionId: section.id)
-                    }
-                }
                 guard section.contentType == .text else { continue }
                 let content = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !content.isEmpty else { continue }
@@ -1101,5 +1069,80 @@ final class InsightEngine {
                 print("[InsightEngine] Notification scheduling failed: \(error)")
             }
         }
+    }
+
+    // MARK: - Schedule Detector
+
+    /// Detects dates/times in note content and creates schedule insights
+    /// so the user can quickly create an echo from a detected date.
+    private func detectScheduleDates(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
+        var insights: [Insight] = []
+        let now = Date()
+        let detector: NSDataDetector
+        do {
+            detector = try NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue)
+        } catch {
+            print("[InsightEngine] Failed to create date detector: \(error)")
+            return []
+        }
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .medium
+        dateFormatter.timeStyle = .short
+
+        let dateOnlyFormatter = DateFormatter()
+        dateOnlyFormatter.dateStyle = .medium
+        dateOnlyFormatter.timeStyle = .none
+
+        for note in notes {
+            let sections = sectionsByNote[note.id] ?? []
+            let text = Self.allText(for: note, sections: sections)
+            guard !text.isEmpty else { continue }
+
+            let range = NSRange(text.startIndex..., in: text)
+            let matches = detector.matches(in: text, options: [], range: range)
+            var noteCount = 0
+
+            for match in matches {
+                // Cap at 3 schedule insights per note to avoid noise
+                guard noteCount < 3 else { break }
+
+                guard let matchDate = match.date else { continue }
+
+                // Only surface dates that are in the future (at least 1 hour from now)
+                guard matchDate > now.addingTimeInterval(3600) else { continue }
+
+                // Don't surface dates more than 1 year out — likely false positives
+                guard matchDate < now.addingTimeInterval(365 * 24 * 3600) else { continue }
+
+                // Extract the matched text for context
+                guard let matchRange = Range(match.range, in: text) else { continue }
+
+                // Get surrounding context (up to 60 chars on each side)
+                let contextStart = text.index(matchRange.lowerBound, offsetBy: -60, limitedBy: text.startIndex) ?? text.startIndex
+                let contextEnd = text.index(matchRange.upperBound, offsetBy: 60, limitedBy: text.endIndex) ?? text.endIndex
+                let context = String(text[contextStart..<contextEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+                // Determine if the match includes a time component
+                let hasTime = match.duration == 0 && Calendar.current.component(.hour, from: matchDate) != 0
+                let formattedDate = hasTime ? dateFormatter.string(from: matchDate) : dateOnlyFormatter.string(from: matchDate)
+
+                let fireMs = Int64(matchDate.timeIntervalSince1970 * 1000)
+                let noteTitle = note.displayTitle
+
+                insights.append(Insight(
+                    insightType: .schedule,
+                    title: "Date found in \(noteTitle)",
+                    body: "\(formattedDate) — \"\(context)\"",
+                    sourceNoteId: note.id,
+                    sourceSectionId: "schedule",
+                    relatedNoteId: String(fireMs)
+                ))
+                noteCount += 1
+            }
+        }
+
+        print("[InsightEngine] detectScheduleDates found \(insights.count) date(s)")
+        return insights
     }
 }

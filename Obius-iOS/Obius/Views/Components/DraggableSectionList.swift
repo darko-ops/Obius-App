@@ -36,6 +36,7 @@ struct DraggableSectionList: View {
     let getInterstitialRichContent: (String?) -> String?  // Get rich text after section (nil = end)
     let onInterstitialContentChange: (String?, String, String?) -> Void  // Update text after section (id, content, richText)
     let onInterstitialBackspaceEmpty: (String?) -> Void  // Backspace on empty interstitial
+    var onEditWithAI: ((String) -> Void)? = nil  // Open AI Workspace focused on section
     var insightHighlights: [String: Color] = [:]  // sectionId → tint color for insight radar
     var sectionInsights: [String: [Insight]] = [:]  // sectionId → insights for inline chips
     var onInsightTap: ((Insight) -> Void)? = nil
@@ -89,6 +90,7 @@ struct DraggableSectionList: View {
                         onImageTap: { onImageTap(section.id) },
                         mediaRepository: mediaRepository,
                         onResolveConflict: { onResolveConflict(section.id) },
+                        onEditWithAI: onEditWithAI.map { callback in { callback(section.id) } },
                         insightTintColor: insightHighlights[section.id]
                     )
                     .id(section.id)  // For ScrollViewReader
@@ -107,7 +109,8 @@ struct DraggableSectionList: View {
                         getContent: getInterstitialContent,
                         getRichContent: getInterstitialRichContent,
                         onContentChange: onInterstitialContentChange,
-                        onBackspaceEmpty: onInterstitialBackspaceEmpty
+                        onBackspaceEmpty: onInterstitialBackspaceEmpty,
+                        modelContent: getInterstitialContent(section.id)
                     )
                     .id("interstitial-\(section.id)")
                 }
@@ -192,6 +195,7 @@ struct DraggableSectionRow: View {
     let onImageTap: () -> Void  // Image node tap
     let mediaRepository: MediaRepository?  // For image nodes
     var onResolveConflict: () -> Void = {}
+    var onEditWithAI: (() -> Void)? = nil  // AI Workspace on this section
     var insightTintColor: Color? = nil  // Insight radar highlight
 
     @State private var dragAmount = CGSize.zero
@@ -224,6 +228,7 @@ struct DraggableSectionRow: View {
                 onCopy: onCopy,
                 onPaste: onPaste,
                 hasCopiedSection: hasCopiedSection,
+                onEditWithAI: onEditWithAI,
                 onImageTap: onImageTap,
                 mediaRepository: mediaRepository,
                 onResolveConflict: onResolveConflict
@@ -364,7 +369,11 @@ struct InterstitialTextField: View {
     let onBackspaceEmpty: (String?) -> Void  // Called when backspace on empty field
 
     @State private var text: String = ""
+    @State private var isExternalUpdate: Bool = false
     @FocusState private var isFocused: Bool
+
+    /// The current model content — passed from the parent so we can observe changes
+    var modelContent: String = ""
 
     var body: some View {
         InterstitialTextView(
@@ -372,6 +381,7 @@ struct InterstitialTextField: View {
             isFocused: $isFocused,
             richText: getRichContent(afterSectionId),
             onContentChange: { newValue, richText in
+                guard !isExternalUpdate else { return }
                 onContentChange(afterSectionId, newValue, richText)
             },
             onBackspaceEmpty: {
@@ -383,6 +393,17 @@ struct InterstitialTextField: View {
         .animation(nil, value: text)  // Prevent layout animations
         .onAppear {
             text = getContent(afterSectionId)
+        }
+        .onChange(of: modelContent) { _, newContent in
+            // Sync text when the underlying model changes (e.g. content merged during section deletion)
+            if newContent != text {
+                isExternalUpdate = true
+                text = newContent
+                // Delay reset to absorb the write-back cascade from the text view
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    isExternalUpdate = false
+                }
+            }
         }
     }
 }

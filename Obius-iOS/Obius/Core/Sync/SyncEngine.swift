@@ -662,11 +662,27 @@ actor SyncEngine {
                     if (existing.serverVersion ?? 0) < localNote.localVersion {
                         // Preserve local-only fields not included in server data
                         var mergedNote = localNote
-                        mergedNote.moduleId = existing.moduleId  // Keep local module assignment
+                        mergedNote.moduleId = localNote.moduleId ?? existing.moduleId  // Accept remote module assignment if provided
                         mergedNote.tags = existing.tags
                         mergedNote.aiTags = existing.aiTags
                         mergedNote.viewCount = existing.viewCount
                         try mergedNote.update(db)
+
+                        // Update local module name/icon if server has a renamed module
+                        if let moduleId = mergedNote.moduleId, !moduleId.isEmpty,
+                           let remoteName = remoteNote.moduleName, !remoteName.isEmpty {
+                            let localModuleName = try String.fetchOne(db, sql: """
+                                SELECT name FROM modules WHERE id = ? AND deletedAt IS NULL
+                            """, arguments: [moduleId])
+                            if let localName = localModuleName, localName != remoteName {
+                                let remoteIcon = remoteNote.moduleIcon ?? "folder"
+                                try db.execute(sql: """
+                                    UPDATE modules SET name = ?, icon = ?, updatedAt = ? WHERE id = ?
+                                """, arguments: [remoteName, remoteIcon, Int64(Date().timeIntervalSince1970 * 1000), moduleId])
+                                print("[Sync] Updated module name '\(localName)' → '\(remoteName)' (\(moduleId.prefix(8)))")
+                            }
+                        }
+
                         print("[Sync] Updated note \(localNote.id.prefix(8)) (v\(existing.serverVersion ?? 0) → v\(localNote.localVersion)) body=\(localNote.body.prefix(50))")
                     } else {
                         print("[Sync] Skipped note \(localNote.id.prefix(8)) (local v\(existing.serverVersion ?? 0) >= remote v\(localNote.localVersion)) body=\(localNote.body.prefix(50))")
@@ -697,6 +713,22 @@ actor SyncEngine {
                                 """, arguments: [moduleId, moduleName, moduleIcon, now, now])
                                 print("[Sync] Created module '\(moduleName)' (\(moduleId.prefix(8))) for new note")
                             }
+                        }
+                    }
+
+                    // Update existing module name/icon if the server has a newer name
+                    // (handles cross-device module rename propagation)
+                    if let moduleId = noteToInsert.moduleId, !moduleId.isEmpty,
+                       let remoteName = remoteNote.moduleName, !remoteName.isEmpty {
+                        let localModuleName = try String.fetchOne(db, sql: """
+                            SELECT name FROM modules WHERE id = ? AND deletedAt IS NULL
+                        """, arguments: [moduleId])
+                        if let localName = localModuleName, localName != remoteName {
+                            let remoteIcon = remoteNote.moduleIcon ?? "folder"
+                            try db.execute(sql: """
+                                UPDATE modules SET name = ?, icon = ?, updatedAt = ? WHERE id = ?
+                            """, arguments: [remoteName, remoteIcon, Int64(Date().timeIntervalSince1970 * 1000), moduleId])
+                            print("[Sync] Updated module name '\(localName)' → '\(remoteName)' (\(moduleId.prefix(8)))")
                         }
                     }
                     try noteToInsert.insert(db)
@@ -1166,28 +1198,47 @@ actor SyncEngine {
         do { try await database.write { db in
             let now = Int64(Date().timeIntervalSince1970 * 1000)
 
-            // 1. Find orphaned moduleIds (notes point to modules that don't exist locally)
+            // 1. Find orphaned moduleIds (non-deleted notes point to modules that don't exist locally)
             let orphanedModuleIds = try String.fetchAll(db, sql: """
                 SELECT DISTINCT moduleId FROM notes
                 WHERE deletedAt IS NULL AND moduleId IS NOT NULL
                 AND NOT EXISTS (SELECT 1 FROM modules WHERE id = notes.moduleId AND deletedAt IS NULL)
             """)
 
-            // 2. Create missing modules instead of reassigning notes
+            // 2. Create missing modules for genuinely orphaned notes
             for moduleId in orphanedModuleIds {
-                try db.execute(sql: """
-                    INSERT OR IGNORE INTO modules (id, name, icon, isDefault, storageType, orderIndex, createdAt, updatedAt)
-                    VALUES (?, 'Synced', 'folder', 0, 'cloud', 0, ?, ?)
-                """, arguments: [moduleId, now, now])
-                print("[Sync] Created missing module for orphaned notes (moduleId: \(moduleId.prefix(8))...)")
+                let inserted = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM modules WHERE id = ?", arguments: [moduleId]) ?? 0
+                if inserted == 0 {
+                    try db.execute(sql: """
+                        INSERT INTO modules (id, name, icon, isDefault, storageType, orderIndex, createdAt, updatedAt)
+                        VALUES (?, 'Synced', 'folder', 0, 'cloud', 0, ?, ?)
+                    """, arguments: [moduleId, now, now])
+                    print("[Sync] Created missing module for orphaned notes (moduleId: \(moduleId.prefix(8))...)")
+                }
             }
 
-            // 3. Ensure at least one module exists
+            // 3. Delete empty non-default modules (no non-deleted notes)
+            // This handles: project deleted on another device → notes deleted via sync → module is now empty
+            let emptyModuleIds = try String.fetchAll(db, sql: """
+                SELECT m.id FROM modules m
+                WHERE m.deletedAt IS NULL AND m.isDefault = 0
+                AND NOT EXISTS (
+                    SELECT 1 FROM notes WHERE moduleId = m.id AND deletedAt IS NULL
+                )
+            """)
+            for emptyId in emptyModuleIds {
+                try db.execute(sql: "UPDATE modules SET deletedAt = ? WHERE id = ?", arguments: [now, emptyId])
+            }
+            if !emptyModuleIds.isEmpty {
+                print("[Sync] Cleaned up \(emptyModuleIds.count) empty modules")
+            }
+
+            // 4. Ensure at least one module exists
             let remaining = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM modules WHERE deletedAt IS NULL") ?? 0
             if remaining == 0 {
                 try db.execute(sql: """
                     INSERT INTO modules (id, name, icon, isDefault, storageType, orderIndex, createdAt, updatedAt)
-                    VALUES (?, 'Artifacts', 'folder', 0, 'local', 0, ?, ?)
+                    VALUES (?, 'Artifacts', 'folder', 0, 'cloud', 0, ?, ?)
                 """, arguments: [UUID().uuidString, now, now])
                 print("[Sync] Created fallback 'Artifacts' module")
             }

@@ -123,15 +123,17 @@ final class SectionRepository: ObservableObject {
 
     // MARK: - Update
 
-    func updateContent(_ sectionId: String, content: String, richText: String? = nil) async throws {
+    func updateContent(_ sectionId: String, content: String, richText: String? = nil, clearRichText: Bool = false) async throws {
         try await database.write { db in
             guard var section = try Section.fetchOne(db, key: sectionId) else { return }
             // Only touch if text content or rich text actually changed.
-            let richChanged = richText != nil && section.richContent != richText
+            let richChanged = (richText != nil && section.richContent != richText) || (clearRichText && section.richContent != nil)
             guard section.content != content || richChanged else { return }
             section.content = content
             if let richText = richText {
                 section.richContent = richText
+            } else if clearRichText {
+                section.richContent = nil
             }
             section.touch()
             try section.update(db)

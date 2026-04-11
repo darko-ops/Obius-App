@@ -30,11 +30,96 @@ enum RichTextHelper {
         )
     }
 
+    /// Convert base64-encoded RTF back to markdown text.
+    /// Reconstructs # headings, **bold**, and *italic* from font attributes.
+    static func toMarkdown(_ base64String: String) -> String? {
+        guard let attrText = deserialize(base64String) else { return nil }
+        let baseSize = UIFont.preferredFont(forTextStyle: .body).pointSize
+        let fullRange = NSRange(location: 0, length: attrText.length)
+        var result = ""
+        let plainText = attrText.string
+
+        // Process line by line to detect headings
+        let lines = plainText.components(separatedBy: "\n")
+        var charIndex = 0
+
+        for (lineIdx, line) in lines.enumerated() {
+            let lineRange = NSRange(location: charIndex, length: line.utf16.count)
+
+            if line.isEmpty {
+                result += "\n"
+                charIndex += line.utf16.count + 1 // +1 for newline
+                continue
+            }
+
+            // Check the font of the first character to detect heading level
+            var isHeading = false
+            if lineRange.length > 0 {
+                let attrs = attrText.attributes(at: lineRange.location, effectiveRange: nil)
+                if let font = attrs[.font] as? UIFont {
+                    let ratio = font.pointSize / baseSize
+                    if ratio > 1.5 {
+                        result += "# "
+                        isHeading = true
+                    } else if ratio > 1.2 {
+                        result += "## "
+                        isHeading = true
+                    } else if ratio > 1.05 {
+                        result += "### "
+                        isHeading = true
+                    }
+                }
+            }
+
+            if isHeading {
+                // Headings: just append the line text (already has prefix)
+                result += line
+            } else {
+                // Process inline formatting (bold/italic) within the line
+                var pos = lineRange.location
+                let lineEnd = lineRange.location + lineRange.length
+                while pos < lineEnd {
+                    var effectiveRange = NSRange()
+                    let attrs = attrText.attributes(at: pos, effectiveRange: &effectiveRange)
+                    // Clamp effective range to this line
+                    let rangeEnd = min(effectiveRange.location + effectiveRange.length, lineEnd)
+                    let runRange = NSRange(location: pos, length: rangeEnd - pos)
+                    let runText = (plainText as NSString).substring(with: runRange)
+
+                    if let font = attrs[.font] as? UIFont {
+                        let isBold = font.fontDescriptor.symbolicTraits.contains(.traitBold)
+                        let isItalic = font.fontDescriptor.symbolicTraits.contains(.traitItalic)
+                        if isBold && isItalic {
+                            result += "***\(runText)***"
+                        } else if isBold {
+                            result += "**\(runText)**"
+                        } else if isItalic {
+                            result += "*\(runText)*"
+                        } else {
+                            result += runText
+                        }
+                    } else {
+                        result += runText
+                    }
+                    pos = rangeEnd
+                }
+            }
+
+            charIndex += line.utf16.count + 1 // +1 for newline
+            if lineIdx < lines.count - 1 {
+                result += "\n"
+            }
+        }
+
+        return result
+    }
+
     /// Convert markdown-style text to NSAttributedString with rich formatting.
     /// Supports: # headings, ## subheadings, **bold**, *italic*
     static func fromMarkdown(_ text: String) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        let bodyFont = UIFont.systemFont(ofSize: 17)
+        let baseSize = UIFont.preferredFont(forTextStyle: .body).pointSize
+        let bodyFont = UIFont.systemFont(ofSize: baseSize)
         let bodyColor = UIColor.label
 
         let lines = text.components(separatedBy: "\n")
@@ -43,25 +128,29 @@ enum RichTextHelper {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
             if index > 0 {
-                result.append(NSAttributedString(string: "\n"))
+                // Explicit body font on newlines prevents RTF round-trip from
+                // inheriting bold/heading attributes from adjacent runs.
+                result.append(NSAttributedString(string: "\n", attributes: [
+                    .font: bodyFont, .foregroundColor: bodyColor
+                ]))
             }
 
-            // Headings
+            // Headings — scaled relative to dynamic body size
             if trimmed.hasPrefix("### ") {
                 let content = String(trimmed.dropFirst(4))
-                let font = UIFont.systemFont(ofSize: 19, weight: .semibold)
+                let font = UIFont.systemFont(ofSize: baseSize * 1.12, weight: .semibold)
                 result.append(NSAttributedString(string: content, attributes: [
                     .font: font, .foregroundColor: bodyColor
                 ]))
             } else if trimmed.hasPrefix("## ") {
                 let content = String(trimmed.dropFirst(3))
-                let font = UIFont.systemFont(ofSize: 22, weight: .bold)
+                let font = UIFont.systemFont(ofSize: baseSize * 1.3, weight: .bold)
                 result.append(NSAttributedString(string: content, attributes: [
                     .font: font, .foregroundColor: bodyColor
                 ]))
             } else if trimmed.hasPrefix("# ") {
                 let content = String(trimmed.dropFirst(2))
-                let font = UIFont.systemFont(ofSize: 28, weight: .bold)
+                let font = UIFont.systemFont(ofSize: baseSize * 1.65, weight: .bold)
                 result.append(NSAttributedString(string: content, attributes: [
                     .font: font, .foregroundColor: bodyColor
                 ]))
@@ -136,6 +225,63 @@ enum RichTextHelper {
         )
     }
 
+    /// Convert base64-encoded RTF back to markdown text.
+    static func toMarkdown(_ base64String: String) -> String? {
+        guard let attrText = deserialize(base64String) else { return nil }
+        let baseSize: CGFloat = 17
+        let fullRange = NSRange(location: 0, length: attrText.length)
+        var result = ""
+        let plainText = attrText.string
+        let lines = plainText.components(separatedBy: "\n")
+        var charIndex = 0
+
+        for (lineIdx, line) in lines.enumerated() {
+            let lineRange = NSRange(location: charIndex, length: line.utf16.count)
+            if line.isEmpty {
+                result += "\n"
+                charIndex += line.utf16.count + 1
+                continue
+            }
+            var isHeading = false
+            if lineRange.length > 0 {
+                let attrs = attrText.attributes(at: lineRange.location, effectiveRange: nil)
+                if let font = attrs[.font] as? NSFont {
+                    let ratio = font.pointSize / baseSize
+                    if ratio > 1.5 { result += "# "; isHeading = true }
+                    else if ratio > 1.2 { result += "## "; isHeading = true }
+                    else if ratio > 1.05 { result += "### "; isHeading = true }
+                }
+            }
+            if isHeading {
+                result += line
+            } else {
+                var pos = lineRange.location
+                let lineEnd = lineRange.location + lineRange.length
+                while pos < lineEnd {
+                    var effectiveRange = NSRange()
+                    let attrs = attrText.attributes(at: pos, effectiveRange: &effectiveRange)
+                    let rangeEnd = min(effectiveRange.location + effectiveRange.length, lineEnd)
+                    let runRange = NSRange(location: pos, length: rangeEnd - pos)
+                    let runText = (plainText as NSString).substring(with: runRange)
+                    if let font = attrs[.font] as? NSFont {
+                        let isBold = font.fontDescriptor.symbolicTraits.contains(.bold)
+                        let isItalic = font.fontDescriptor.symbolicTraits.contains(.italic)
+                        if isBold && isItalic { result += "***\(runText)***" }
+                        else if isBold { result += "**\(runText)**" }
+                        else if isItalic { result += "*\(runText)*" }
+                        else { result += runText }
+                    } else {
+                        result += runText
+                    }
+                    pos = rangeEnd
+                }
+            }
+            charIndex += line.utf16.count + 1
+            if lineIdx < lines.count - 1 { result += "\n" }
+        }
+        return result
+    }
+
     static func fromMarkdown(_ text: String) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let bodyFont = NSFont.systemFont(ofSize: 17)
@@ -147,7 +293,11 @@ enum RichTextHelper {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
             if index > 0 {
-                result.append(NSAttributedString(string: "\n"))
+                // Explicit body font on newlines prevents RTF round-trip from
+                // inheriting bold/heading attributes from adjacent runs.
+                result.append(NSAttributedString(string: "\n", attributes: [
+                    .font: bodyFont, .foregroundColor: bodyColor
+                ]))
             }
 
             if trimmed.hasPrefix("### ") {
@@ -249,6 +399,9 @@ struct SectionView: View {
     let onPaste: () -> Void  // Paste copied node after this node
     let hasCopiedSection: Bool  // Whether a section is on the clipboard
 
+    // AI editing callback
+    var onEditWithAI: (() -> Void)? = nil  // Open AI Workspace focused on this section
+
     // Image node callback
     let onImageTap: () -> Void  // Open image picker for this section
     let mediaRepository: MediaRepository?  // For loading image data
@@ -290,6 +443,7 @@ struct SectionView: View {
         onCopy: @escaping () -> Void = {},
         onPaste: @escaping () -> Void = {},
         hasCopiedSection: Bool = false,
+        onEditWithAI: (() -> Void)? = nil,
         onImageTap: @escaping () -> Void = {},
         mediaRepository: MediaRepository? = nil,
         onResolveConflict: @escaping () -> Void = {}
@@ -318,6 +472,7 @@ struct SectionView: View {
         self.onCopy = onCopy
         self.onPaste = onPaste
         self.hasCopiedSection = hasCopiedSection
+        self.onEditWithAI = onEditWithAI
         self.onImageTap = onImageTap
         self.mediaRepository = mediaRepository
         self.onResolveConflict = onResolveConflict
@@ -383,12 +538,16 @@ struct SectionView: View {
                 onContentChange(content, nil)
             }
         }
-        .onChange(of: displayContent) { _, newValue in
-            // Only sync from external source when NOT actively editing
-            // to prevent cursor jumping during typing
-            if !textFieldFocused && content != newValue {
-                content = newValue
+        .onChange(of: displayContent) { oldValue, newValue in
+            // Always sync when content changed externally (e.g. AI workspace action).
+            // Only skip if the user is actively typing AND the change is just
+            // their own keystroke echoing back (old == what we had before).
+            guard content != newValue else { return }
+            if textFieldFocused && oldValue == content {
+                // User is typing and this is their own edit propagating — skip to avoid cursor jump
+                return
             }
+            content = newValue
         }
         .onChange(of: section.handleId) { _, _ in
             // When a section is linked/unlinked from a handle,
@@ -865,17 +1024,21 @@ struct SectionView: View {
         // Trim trailing whitespace/newlines so AI-generated content with
         // trailing \n doesn't create empty space at the bottom of the node.
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lineCount = max(1, trimmed.components(separatedBy: "\n").count)
+        let lines = trimmed.components(separatedBy: "\n")
+        let lineCount = max(1, lines.count)
         #if os(macOS)
         let avgCharsPerLine: CGFloat = 80
         #else
-        let avgCharsPerLine: CGFloat = 40
+        let avgCharsPerLine: CGFloat = 35
         #endif
-        let totalChars = CGFloat(trimmed.count)
-        let estimatedWrappedLines = max(1, ceil(totalChars / avgCharsPerLine))
-        let visualLines = max(CGFloat(lineCount), estimatedWrappedLines)
+        // Count wrapped lines per paragraph for a more accurate estimate
+        var visualLines: CGFloat = 0
+        for line in lines {
+            let charCount = CGFloat(line.count)
+            visualLines += max(1, ceil(charCount / avgCharsPerLine))
+        }
         let lineHeight: CGFloat = 22
-        let padding: CGFloat = 12
+        let padding: CGFloat = 16
         return visualLines * lineHeight + padding
     }
 
@@ -1043,6 +1206,16 @@ struct SectionView: View {
             HapticFeedback.notification(.success)
         } label: {
             Label("Duplicate", systemImage: "plus.square.on.square")
+        }
+
+        // 7. Edit with AI
+        if let onEditWithAI {
+            Button {
+                onEditWithAI()
+                HapticFeedback.selection()
+            } label: {
+                Label("Edit with AI", systemImage: "sparkles")
+            }
         }
 
         // 9. Delete
@@ -1279,8 +1452,15 @@ class SelfSizingTextView: UITextView {
     override var intrinsicContentSize: CGSize {
         // Use a reasonable width if bounds isn't set yet
         let width = bounds.width > 0 ? bounds.width : 300
-        let size = sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-        return CGSize(width: UIView.noIntrinsicMetric, height: max(32, ceil(size.height)))
+        // Use layoutManager's usedRect for accurate height — sizeThatFits can
+        // underestimate when word-wrapping produces more visual lines than expected.
+        let containerWidth = width - textContainerInset.left - textContainerInset.right
+            - textContainer.lineFragmentPadding * 2
+        textContainer.size = CGSize(width: containerWidth, height: .greatestFiniteMagnitude)
+        layoutManager.ensureLayout(for: textContainer)
+        let textHeight = ceil(layoutManager.usedRect(for: textContainer).height)
+        let totalHeight = textHeight + textContainerInset.top + textContainerInset.bottom
+        return CGSize(width: UIView.noIntrinsicMetric, height: max(32, ceil(totalHeight)))
     }
 
     override func layoutSubviews() {
@@ -1323,7 +1503,7 @@ class KeyboardAccessoryToolbar: UIToolbar {
     }
 
     private var titleFontSize: CGFloat {
-        UIFont.preferredFont(forTextStyle: .body).pointSize * 2
+        UIFont.preferredFont(forTextStyle: .body).pointSize * 1.65
     }
 
     init(showIndentButtons: Bool = false, showStatusButton: Bool = false) {
@@ -1803,13 +1983,16 @@ struct EditableTextView: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             HashtagHelper.applyHighlighting(to: textView)
+            // Invalidate size FIRST so SwiftUI sees the correct height
+            // before we update the binding and trigger a re-layout.
+            textView.invalidateIntrinsicContentSize()
             let newText = textView.text ?? ""
-            let richText = RichTextHelper.serialize(textView.attributedText)
+            // Skip expensive RTF serialization during active typing — pass nil.
+            // Rich text is saved on focus loss (textViewDidEndEditing).
             if parent.text != newText {
                 parent.text = newText
             }
-            parent.onContentChange(newText, richText)
-            textView.invalidateIntrinsicContentSize()
+            parent.onContentChange(newText, nil)
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
@@ -1885,8 +2068,8 @@ struct EditableTextView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         let isFirstResponder = textView.window?.firstResponder == textView
         // Only update when not focused, OR when focused and the text has changed
-        // significantly (e.g. external merge). Skip small diffs while focused to
-        // avoid visual glitches during normal typing.
+        // significantly (e.g. external sync). Skip small diffs while focused to
+        // avoid scroll freezes and visual glitches during normal typing.
         let textDiffers = textView.string != text
         let shouldUpdate = textDiffers && (!isFirstResponder || abs(textView.string.count - text.count) > 1)
         if shouldUpdate {
@@ -2510,14 +2693,16 @@ struct TemplateProtectedTextView: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
+            // Invalidate size FIRST so SwiftUI sees the correct height
+            // before we update the binding and trigger a re-layout.
+            textView.invalidateIntrinsicContentSize()
             let newText = textView.text ?? ""
-            let richText = RichTextHelper.serialize(textView.attributedText)
-
+            // Skip expensive RTF serialization during active typing — pass nil.
+            // Rich text is saved on focus loss (textViewDidEndEditing).
             if parent.text != newText {
                 parent.text = newText
             }
-            parent.onContentChange(newText, richText)
-            textView.invalidateIntrinsicContentSize()
+            parent.onContentChange(newText, nil)
         }
     }
 }
