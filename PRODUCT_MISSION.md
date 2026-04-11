@@ -1,77 +1,81 @@
-# Obius: The Why
+# Obius — Designed for Thinking
 
-## The Contrarian Truth
+## The One Line
+
+**Obius is the app designed for thinking.**
+
+Not for note-taking. Not for productivity. Not for documents. For *thinking* — the real thing. The messy, nonlinear, connective, evolving act of working with your own ideas.
+
+Every other app was designed for something else — writing, storing, organizing, collaborating — and thinking was an afterthought. Obius was designed, from the ground up, for the architecture of thought itself.
+
+## The Secret
 
 > "What important truth do very few people agree with you on?" — Peter Thiel, Zero to One
 
-**Most people think the problem with note-taking is organization — better folders, better search, better tags. The real problem is that every notes app is built on the wrong primitive.**
+**Ideas have architecture. And no tool respects that.**
 
-The primitive is "the document" — a blob of text inside a container. But thinking doesn't happen in documents. Thinking happens in **structured, typed, interconnected, evolving, recurring concepts**. The document is a prison for thought. It flattens dimensionality. It kills connections. It buries things that should resurface. It treats your best ideas exactly like your grocery list: as static text, filed away.
+Your mind doesn't think in documents. It thinks in concepts that have *shape* — an idea is different from a question, which is different from a task, which is different from evidence. These concepts connect to each other, recur across contexts, evolve over time, and sometimes need to come back to you at the right moment.
 
-The more you write, the less you can find. The more you know, the less you can access. Your knowledge doesn't compound — it decays. That's not a search problem. That's an architecture problem.
+Every notes app flattens all of that into the same thing: text in a box, filed in a folder. Your best breakthrough and your grocery list get the same treatment. The more you write, the more gets buried. Your ideas never find each other.
 
-## What Obius Is
+That's not a search problem. That's an architecture problem. And nobody is solving it.
 
-Obius is not a notes app.
+## What Obius Actually Is
 
-**Obius is a thinking engine.** External cognitive infrastructure. The operating system for your intellectual life.
+Obius lets you **architect your ideas**.
 
-It's not a place to *put* thoughts. It's a system that *works with* your thoughts — one where ideas are typed, connected, living, evolving, and augmented by intelligence.
+Not just capture them — *architect* them. Give them structure. Give them type. Connect them. Let them live across contexts. Let them evolve without losing where they started. Let them come back to you when they matter. And let intelligence find the connections you didn't see.
 
-The way spreadsheets weren't "better calculators" — they were a new primitive for numerical thinking. Obius is a new primitive for conceptual thinking.
+Think of it this way:
 
-## Zero to One, Not One to N
+- **A note** is something you write down and forget.
+- **An idea in Obius** is something that has a type (is this an idea? a question? a task?), a structure (how does it relate to what's around it?), connections (where else does this live?), a history (how has this evolved?), a heartbeat (when should this resurface?), and intelligence watching over it (what did I miss?).
 
-Notes apps iterate on the same idea: take a paper notepad, make it digital. Add folders. Add search. Add collaboration. Add AI summaries. That's 1 to n — incremental copies of the same underlying model.
+That's the difference between storing text and architecting thought.
 
-Obius starts from a different question entirely: **What if your tools for thinking were as powerful as your tools for building software?**
+## Why This Is Zero to One
 
-Software engineers don't work in unstructured text files. They have:
+Notes apps go from paper notepad to digital notepad. Add folders. Add search. Add collaboration. Add AI summaries. That's 1 to n — digital copies of the same model, over and over.
 
-| Engineering Primitive | Obius Equivalent | What It Means for Thinking |
-|---|---|---|
-| **Functions** | **Loops** | A thought that's reusable — write it once, reference it everywhere, edit it in one place |
-| **Type system** | **Intents** | Every thought declares what it *is* — an Idea, a Question, a Task, or Evidence |
-| **Pointers / references** | **Portals** | A section that points to a Loop — single source of truth across every context |
-| **Version control** | **Commits** | Your thinking evolves, but nothing is lost — every state is recoverable |
-| **Cron jobs** | **Echoes** | Thoughts that resurface on schedule — the right idea at the right time |
-| **Static analysis** | **Insights** | The system reads your work and finds what you missed — leaked secrets, dormant ideas, hidden connections |
-| **IDE** | **Workspace** | An intelligent collaborator that can read, understand, and act on your notes alongside you |
+Obius asks a different question: **What would you build if you started from how the mind actually works?**
 
-This isn't "a notes app with developer features." It's the recognition that **thinking is building** — and builders deserve real tools.
+You'd build a place where:
+
+- A thought can declare what it *is* — not just what it says
+- An idea you have once can live everywhere it's relevant — and stay in sync
+- Your thinking can evolve without erasing where it's been
+- The right idea comes back to you at the right time, not just when you search for it
+- The system itself discovers connections between thoughts you had months apart
+
+That's not a better notes app. That's a new thing entirely.
 
 ## The Mission
 
-**Make knowledge compound.**
+**Where ideas connect.**
 
-Every app you use today lets knowledge decay. You write something brilliant at 2 AM, and it's buried by next week. You have the same insight three times because you can't find the first one. Your best ideas never meet each other.
+Today, your best thinking is scattered, silent, and decaying. The insight from January doesn't know about the question from March. The idea you had at 2 AM is buried under everything that came after. The more you think, the more you lose.
 
-Obius exists to reverse that. To make every thought you capture *work for you* — findable by meaning, connected to related ideas, resurfacing when relevant, evolving without losing history, and amplified by intelligence that sees patterns you can't.
+Obius exists to give your ideas architecture — so they connect, evolve, resurface, and compound instead of decay.
 
-Not a filing cabinet for text. An engine that turns fragmented thinking into compounding knowledge.
+## The Product Principles
 
-## The Future We're Building
+**Architecture, not organization.** You don't file ideas into folders after the fact. You give them structure as you think — type, hierarchy, connections. The tool matches the shape of thought.
 
-A world where:
+**Living, not static.** An idea in Obius isn't frozen text. It's a living thing — reusable across contexts through Loops, always current through Portals, resurfacing through Echoes, evolving through Commits.
 
-- **Your accumulated knowledge is alive, not archived.** Loops keep your core ideas current. Portals ensure they're never out of date. Echoes bring them back when they matter.
+**Intelligence, not search.** You shouldn't have to remember what you know. The system finds connections between ideas, surfaces patterns across your thinking, and understands *meaning* — not just keywords.
 
-- **Structure creates clarity, not overhead.** You don't organize after the fact — you think in structure from the start. Intents, sections, and hierarchy are how thoughts naturally exist. The tool matches the shape of thinking.
+**Designed, not accumulated.** Every feature exists because thinking requires it — not because a competitor has it. Obius isn't a feature list. It's a coherent architecture for how ideas actually work.
 
-- **Intelligence finds what you missed.** The system discovers connections between notes you wrote months apart. It flags when an old question now has evidence. It surfaces patterns across your entire body of thought — not just keyword matches, but meaning.
-
-- **Nothing is lost, everything evolves.** Commits preserve every stage of your thinking. You can trace how an idea developed. You can recover what you changed your mind about. Your intellectual history has integrity.
-
-- **Thinking scales.** Today, the more you know, the harder it is to use what you know. With Obius, the more you capture, the more powerful the system becomes — more connections found, more patterns surfaced, more knowledge compounding.
-
-## The Definite View
+## The Category
 
 > "A startup is the largest endeavor over which you can have definite mastery." — Peter Thiel
 
-We are not building a "better Notion" or an "AI-powered Apple Notes." We are not competing in the notes app market. We are creating a new category:
+We are not building a better Notion. We are not competing in the notes app market.
 
-**Structured thinking infrastructure.**
+We are building **the app designed for thinking** — and that category doesn't exist yet.
 
-The market for notes apps is crowded. The market for tools that make human knowledge compound doesn't exist yet.
+The market for notes apps is crowded.
+The market for tools that respect the architecture of ideas is empty.
 
-That's the zero-to-one opportunity.
+That's the zero-to-one.
