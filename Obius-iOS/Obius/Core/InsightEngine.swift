@@ -97,6 +97,12 @@ final class InsightEngine {
         // newInsights.append(contentsOf: await generateWeeklyReport(...))
         // newInsights.append(contentsOf: await assessProjectHealth(...))
 
+        // Invalidate insights that no longer match current content.
+        // Compare existing active insights against fresh scan results —
+        // any insight not reproduced by the detectors is stale.
+        let freshKeys = Set(newInsights.map(\.dedupKey))
+        try? await insightRepository.invalidateStaleInsights(freshKeys: freshKeys)
+
         // Batch dedup against all existing insights (surfaced, tracked, dismissed)
         let existingKeys = (try? await insightRepository.existingInsightKeys()) ?? []
         let deduped = newInsights.filter { !existingKeys.contains($0.dedupKey) }

@@ -59,6 +59,7 @@
 		B8A1D0010000000000000046 /* NoteEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000046 /* NoteEditorView.swift */; };
 		B8A1D0010000000000000047 /* SectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000047 /* SectionView.swift */; };
 		B8A1D0010000000000000048 /* IntelligenceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000048 /* IntelligenceView.swift */; };
+		B8A1D0010000000000000503 /* MacAIWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000503 /* MacAIWorkspaceView.swift */; };
 		B8A1D0010000000000000049 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000049 /* LibraryView.swift */; };
 		B8A1D0010000000000000050 /* NoteRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000050 /* NoteRowView.swift */; };
 		B8A1D0010000000000000104 /* BlockDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000104 /* BlockDetailView.swift */; };
@@ -207,6 +208,7 @@
 		B8A1F0010000000000000046 /* NoteEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteEditorView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000047 /* SectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000048 /* IntelligenceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntelligenceView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000503 /* MacAIWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacAIWorkspaceView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000049 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000050 /* NoteRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteRowView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000104 /* BlockDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockDetailView.swift; sourceTree = "<group>"; };
@@ -553,6 +555,7 @@
 			isa = PBXGroup;
 			children = (
 				B8A1F0010000000000000048 /* IntelligenceView.swift */,
+				B8A1F0010000000000000503 /* MacAIWorkspaceView.swift */,
 				B8A1F0010000000000000304 /* EchoCalendarView.swift */,
 				B8A1F0090000000000000004 /* InsightCardView.swift */,
 				B8A1F0090000000000000031 /* ActionCardView.swift */,
@@ -803,6 +806,7 @@
 				B8A1D0010000000000000046 /* NoteEditorView.swift in Sources */,
 				B8A1D0010000000000000047 /* SectionView.swift in Sources */,
 				B8A1D0010000000000000048 /* IntelligenceView.swift in Sources */,
+				B8A1D0010000000000000503 /* MacAIWorkspaceView.swift in Sources */,
 				B8A1D0010000000000000049 /* LibraryView.swift in Sources */,
 				B8A1D0010000000000000050 /* NoteRowView.swift in Sources */,
 				B8A1D0010000000000000051 /* NotesListView.swift in Sources */,

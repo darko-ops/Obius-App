@@ -105,6 +105,12 @@ private struct NoteEditorContent: View {
     @State private var showingAIWorkspace = false
     @State private var aiEditSectionId: String?
     @State private var showingDeleteConfirmation = false
+    // Find in page
+    @State private var isSearchBarVisible = false
+    @State private var searchQuery = ""
+    @State private var searchMatches: [SearchMatch] = []
+    @State private var currentMatchIndex = 0
+    @FocusState private var searchFieldFocused: Bool
     #if os(macOS)
     @State private var showWorkspacePanel = false
     @State private var bodyEditorHeight: CGFloat = 22
@@ -257,6 +263,35 @@ private struct NoteEditorContent: View {
                 if viewModel.isLoading {
                     ProgressView()
                 }
+            }
+            .overlay(alignment: .top) {
+                if isSearchBarVisible {
+                    findInPageBar
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .animation(.easeInOut(duration: 0.2), value: isSearchBarVisible)
+            .background {
+                // Hidden buttons to capture keyboard shortcuts
+                Button("") {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isSearchBarVisible = true
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        searchFieldFocused = true
+                    }
+                }
+                .keyboardShortcut("f", modifiers: .command)
+                .hidden()
+            }
+            .onKeyPress(.escape) {
+                if isSearchBarVisible {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        dismissSearch()
+                    }
+                    return .handled
+                }
+                return .ignored
             }
             .overlay(alignment: .bottom) {
                 if showingCommitConfirmation, let name = lastCommitName {
@@ -566,18 +601,24 @@ private struct NoteEditorContent: View {
                 guard let sectionId = newId,
                       let section = viewModel.getSection(sectionId),
                       section.contentType != .image && section.contentType != .audio else { return }
+                // Use .bottom anchor for the last section so it scrolls into view
+                // without yanking the entire page upward (prevents flicker on Return).
+                let isLast = viewModel.sections.last?.id == sectionId
                 withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(sectionId, anchor: .top)
+                    proxy.scrollTo(sectionId, anchor: isLast ? .bottom : .top)
                 }
             }
-            .onChange(of: viewModel.sections.count) { _, _ in
-                // When a new section appears, scroll to it if it's the focus target (text sections only).
-                guard let sectionId = viewModel.focusedSectionId,
+            .onChange(of: viewModel.sections.count) { oldCount, newCount in
+                // When a new section is added, scroll to it if it's the focus target (text sections only).
+                // Skip if the count didn't increase (deletion) to avoid fighting the focus handler above.
+                guard newCount > oldCount,
+                      let sectionId = viewModel.focusedSectionId,
                       let section = viewModel.getSection(sectionId),
                       section.contentType != .image && section.contentType != .audio else { return }
+                let isLast = viewModel.sections.last?.id == sectionId
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(sectionId, anchor: .top)
+                        proxy.scrollTo(sectionId, anchor: isLast ? .bottom : .top)
                     }
                 }
             }
@@ -1483,6 +1524,17 @@ private struct NoteEditorContent: View {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
 
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isSearchBarVisible = true
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    searchFieldFocused = true
+                }
+            } label: {
+                Label("Find in Page", systemImage: "doc.text.magnifyingglass")
+            }
+
             Divider()
 
             Button(role: .destructive) {
@@ -2300,7 +2352,7 @@ private struct NoteEditorContent: View {
             dynamicHeight: $bodyEditorHeight,
             insightHighlightRanges: bodyInsightHighlightRanges
         )
-        .frame(height: max(isPageEmpty ? 100 : 22, bodyEditorHeight))
+        .frame(minHeight: max(isPageEmpty ? 100 : 22, bodyEditorHeight))
         .padding(.horizontal, 10)
         .overlay(alignment: .topLeading) {
             if isPageEmpty && !bodyFocused {
@@ -2338,6 +2390,167 @@ private struct NoteEditorContent: View {
             }
         }
         #endif
+    }
+
+    // MARK: - Find in Page
+
+    /// Represents a single search hit: either in the page body or a section.
+    struct SearchMatch: Equatable {
+        enum Location: Equatable {
+            case body
+            case section(id: String)
+        }
+        let location: Location
+        let range: Range<String.Index>
+    }
+
+    private func performSearch() {
+        guard !searchQuery.isEmpty else {
+            searchMatches = []
+            currentMatchIndex = 0
+            return
+        }
+        var matches: [SearchMatch] = []
+        let query = searchQuery.lowercased()
+
+        // Search page body
+        let bodyLower = bodyText.lowercased()
+        var searchStart = bodyLower.startIndex
+        while let range = bodyLower.range(of: query, range: searchStart..<bodyLower.endIndex) {
+            let originalRange = range.lowerBound..<range.upperBound
+            matches.append(SearchMatch(location: .body, range: originalRange))
+            searchStart = range.upperBound
+        }
+
+        // Search page title
+        let titleLower = titleText.lowercased()
+        searchStart = titleLower.startIndex
+        while let range = titleLower.range(of: query, range: searchStart..<titleLower.endIndex) {
+            let originalRange = range.lowerBound..<range.upperBound
+            matches.append(SearchMatch(location: .body, range: originalRange))
+            searchStart = range.upperBound
+        }
+
+        // Search sections
+        for section in viewModel.sections {
+            let text = section.fullContent
+            let textLower = text.lowercased()
+            var start = textLower.startIndex
+            while let range = textLower.range(of: query, range: start..<textLower.endIndex) {
+                let originalRange = range.lowerBound..<range.upperBound
+                matches.append(SearchMatch(location: .section(id: section.id), range: originalRange))
+                start = range.upperBound
+            }
+            // Also search section title
+            if let title = section.title {
+                let titleLow = title.lowercased()
+                var tStart = titleLow.startIndex
+                while let tRange = titleLow.range(of: query, range: tStart..<titleLow.endIndex) {
+                    matches.append(SearchMatch(location: .section(id: section.id), range: tRange))
+                    tStart = tRange.upperBound
+                }
+            }
+        }
+
+        searchMatches = matches
+        currentMatchIndex = matches.isEmpty ? 0 : 0
+    }
+
+    private func navigateToCurrentMatch() {
+        guard !searchMatches.isEmpty else { return }
+        let match = searchMatches[currentMatchIndex]
+        switch match.location {
+        case .body:
+            // Scroll to top / focus body
+            bodyFocused = true
+            focusedSectionId = nil
+            viewModel.focusedSectionId = nil
+        case .section(let id):
+            viewModel.focusedSectionId = id
+        }
+    }
+
+    private func nextMatch() {
+        guard !searchMatches.isEmpty else { return }
+        currentMatchIndex = (currentMatchIndex + 1) % searchMatches.count
+        navigateToCurrentMatch()
+    }
+
+    private func previousMatch() {
+        guard !searchMatches.isEmpty else { return }
+        currentMatchIndex = (currentMatchIndex - 1 + searchMatches.count) % searchMatches.count
+        navigateToCurrentMatch()
+    }
+
+    private func dismissSearch() {
+        isSearchBarVisible = false
+        searchQuery = ""
+        searchMatches = []
+        currentMatchIndex = 0
+    }
+
+    @ViewBuilder
+    private var findInPageBar: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                    .font(.subheadline)
+                TextField("Find in page", text: $searchQuery)
+                    .textFieldStyle(.plain)
+                    .font(.subheadline)
+                    .focused($searchFieldFocused)
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    #endif
+                    .onSubmit { nextMatch() }
+                    .onChange(of: searchQuery) { _, _ in performSearch() }
+                if !searchQuery.isEmpty {
+                    Button { searchQuery = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                            .font(.subheadline)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(Color(white: 0.15))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            if !searchMatches.isEmpty {
+                Text("\(currentMatchIndex + 1)/\(searchMatches.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .frame(minWidth: 36)
+            }
+
+            Button { previousMatch() } label: {
+                Image(systemName: "chevron.up")
+                    .font(.subheadline.weight(.medium))
+            }
+            .buttonStyle(.plain)
+            .disabled(searchMatches.isEmpty)
+
+            Button { nextMatch() } label: {
+                Image(systemName: "chevron.down")
+                    .font(.subheadline.weight(.medium))
+            }
+            .buttonStyle(.plain)
+            .disabled(searchMatches.isEmpty)
+
+            Button { dismissSearch() } label: {
+                Text("Done")
+                    .font(.subheadline.weight(.medium))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
     }
 }
 

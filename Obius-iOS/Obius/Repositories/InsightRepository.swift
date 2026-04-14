@@ -155,6 +155,35 @@ final class InsightRepository: ObservableObject {
         }
     }
 
+    // MARK: - Content Invalidation
+
+    /// Removes surfaced insights whose dedup keys are no longer produced by a fresh scan.
+    /// Tracked insights are dismissed (not deleted) so the user sees they were resolved.
+    func invalidateStaleInsights(freshKeys: Set<String>) async throws {
+        try await database.write { db in
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            let active = try Insight
+                .filter(Insight.Columns.status != InsightStatus.dismissed.rawValue)
+                .fetchAll(db)
+
+            for var insight in active {
+                // Skip echo insights — they have their own lifecycle
+                if insight.insightType == .upcomingEcho { continue }
+
+                guard !freshKeys.contains(insight.dedupKey) else { continue }
+
+                if insight.status == .surfaced {
+                    try Insight.deleteOne(db, key: insight.id)
+                } else {
+                    // Tracked → dismiss so user sees it resolved
+                    insight.status = .dismissed
+                    insight.updatedAt = now
+                    try insight.update(db)
+                }
+            }
+        }
+    }
+
     // MARK: - Garbage Collection
 
     /// Removes or dismisses insights whose references no longer exist.

@@ -13,6 +13,7 @@ struct IntelligenceView: View {
     @State private var pendingGoToSectionId: String?
     @State private var showingLoops = false
     @State private var showWorkspaceSheet = false
+    @State private var showMacWorkspace = false
     @State private var showingSettings = false
     @AppStorage("selectedModuleId") private var selectedModuleId: String?
     @State private var showingModulePicker = false
@@ -23,6 +24,7 @@ struct IntelligenceView: View {
     @State private var showingManageEchoes = false
     @State private var lastScanFingerprint: Int64 = 0
     @State private var selectedFilter: InsightType?
+    @State private var rescanTask: Task<Void, Never>?
 
     private var insightEngine: InsightEngine {
         InsightEngine(
@@ -239,9 +241,24 @@ struct IntelligenceView: View {
             selectedFilter = nil
             Task { await runScan() }
         }
+        .onChange(of: currentFingerprint) { _, newValue in
+            guard newValue != lastScanFingerprint else { return }
+            rescanTask?.cancel()
+            rescanTask = Task {
+                try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s debounce
+                guard !Task.isCancelled else { return }
+                await runScan()
+            }
+        }
         .navigationDestination(item: $navigateToNote) { note in
             NoteEditorView(noteId: note.id, targetSectionId: navigateSectionId)
         }
+        #if os(macOS)
+        .navigationDestination(isPresented: $showMacWorkspace) {
+            MacAIWorkspaceView()
+                .environmentObject(appState)
+        }
+        #endif
     }
 
     // MARK: - Main Content
@@ -276,7 +293,11 @@ struct IntelligenceView: View {
             .overlay {
                 WorkspaceFAB {
                     guard TierManager.shared.requireFeature(.aiWorkspace) else { return }
+                    #if os(macOS)
+                    showMacWorkspace = true
+                    #else
                     showWorkspaceSheet = true
+                    #endif
                 }
             }
         }

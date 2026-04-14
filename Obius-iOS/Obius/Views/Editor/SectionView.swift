@@ -1021,10 +1021,11 @@ struct SectionView: View {
 
     /// Calculate estimated height based on content
     private var estimatedHeight: CGFloat {
-        // Trim trailing whitespace/newlines so AI-generated content with
-        // trailing \n doesn't create empty space at the bottom of the node.
-        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lines = trimmed.components(separatedBy: "\n")
+        // Use content as-is (including trailing newlines) so the minHeight
+        // matches the text view's intrinsic size. Trimming trailing \n caused
+        // a one-frame height mismatch → visible flicker when pressing Return
+        // on the last line of the page.
+        let lines = content.components(separatedBy: "\n")
         let lineCount = max(1, lines.count)
         #if os(macOS)
         let avgCharsPerLine: CGFloat = 80
@@ -1039,7 +1040,8 @@ struct SectionView: View {
         }
         let lineHeight: CGFloat = 22
         let padding: CGFloat = 16
-        return visualLines * lineHeight + padding
+        let result = visualLines * lineHeight + padding
+        return result
     }
 
     private var contentEditor: some View {
@@ -1470,6 +1472,110 @@ class SelfSizingTextView: UITextView {
             lastWidth = bounds.width
             invalidateIntrinsicContentSize()
         }
+    }
+
+    // MARK: - Paste Sanitization
+
+    /// Override paste to strip foreign formatting from copied content (websites,
+    /// other apps) so it matches the editor's style. Preserves bold, italic, and
+    /// underline but normalizes font family, size, and color.
+    override func paste(_ sender: Any?) {
+        let pasteboard = UIPasteboard.general
+
+        // Try rich text sources — RTF first, then HTML
+        if let sanitized = sanitizedAttributedString(from: pasteboard) {
+            let location = selectedRange.location
+            textStorage.replaceCharacters(in: selectedRange, with: sanitized)
+            selectedRange = NSRange(location: location + sanitized.length, length: 0)
+            delegate?.textViewDidChange?(self)
+            return
+        }
+
+        // Plain text — insert with current typing attributes so it matches
+        if let plain = pasteboard.string {
+            let attrString = NSAttributedString(string: plain, attributes: typingAttributes)
+            let location = selectedRange.location
+            textStorage.replaceCharacters(in: selectedRange, with: attrString)
+            selectedRange = NSRange(location: location + attrString.length, length: 0)
+            delegate?.textViewDidChange?(self)
+            return
+        }
+
+        super.paste(sender)
+    }
+
+    private func sanitizedAttributedString(from pasteboard: UIPasteboard) -> NSAttributedString? {
+        // Try RTF
+        if let data = pasteboard.data(forPasteboardType: "public.rtf"),
+           let source = try? NSAttributedString(
+               data: data,
+               options: [.documentType: NSAttributedString.DocumentType.rtf],
+               documentAttributes: nil
+           ) {
+            return sanitize(source)
+        }
+        // Try HTML
+        if let data = pasteboard.data(forPasteboardType: "public.html"),
+           let source = try? NSAttributedString(
+               data: data,
+               options: [
+                   .documentType: NSAttributedString.DocumentType.html,
+                   .characterEncoding: String.Encoding.utf8.rawValue
+               ],
+               documentAttributes: nil
+           ) {
+            return sanitize(source)
+        }
+        return nil
+    }
+
+    private func sanitize(_ source: NSAttributedString) -> NSAttributedString {
+        let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+        let bodySize = bodyFont.pointSize
+        let result = NSMutableAttributedString()
+
+        source.enumerateAttributes(
+            in: NSRange(location: 0, length: source.length),
+            options: []
+        ) { attrs, range, _ in
+            let text = (source.string as NSString).substring(with: range)
+            var newAttrs: [NSAttributedString.Key: Any] = [
+                .foregroundColor: UIColor.label
+            ]
+
+            // Map bold/italic traits to the editor's font
+            if let font = attrs[.font] as? UIFont {
+                let traits = font.fontDescriptor.symbolicTraits
+                let isBold = traits.contains(.traitBold)
+                let isItalic = traits.contains(.traitItalic)
+
+                if isBold && isItalic {
+                    let desc = UIFont.systemFont(ofSize: bodySize, weight: .bold).fontDescriptor
+                    if let combined = desc.withSymbolicTraits([.traitBold, .traitItalic]) {
+                        newAttrs[.font] = UIFont(descriptor: combined, size: bodySize)
+                    } else {
+                        newAttrs[.font] = UIFont.systemFont(ofSize: bodySize, weight: .bold)
+                    }
+                } else if isBold {
+                    newAttrs[.font] = UIFont.systemFont(ofSize: bodySize, weight: .bold)
+                } else if isItalic {
+                    newAttrs[.font] = UIFont.italicSystemFont(ofSize: bodySize)
+                } else {
+                    newAttrs[.font] = bodyFont
+                }
+            } else {
+                newAttrs[.font] = bodyFont
+            }
+
+            // Preserve underline
+            if let underline = attrs[.underlineStyle] as? Int, underline != 0 {
+                newAttrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+            }
+
+            result.append(NSAttributedString(string: text, attributes: newAttrs))
+        }
+
+        return result
     }
 }
 #endif
@@ -2004,6 +2110,134 @@ struct EditableTextView: UIViewRepresentable {
     }
 }
 #elseif os(macOS)
+
+// MARK: - Paste-Sanitizing NSTextView (macOS)
+
+/// NSTextView subclass that strips foreign formatting on paste, keeping only
+/// bold, italic, and underline while normalizing to the editor's font and color.
+class PasteSanitizingTextView: NSTextView {
+
+    /// Whether this text view is embedded inside a SwiftUI ScrollView.
+    /// When true, scrollRangeToVisible is suppressed so the inner NSScrollView
+    /// doesn't fight the outer SwiftUI ScrollView (which causes flicker).
+    var suppressScrollToVisible = false
+
+    override func scrollRangeToVisible(_ range: NSRange) {
+        guard !suppressScrollToVisible else { return }
+        super.scrollRangeToVisible(range)
+    }
+
+    /// Creates a scroll view hosting this subclass (replacement for
+    /// `NSTextView.scrollableTextView()` which always creates a bare NSTextView).
+    static func makeScrollable() -> NSScrollView {
+        let textStorage = NSTextStorage()
+        let layoutManager = NSLayoutManager()
+        textStorage.addLayoutManager(layoutManager)
+        let textContainer = NSTextContainer()
+        textContainer.widthTracksTextView = true
+        textContainer.lineBreakMode = .byWordWrapping
+        layoutManager.addTextContainer(textContainer)
+
+        let textView = PasteSanitizingTextView(frame: .zero, textContainer: textContainer)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                  height: CGFloat.greatestFiniteMagnitude)
+
+        let scrollView = NSScrollView()
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    override func paste(_ sender: Any?) {
+        let pasteboard = NSPasteboard.general
+        let bodyFont = NSFont.systemFont(ofSize: 17)
+        let bodySize = bodyFont.pointSize
+
+        // Try to read rich text from pasteboard (RTF or HTML)
+        var source: NSAttributedString?
+        if let rtfData = pasteboard.data(forType: .rtf) {
+            source = try? NSAttributedString(
+                data: rtfData,
+                options: [.documentType: NSAttributedString.DocumentType.rtf],
+                documentAttributes: nil
+            )
+        } else if let htmlData = pasteboard.data(forType: .html) {
+            source = try? NSAttributedString(
+                data: htmlData,
+                options: [
+                    .documentType: NSAttributedString.DocumentType.html,
+                    .characterEncoding: String.Encoding.utf8.rawValue
+                ],
+                documentAttributes: nil
+            )
+        }
+
+        if let source = source {
+            let sanitized = NSMutableAttributedString()
+            source.enumerateAttributes(
+                in: NSRange(location: 0, length: source.length),
+                options: []
+            ) { attrs, range, _ in
+                let text = (source.string as NSString).substring(with: range)
+                var newAttrs: [NSAttributedString.Key: Any] = [
+                    .foregroundColor: NSColor.labelColor
+                ]
+
+                if let font = attrs[.font] as? NSFont {
+                    let traits = NSFontManager.shared.traits(of: font)
+                    let isBold = traits.contains(.boldFontMask)
+                    let isItalic = traits.contains(.italicFontMask)
+
+                    if isBold && isItalic {
+                        var f = NSFont.systemFont(ofSize: bodySize, weight: .bold)
+                        f = NSFontManager.shared.convert(f, toHaveTrait: .italicFontMask)
+                        newAttrs[.font] = f
+                    } else if isBold {
+                        newAttrs[.font] = NSFont.systemFont(ofSize: bodySize, weight: .bold)
+                    } else if isItalic {
+                        newAttrs[.font] = NSFontManager.shared.convert(bodyFont, toHaveTrait: .italicFontMask)
+                    } else {
+                        newAttrs[.font] = bodyFont
+                    }
+                } else {
+                    newAttrs[.font] = bodyFont
+                }
+
+                if let underline = attrs[.underlineStyle] as? Int, underline != 0 {
+                    newAttrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+                }
+
+                sanitized.append(NSAttributedString(string: text, attributes: newAttrs))
+            }
+
+            let insertionRange = selectedRange()
+            if shouldChangeText(in: insertionRange, replacementString: sanitized.string) {
+                textStorage?.replaceCharacters(in: insertionRange, with: sanitized)
+                setSelectedRange(NSRange(location: insertionRange.location + sanitized.length, length: 0))
+                didChangeText()
+            }
+            return
+        }
+
+        // Plain text — insert with current typing attributes
+        if let plain = pasteboard.string(forType: .string) {
+            let attrString = NSAttributedString(string: plain, attributes: typingAttributes)
+            let insertionRange = selectedRange()
+            if shouldChangeText(in: insertionRange, replacementString: plain) {
+                textStorage?.replaceCharacters(in: insertionRange, with: attrString)
+                setSelectedRange(NSRange(location: insertionRange.location + attrString.length, length: 0))
+                didChangeText()
+            }
+            return
+        }
+
+        super.paste(sender)
+    }
+}
+
 /// macOS editable text view using NSViewRepresentable wrapping NSTextView
 struct EditableTextView: NSViewRepresentable {
     @Binding var text: String
@@ -2023,9 +2257,10 @@ struct EditableTextView: NSViewRepresentable {
     var insightHighlightRanges: [(NSRange, PlatformColor)] = []
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSTextView.scrollableTextView()
-        let textView = scrollView.documentView as! NSTextView
+        let scrollView = PasteSanitizingTextView.makeScrollable()
+        let textView = scrollView.documentView as! PasteSanitizingTextView
         textView.delegate = context.coordinator
+        textView.suppressScrollToVisible = true
         textView.isEditable = true
         textView.isSelectable = true
         textView.isRichText = true
@@ -2039,10 +2274,15 @@ struct EditableTextView: NSViewRepresentable {
         textView.font = NSFont.systemFont(ofSize: 17)
         textView.textColor = NSColor.labelColor
 
-        // Disable scroll view scrolling — parent ScrollView handles it
+        // Disable scroll view scrolling — parent ScrollView handles it.
+        // Pin content to top so the inner NSScrollView never auto-scrolls
+        // to reveal the cursor (which fights the outer SwiftUI ScrollView
+        // and causes a visible flicker when pressing Return at the bottom).
         scrollView.hasVerticalScroller = false
         scrollView.hasHorizontalScroller = false
         scrollView.drawsBackground = false
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        scrollView.verticalScrollElasticity = .none
 
         // Load rich text if available, otherwise plain text
         // Suppress textDidChange during initial load
@@ -2285,9 +2525,11 @@ struct EditableTextView: NSViewRepresentable {
             let usedRect = layoutManager.usedRect(for: container)
             let inset = textView.textContainerInset
             let newHeight = ceil(usedRect.height + inset.height * 2)
-            DispatchQueue.main.async { [weak self] in
-                self?.parent.dynamicHeight?.wrappedValue = max(newHeight, 22)
-            }
+            let finalHeight = max(newHeight, 22)
+            // Set height synchronously so it updates in the same render pass
+            // as the text binding — async dispatch caused a one-frame desync
+            // where the text grew but the frame height lagged, producing a flicker.
+            parent.dynamicHeight?.wrappedValue = finalHeight
         }
     }
 }
