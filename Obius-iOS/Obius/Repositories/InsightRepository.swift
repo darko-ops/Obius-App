@@ -242,6 +242,10 @@ final class InsightRepository: ObservableObject {
                     }
                 } else if relatedCleaned {
                     insight.updatedAt = now
+                    // If all related references are gone, dismiss the insight
+                    if insight.relatedNoteId == nil && insight.status != .dismissed {
+                        insight.status = .dismissed
+                    }
                     try insight.update(db)
                 }
             }

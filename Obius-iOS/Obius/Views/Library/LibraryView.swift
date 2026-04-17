@@ -722,11 +722,22 @@ struct CommitsListView: View {
         .task {
             await loadCommits()
         }
+        #if os(macOS)
+        .navigationDestination(item: $selectedCommit) { commit in
+            CommitDetailSheet(
+                commit: commit,
+                noteName: noteNames[commit.noteId],
+                onDelete: { commits.removeAll { $0.id == commit.id } },
+                presentedAsSheet: false
+            )
+        }
+        #else
         .sheet(item: $selectedCommit) { commit in
             CommitDetailSheet(commit: commit, noteName: noteNames[commit.noteId]) {
                 commits.removeAll { $0.id == commit.id }
             }
         }
+        #endif
         .sheet(item: $shareSheetLink) { link in
             NodeShareSheet(
                 url: URL(string: link.url)!,
@@ -1023,6 +1034,9 @@ struct CommitDetailSheet: View {
     let commit: Commit
     let noteName: String?
     var onDelete: (() -> Void)?
+    /// When true, the view wraps itself in a NavigationStack and shows a Done button (sheet presentation).
+    /// When false, the caller has already placed the view inside a NavigationStack via `navigationDestination`.
+    var presentedAsSheet: Bool = true
 
     @State private var content: CommitContent?
     @State private var isLoading = true
@@ -1049,58 +1063,69 @@ struct CommitDetailSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if isLoading {
-                    ProgressView()
-                } else if let content = content {
-                    commitContentView(content)
-                } else {
-                    Text("Failed to load version")
-                        .foregroundStyle(.secondary)
-                }
+        if presentedAsSheet {
+            NavigationStack {
+                detailContent
             }
-            .background(Color.systemBackground)
-            .navigationTitle("")
-            .inlineNavigationTitle()
-            .toolbar {
+        } else {
+            detailContent
+        }
+    }
+
+    @ViewBuilder
+    private var detailContent: some View {
+        Group {
+            if isLoading {
+                ProgressView()
+            } else if let content = content {
+                commitContentView(content)
+            } else {
+                Text("Failed to load version")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .background(Color.systemBackground)
+        .navigationTitle("")
+        .inlineNavigationTitle()
+        .toolbar {
+            if presentedAsSheet {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
                         dismiss()
                     }
                 }
-                ToolbarItem(placement: .principal) {
-                    Image("ObiusLogo")
-                        .renderingMode(.original)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        Task { await shareFromDetail() }
-                    } label: {
-                        Image(systemName: "square.and.arrow.up")
-                    }
+            }
+            ToolbarItem(placement: .principal) {
+                Image("ObiusLogo")
+                    .renderingMode(.original)
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button {
+                    Task { await shareFromDetail() }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
                 }
             }
-            .task {
-                await loadContent()
-                await loadComments()
+        }
+        .task {
+            await loadContent()
+            await loadComments()
+        }
+        .alert("Delete Version", isPresented: $showingDeleteConfirmation) {
+            Button("Delete", role: .destructive) {
+                Task { await deleteCommit() }
             }
-            .alert("Delete Version", isPresented: $showingDeleteConfirmation) {
-                Button("Delete", role: .destructive) {
-                    Task { await deleteCommit() }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This version will be permanently removed from this device. This cannot be undone.")
-            }
-            .platformFullScreenCover(isPresented: $showingShareSheet) {
-                if let url = shareURL {
-                    NodeShareSheet(
-                        url: url,
-                        title: shareTitle,
-                        preview: sharePreview
-                    )
-                }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This version will be permanently removed from this device. This cannot be undone.")
+        }
+        .platformFullScreenCover(isPresented: $showingShareSheet) {
+            if let url = shareURL {
+                NodeShareSheet(
+                    url: url,
+                    title: shareTitle,
+                    preview: sharePreview
+                )
             }
         }
     }
@@ -1170,6 +1195,7 @@ struct CommitDetailSheet: View {
                             .padding(.vertical, 6)
                             .background(Color.gray.opacity(0.2), in: Capsule())
                     }
+                    .buttonStyle(.plain)
                 }
 
                 // Metadata card

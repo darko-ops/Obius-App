@@ -591,31 +591,23 @@ struct SuggestedAction: Identifiable {
             )
 
         case .rewritePage(let p):
-            // 1. Update body
-            let hasMarkdown = p.newBody.contains("# ") || p.newBody.contains("**") || p.newBody.contains("*")
-            let richText: String?
-            if hasMarkdown {
+            // Build the full plan, then apply in a single DB transaction.
+            // This prevents the editor from observing a half-updated note
+            // (e.g. body rewritten but sections not yet pruned), which
+            // previously caused the "body populated, 0 sections" corrupt state.
+            let bodyHasMarkdown = p.newBody.contains("# ") || p.newBody.contains("**") || p.newBody.contains("*")
+            let bodyRichText: String?
+            if bodyHasMarkdown {
                 let attributed = RichTextHelper.fromMarkdown(p.newBody)
-                richText = RichTextHelper.serialize(attributed)
+                bodyRichText = RichTextHelper.serialize(attributed)
             } else {
-                richText = nil
+                bodyRichText = nil
             }
             let plainBody = Section.stripMarkdown(p.newBody)
-            try await appState.noteRepository.updateNoteBody(p.noteId, body: plainBody, richText: richText, clearRichText: richText == nil)
 
-            // 2. Build set of section IDs to keep
             let keepIds = Set(p.keepSections.map(\.sectionId))
 
-            // 3. Get all current sections for this note and delete ones not in keepIds
-            let allSections = try await appState.sectionRepository.getSections(noteId: p.noteId)
-            for section in allSections {
-                guard section.deletedAt == nil else { continue }
-                if !keepIds.contains(section.id) {
-                    try await appState.sectionRepository.deleteSection(section.id)
-                }
-            }
-
-            // 4. Update content for kept sections that have new_content
+            var sectionUpdates: [NoteRepository.RewritePagePlan.SectionUpdate] = []
             for keep in p.keepSections {
                 guard let newContent = keep.newContent else { continue }
                 let hasMd = newContent.contains("# ") || newContent.contains("**") || newContent.contains("*")
@@ -627,10 +619,15 @@ struct SuggestedAction: Identifiable {
                     rt = nil
                 }
                 let plain = Section.stripMarkdown(newContent)
-                try await appState.sectionRepository.updateContent(keep.sectionId, content: plain, richText: rt, clearRichText: rt == nil)
+                sectionUpdates.append(.init(
+                    sectionId: keep.sectionId,
+                    content: plain,
+                    richText: rt,
+                    clearRichText: rt == nil
+                ))
             }
 
-            // 5. Write interstitial content (text between/after sections)
+            var interstitials: [NoteRepository.RewritePagePlan.Interstitial] = []
             for (key, value) in p.interstitialContent {
                 let afterId: String?
                 if key == "end" {
@@ -649,10 +646,19 @@ struct SuggestedAction: Identifiable {
                     rt = nil
                 }
                 let plain = Section.stripMarkdown(value)
-                try await appState.noteRepository.updateInterstitialContent(
-                    p.noteId, afterSectionId: afterId, content: plain, richText: rt
-                )
+                interstitials.append(.init(afterSectionId: afterId, content: plain, richText: rt))
             }
+
+            let plan = NoteRepository.RewritePagePlan(
+                noteId: p.noteId,
+                body: plainBody,
+                bodyRichText: bodyRichText,
+                clearBodyRichText: bodyRichText == nil,
+                keepSectionIds: keepIds,
+                sectionUpdates: sectionUpdates,
+                interstitials: interstitials
+            )
+            try await appState.noteRepository.applyRewritePage(plan)
         }
     }
 

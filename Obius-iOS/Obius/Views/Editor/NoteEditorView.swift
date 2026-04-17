@@ -2558,7 +2558,7 @@ private struct NoteEditorContent: View {
 
 #if os(iOS)
 /// Keyboard toolbar for body text with formatting buttons
-private class BodyKeyboardToolbar: UIToolbar {
+class BodyKeyboardToolbar: UIToolbar {
     weak var textView: UITextView?
     var onDismiss: (() -> Void)?
 
@@ -2933,6 +2933,15 @@ struct BodyTextView: UIViewRepresentable {
                let attrText = RichTextHelper.deserialize(richText) {
                 textView.attributedText = attrText
             } else {
+                // Reset typingAttributes to body defaults before reassigning
+                // .text — otherwise UITextView repaints the whole document with
+                // whatever style was last armed via the keyboard toolbar (e.g.
+                // Title at 28pt), which manifests as "all big text".
+                let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+                textView.typingAttributes = [
+                    .font: bodyFont,
+                    .foregroundColor: UIColor.label
+                ]
                 textView.text = text
             }
             textView.delegate = context.coordinator
@@ -3381,6 +3390,18 @@ struct PageHistorySheet: View {
             .task {
                 await loadCommits()
             }
+            #if os(macOS)
+            .navigationDestination(item: $selectedCommit) { commit in
+                CommitDetailSheet(
+                    commit: commit,
+                    noteName: noteName,
+                    onDelete: { commits.removeAll { $0.id == commit.id } },
+                    presentedAsSheet: false
+                )
+                    .environmentObject(appState)
+                    .environmentObject(AuthManager.shared)
+            }
+            #else
             .sheet(item: $selectedCommit) { commit in
                 CommitDetailSheet(commit: commit, noteName: noteName) {
                     commits.removeAll { $0.id == commit.id }
@@ -3388,6 +3409,7 @@ struct PageHistorySheet: View {
                     .environmentObject(appState)
                     .environmentObject(AuthManager.shared)
             }
+            #endif
         }
     }
 

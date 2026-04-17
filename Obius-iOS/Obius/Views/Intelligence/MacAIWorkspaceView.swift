@@ -31,7 +31,10 @@ struct MacAIWorkspaceView: View {
     @State private var editableTitle = ""
     @State private var editableBody = ""
     @State private var editableSectionContents: [String: String] = [:]
-    @State private var bodySelection: NSRange?
+    @State private var bodyEditorHeight: CGFloat = 22
+    @FocusState private var bodyFocused: Bool
+
+    @ObservedObject private var macFmtState = MacFormattingState.shared
 
     // MARK: - History
     @State private var isHistoryExpanded = false
@@ -690,6 +693,51 @@ struct MacAIWorkspaceView: View {
 
     // MARK: - Editor View (AI-generated page seamlessly editable)
 
+    // MARK: - Formatting Bar
+
+    @ViewBuilder
+    private var workspaceFormattingBar: some View {
+        HStack(spacing: 2) {
+            formattingButton(icon: "bold", active: macFmtState.isBold) {
+                macFmtState.applyBold()
+            }
+            formattingButton(icon: "italic", active: macFmtState.isItalic) {
+                macFmtState.applyItalic()
+            }
+            formattingButton(icon: "underline", active: macFmtState.isUnderline) {
+                macFmtState.applyUnderline()
+            }
+            formattingButton(icon: "textformat.size", active: macFmtState.isTitle) {
+                macFmtState.applyTitle()
+            }
+            Spacer()
+            if !macFmtState.hasActiveEditor {
+                Text("Click text to format")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .padding(.trailing, 4)
+            }
+        }
+    }
+
+    private func formattingButton(icon: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundStyle(active ? .white : Color(white: 0.7))
+                .frame(width: 28, height: 24)
+                .background(
+                    active
+                        ? RoundedRectangle(cornerRadius: 5).fill(Color.purple)
+                        : RoundedRectangle(cornerRadius: 5).fill(Color.clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false) // Never steal focus from the active NSTextView
+        .disabled(!macFmtState.hasActiveEditor)
+    }
+
     private func editorView(noteId: String) -> some View {
         VStack(spacing: 0) {
             // Editor toolbar
@@ -749,6 +797,16 @@ struct MacAIWorkspaceView: View {
 
             Divider().background(Color(white: 0.15))
 
+            // Formatting bar — operates on the focused NSTextView via MacFormattingState.
+            // Lets the user re-style AI-generated headings / bold / italic without
+            // having to recall keyboard shortcuts.
+            workspaceFormattingBar
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+                .background(Color(red: 0.04, green: 0.04, blue: 0.04))
+
+            Divider().background(Color(white: 0.15))
+
             // Editor content + optional chat
             HSplitView {
                 // Left: Page editor
@@ -764,14 +822,20 @@ struct MacAIWorkspaceView: View {
                                 saveEditorTitle(noteId: noteId)
                             }
 
-                        // Body
-                        BodyTextEditor(
+                        // Body — rich-text editor so AI-generated formatting
+                        // (headings, bold) is visible and user-editable.
+                        EditableTextView(
                             text: $editableBody,
-                            selectedRange: $bodySelection,
-                            onCreateNode: {},
-                            onTextChange: { saveEditorBody(noteId: noteId) }
+                            isFocused: $bodyFocused,
+                            richText: pages.first(where: { $0.id == noteId })?.bodyRichText,
+                            onContentChange: { newValue, richText in
+                                saveEditorBody(noteId: noteId, body: newValue, richText: richText)
+                            },
+                            onFocusChange: { _ in },
+                            sectionId: nil,
+                            dynamicHeight: $bodyEditorHeight
                         )
-                        .frame(minHeight: 20)
+                        .frame(minHeight: max(22, bodyEditorHeight))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.bottom, 12)
 
@@ -855,10 +919,6 @@ struct MacAIWorkspaceView: View {
 
     @ViewBuilder
     private func editorSectionRow(_ section: Section) -> some View {
-        let handleName = section.handleId
-            .flatMap { HandleManager.shared.getHandle(id: $0) }
-            .map { "@\($0.displayName)" }
-
         let binding = Binding<String>(
             get: { editableSectionContents[section.id] ?? section.content },
             set: { editableSectionContents[section.id] = $0 }
@@ -867,44 +927,12 @@ struct MacAIWorkspaceView: View {
         if section.contentType == .image || section.contentType == .audio {
             // Non-text sections: render read-only
             staticSectionRow(section)
-        } else if section.sectionType == .fold {
-            VStack(alignment: .leading, spacing: 4) {
-                if let handleName {
-                    Text(handleName)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(section.intent.color)
-                }
-                TextField("Content", text: binding, axis: .vertical)
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                    .textFieldStyle(.plain)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .onChange(of: binding.wrappedValue) { _ in
-                        saveSectionContent(sectionId: section.id)
-                    }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8).fill(section.intent.backgroundTint))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .padding(.vertical, 2)
         } else {
-            HStack(alignment: .top, spacing: 6) {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(section.intent.color.opacity(0.5))
-                    .frame(width: 2, height: 16)
-                    .padding(.top, 4)
-                TextField("Content", text: binding, axis: .vertical)
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                    .textFieldStyle(.plain)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .onChange(of: binding.wrappedValue) { _ in
-                        saveSectionContent(sectionId: section.id)
-                    }
-            }
-            .padding(.vertical, 2)
+            WorkspaceSectionEditor(
+                section: section,
+                appState: appState,
+                content: binding
+            )
         }
     }
 
@@ -1336,6 +1364,10 @@ struct MacAIWorkspaceView: View {
         let action = messages[messageIndex].actions[actionIndex]
         guard action.status == .pending else { return }
 
+        // Flip status before spawning the Task so a rapid second click is rejected
+        // by the `status == .pending` guard. On failure we revert to .failed below.
+        messages[messageIndex].actions[actionIndex] = action.withStatus(.accepted)
+
         Task {
             do {
                 try await action.execute(appState: appState)
@@ -1368,7 +1400,6 @@ struct MacAIWorkspaceView: View {
                     loadCommits(for: editorId)
                 }
 
-                messages[messageIndex].actions[actionIndex] = action.withStatus(.accepted)
                 HapticFeedback.notification(.success)
             } catch {
                 messages[messageIndex].actions[actionIndex] = action.withStatus(.failed(error.localizedDescription))
@@ -1420,20 +1451,20 @@ struct MacAIWorkspaceView: View {
         }
     }
 
-    private func saveEditorBody(noteId: String) {
-        let body = editableBody
+    private func saveEditorBody(noteId: String, body: String, richText: String?) {
         Task {
-            try? await appState.noteRepository.updateNoteBody(noteId, body: body, clearRichText: true)
-        }
-    }
-
-    private func saveSectionContent(sectionId: String) {
-        guard let content = editableSectionContents[sectionId] else { return }
-        Task {
-            try? await appState.sectionRepository.updateContent(sectionId, content: content, clearRichText: true)
+            try? await appState.noteRepository.updateNoteBody(
+                noteId,
+                body: body,
+                richText: richText,
+                clearRichText: richText == nil
+            )
         }
     }
 }
+
+// `WorkspaceSectionEditor` is defined in IntelligenceView.swift so both the
+// iOS `WorkspaceSheet` and the macOS `MacAIWorkspaceView` share one impl.
 
 // MARK: - Page Sections Preview (async-loading helper)
 

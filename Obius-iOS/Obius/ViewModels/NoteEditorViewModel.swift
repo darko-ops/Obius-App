@@ -321,7 +321,21 @@ final class NoteEditorViewModel: ObservableObject {
                 } else {
                     let existingBody = note?.body ?? ""
                     let merged = existingBody.isEmpty ? orphanedText : existingBody + "\n" + orphanedText
-                    try? await noteRepository.updateNoteBody(noteId, body: merged, clearRichText: true)
+                    // Preserve body rich text by concatenating attributed strings
+                    // instead of wiping bodyRichText — otherwise the editor falls
+                    // back to plain text and all formatting is lost.
+                    let mergedRich = Self.appendPlainToRichText(
+                        base: note?.bodyRichText,
+                        basePlain: existingBody,
+                        appendedPlain: orphanedText,
+                        appendedRich: orphanedRich
+                    )
+                    try? await noteRepository.updateNoteBody(
+                        noteId,
+                        body: merged,
+                        richText: mergedRich,
+                        clearRichText: mergedRich == nil
+                    )
                 }
             }
 
@@ -945,6 +959,39 @@ final class NoteEditorViewModel: ObservableObject {
 
     func dismissEntity(_ entity: ExtractedEntity) {
         suggestedEntities.removeAll { $0.name == entity.name }
+    }
+
+    /// Concatenate an orphaned interstitial onto the body's rich text without
+    /// losing the body's existing per-character formatting. Used during section
+    /// deletion where the orphan's content is being merged into the body.
+    ///
+    /// Returns nil when the base has no rich text AND the appended chunk has no
+    /// rich text — callers interpret nil as "no rich text; store plain text only".
+    private static func appendPlainToRichText(
+        base: String?,
+        basePlain: String,
+        appendedPlain: String,
+        appendedRich: String?
+    ) -> String? {
+        // No existing rich text and nothing rich to append → skip rich entirely.
+        if base == nil && appendedRich == nil { return nil }
+
+        let result = NSMutableAttributedString()
+        if let base = base, let baseAttr = RichTextHelper.deserialize(base) {
+            result.append(baseAttr)
+        } else if !basePlain.isEmpty {
+            result.append(NSAttributedString(string: basePlain))
+        }
+        if result.length > 0 {
+            result.append(NSAttributedString(string: "\n"))
+        }
+        if let appendedRich = appendedRich,
+           let appendedAttr = RichTextHelper.deserialize(appendedRich) {
+            result.append(appendedAttr)
+        } else {
+            result.append(NSAttributedString(string: appendedPlain))
+        }
+        return RichTextHelper.serialize(result)
     }
 
     /// Create a new section linked to an existing handle

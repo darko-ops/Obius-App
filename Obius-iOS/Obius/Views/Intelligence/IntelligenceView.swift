@@ -1040,12 +1040,14 @@ struct LoopsSheetView: View {
 // MARK: - Body Text Editor with Selection + Create Node
 
 #if os(iOS)
-/// A UITextView wrapper that supports text selection tracking.
+/// A UITextView wrapper that supports rich text, a formatting keyboard
+/// toolbar, and text-selection tracking (for "Create Node from Selection").
 struct BodyTextEditor: UIViewRepresentable {
     @Binding var text: String
     @Binding var selectedRange: NSRange?
+    var richText: String? = nil
     var onCreateNode: () -> Void
-    var onTextChange: () -> Void
+    var onTextChange: (String, String?) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -1054,23 +1056,54 @@ struct BodyTextEditor: UIViewRepresentable {
     func makeUIView(context: Context) -> WidthConstrainedTextView {
         let tv = WidthConstrainedTextView()
         tv.delegate = context.coordinator
-        tv.font = .preferredFont(forTextStyle: .caption1)
+        tv.font = .preferredFont(forTextStyle: .body)
         tv.textColor = .label
         tv.backgroundColor = .clear
         tv.isScrollEnabled = false
         tv.textContainerInset = .zero
         tv.textContainer.lineFragmentPadding = 0
         tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        // Keyboard accessory toolbar — reuses the main editor's formatting
+        // controls so AI-generated headings/bold/italic are editable in-place.
+        let toolbar = BodyKeyboardToolbar()
+        toolbar.textView = tv
+        toolbar.onDismiss = { [weak tv] in
+            tv?.resignFirstResponder()
+        }
+        tv.inputAccessoryView = toolbar
+
+        // Load rich text if present, otherwise plain text
+        if let richText = richText,
+           let attrText = RichTextHelper.deserialize(richText) {
+            tv.attributedText = attrText
+        } else {
+            tv.text = text
+        }
+        context.coordinator.lastAppliedRichText = richText
         return tv
     }
 
     func updateUIView(_ tv: WidthConstrainedTextView, context: Context) {
-        if tv.text != text {
-            // Temporarily remove delegate to prevent textViewDidChange from firing
-            // during programmatic updates, which would trigger savePageBody
+        let textChanged = tv.text != text
+        let richTextChanged = richText != context.coordinator.lastAppliedRichText
+
+        if tv.isFirstResponder && textChanged && !richTextChanged {
+            // Binding round-trip while typing — skip to avoid cursor jumps.
+            context.coordinator.lastAppliedRichText = richText
+            return
+        }
+
+        if textChanged || richTextChanged {
             tv.delegate = nil
-            tv.text = text
+            if let richText = richText,
+               let attrText = RichTextHelper.deserialize(richText) {
+                tv.attributedText = attrText
+            } else {
+                tv.text = text
+            }
             tv.delegate = context.coordinator
+            context.coordinator.lastAppliedRichText = richText
             tv.invalidateIntrinsicContentSize()
         }
     }
@@ -1094,14 +1127,32 @@ struct BodyTextEditor: UIViewRepresentable {
 
     class Coordinator: NSObject, UITextViewDelegate {
         var parent: BodyTextEditor
+        var lastAppliedRichText: String?
 
         init(_ parent: BodyTextEditor) {
             self.parent = parent
         }
 
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            if let toolbar = textView.inputAccessoryView as? BodyKeyboardToolbar {
+                toolbar.syncWithTypingAttributes()
+            }
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            // Serialize rich text on focus loss so formatting changes persist.
+            let rich = RichTextHelper.serialize(textView.attributedText)
+            let newText = textView.text ?? ""
+            parent.text = newText
+            parent.onTextChange(newText, rich)
+        }
+
         func textViewDidChange(_ textView: UITextView) {
-            parent.text = textView.text
-            parent.onTextChange()
+            let newText = textView.text ?? ""
+            parent.text = newText
+            textView.invalidateIntrinsicContentSize()
+            // Skip RTF serialization during active typing — covered by focus loss.
+            parent.onTextChange(newText, nil)
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
@@ -1111,27 +1162,128 @@ struct BodyTextEditor: UIViewRepresentable {
             } else {
                 parent.selectedRange = nil
             }
+            if let toolbar = textView.inputAccessoryView as? BodyKeyboardToolbar {
+                toolbar.syncWithTypingAttributes()
+            }
         }
     }
 }
 #else
-/// macOS body text editor using TextEditor
+/// macOS body text editor — wraps the rich-text `EditableTextView` so AI-
+/// generated headings / bold / italic are visible and editable inside the
+/// AI Workspace. `selectedRange` is accepted for signature compatibility
+/// with iOS but not currently driven — Create-Node-from-Selection is an
+/// iOS-only affordance.
 struct BodyTextEditor: View {
     @Binding var text: String
     @Binding var selectedRange: NSRange?
+    var richText: String? = nil
     var onCreateNode: () -> Void
-    var onTextChange: () -> Void
+    var onTextChange: (String, String?) -> Void
+
+    @FocusState private var bodyFocused: Bool
+    @State private var editorHeight: CGFloat = 22
 
     var body: some View {
-        TextEditor(text: $text)
-            .font(.caption)
-            .scrollContentBackground(.hidden)
-            .onChange(of: text) { _, _ in
-                onTextChange()
-            }
+        EditableTextView(
+            text: $text,
+            isFocused: $bodyFocused,
+            richText: richText,
+            onContentChange: { newValue, richText in
+                onTextChange(newValue, richText)
+            },
+            onFocusChange: { _ in },
+            sectionId: nil,
+            dynamicHeight: $editorHeight
+        )
+        .frame(minHeight: max(22, editorHeight))
     }
 }
 #endif
+
+// MARK: - Per-section rich-text editor wrapper
+
+/// Each section needs its own `@FocusState`, so this wrapper gives every row
+/// an isolated focus target while sharing the same rich-text `EditableTextView`
+/// the main editor uses. Ensures AI-generated bold/italic/headings remain
+/// visible and editable inside the AI Workspace on both platforms.
+struct WorkspaceSectionEditor: View {
+    let section: Section
+    let appState: AppState
+    @Binding var content: String
+    @FocusState private var textFieldFocused: Bool
+    @State private var editorHeight: CGFloat = 22
+
+    private var handleName: String? {
+        section.handleId
+            .flatMap { HandleManager.shared.getHandle(id: $0) }
+            .map { "@\($0.displayName)" }
+    }
+
+    var body: some View {
+        if section.sectionType == .fold {
+            VStack(alignment: .leading, spacing: 4) {
+                if let handleName {
+                    Text(handleName)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(section.intent.color)
+                }
+                editor
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(section.intent.backgroundTint))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .padding(.vertical, 2)
+        } else {
+            HStack(alignment: .top, spacing: 6) {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(section.intent.color.opacity(0.5))
+                    .frame(width: 2, height: 14)
+                    .padding(.top, 2)
+                editor
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func saveContent(_ newValue: String, _ richText: String?) {
+        Task {
+            try? await appState.sectionRepository.updateContent(
+                section.id,
+                content: newValue,
+                richText: richText,
+                clearRichText: richText == nil
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var editor: some View {
+        #if os(macOS)
+        EditableTextView(
+            text: $content,
+            isFocused: $textFieldFocused,
+            richText: section.richContent,
+            onContentChange: saveContent,
+            onFocusChange: { _ in },
+            sectionId: section.id,
+            dynamicHeight: $editorHeight
+        )
+        .frame(maxWidth: .infinity, minHeight: max(22, editorHeight), alignment: .topLeading)
+        #else
+        EditableTextView(
+            text: $content,
+            isFocused: $textFieldFocused,
+            richText: section.richContent,
+            onContentChange: saveContent,
+            onFocusChange: { _ in }
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        #endif
+    }
+}
 
 struct WorkspaceSheet: View {
     @Environment(\.dismiss) private var dismiss
@@ -1228,23 +1380,27 @@ struct WorkspaceSheet: View {
     }
 
     private static let editPlaceholders = [
-        "Lets build something...",
-        "Drop an idea here...",
-        "Give this a shape...",
-        "Initialize a concept...",
-        "Unfold the vision...",
-        "Refine the core...",
-        "Architect the thought...",
-        "Draft the intent...",
+        "What's on your mind?",
+        "Start with anything…",
+        "There's something here—write it",
+        "Don't overthink it. Just begin",
+        "Capture the spark",
+        "What are you trying to figure out?",
+        "Put it down before it disappears",
+        "This could turn into something",
+        "Start messy. We'll shape it later",
     ]
 
     private static let chatPlaceholders = [
-        "Give this a shape...",
-        "Initialize a concept...",
-        "Unfold the vision...",
-        "Refine the core...",
-        "Architect the thought...",
-        "Draft the intent...",
+        "What are you exploring?",
+        "What do you want to understand?",
+        "Let's dig into something",
+        "What's the question behind this?",
+        "Where should we start?",
+        "What's unclear right now?",
+        "Let's figure this out",
+        "What's interesting about this?",
+        "What are you trying to solve?",
     ]
 
     @State private var currentEditPlaceholder = editPlaceholders.randomElement()!
@@ -1463,8 +1619,11 @@ struct WorkspaceSheet: View {
                     BodyTextEditor(
                         text: $editableBody,
                         selectedRange: $bodySelection,
+                        richText: note.bodyRichText,
                         onCreateNode: { createNodeFromSelection(noteId: note.id) },
-                        onTextChange: { savePageBody(noteId: note.id) }
+                        onTextChange: { body, richText in
+                            savePageBody(noteId: note.id, body: body, richText: richText)
+                        }
                     )
                     .frame(minHeight: 20)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1646,58 +1805,15 @@ struct WorkspaceSheet: View {
         if section.contentType == .image || section.contentType == .audio {
             sectionRow(for: section)
         } else {
-            let handleName = section.handleId
-                .flatMap { HandleManager.shared.getHandle(id: $0) }
-                .map { "@\($0.displayName)" }
-
             let binding = Binding<String>(
                 get: { editableSectionContents[section.id] ?? section.content },
                 set: { editableSectionContents[section.id] = $0 }
             )
-
-            if section.sectionType == .fold {
-                // Node / bubble style — editable
-                VStack(alignment: .leading, spacing: 4) {
-                    if let handleName {
-                        Text(handleName)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(section.intent.color)
-                    }
-
-                    TextField("Content", text: binding, axis: .vertical)
-                        .font(.caption)
-                        .foregroundStyle(.primary)
-                        .textFieldStyle(.plain)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .onChange(of: binding.wrappedValue) { _ in
-                            DispatchQueue.main.async { saveSectionContent(sectionId: section.id) }
-                        }
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 8).fill(section.intent.backgroundTint))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .padding(.vertical, 2)
-            } else {
-                // Line style — editable
-                HStack(alignment: .top, spacing: 6) {
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(section.intent.color.opacity(0.5))
-                        .frame(width: 2, height: 14)
-                        .padding(.top, 2)
-
-                    TextField("Content", text: binding, axis: .vertical)
-                        .font(.caption)
-                        .foregroundStyle(.primary)
-                        .textFieldStyle(.plain)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .onChange(of: binding.wrappedValue) { _ in
-                            DispatchQueue.main.async { saveSectionContent(sectionId: section.id) }
-                        }
-                }
-                .padding(.vertical, 2)
-            }
+            WorkspaceSectionEditor(
+                section: section,
+                appState: appState,
+                content: binding
+            )
         }
     }
 
@@ -1757,20 +1873,14 @@ struct WorkspaceSheet: View {
         }
     }
 
-    private func savePageBody(noteId: String) {
-        let body = editableBody
+    private func savePageBody(noteId: String, body: String, richText: String?) {
         Task {
-            // Clear rich text when manually editing in the plain-text workspace editor,
-            // so stale RTF from AI edits doesn't override the new plain text in the main editor.
-            try? await appState.noteRepository.updateNoteBody(noteId, body: body, clearRichText: true)
-        }
-    }
-
-    private func saveSectionContent(sectionId: String) {
-        guard let content = editableSectionContents[sectionId] else { return }
-        Task {
-            // Clear rich text when manually editing in the plain-text workspace editor
-            try? await appState.sectionRepository.updateContent(sectionId, content: content, clearRichText: true)
+            try? await appState.noteRepository.updateNoteBody(
+                noteId,
+                body: body,
+                richText: richText,
+                clearRichText: richText == nil
+            )
         }
     }
 
@@ -2878,6 +2988,10 @@ struct WorkspaceSheet: View {
         let action = messages[messageIndex].actions[actionIndex]
         guard action.status == .pending else { return }
 
+        // Flip status before spawning the Task so a rapid second click is rejected
+        // by the `status == .pending` guard. On failure we revert to .failed below.
+        messages[messageIndex].actions[actionIndex] = action.withStatus(.accepted)
+
         Task {
             do {
                 try await action.execute(appState: appState)
@@ -2930,7 +3044,6 @@ struct WorkspaceSheet: View {
                     editableTitle = note.displayTitle(sections: cachedPageSections)
                     editableBody = note.body
                 }
-                messages[messageIndex].actions[actionIndex] = action.withStatus(.accepted)
                 isHistoryExpanded = true
 
                 // Auto-commit the change so it appears in page history
