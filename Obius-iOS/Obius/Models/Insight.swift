@@ -165,6 +165,7 @@ extension Insight {
         case .cleanup:
             switch subtype {
             case "stale":        return "clock.arrow.circlepath"
+            case "stale_page":    return "doc.text.magnifyingglass"
             case "dormant_loop":  return "moon.zzz"
             case "lonely_loop":  return "link"
             case "inactive_loop": return "sleep.circle"
@@ -187,6 +188,11 @@ extension Insight {
             }
         case .schedule:
             return "calendar.badge.clock"
+        case .progress:
+            // Momentum / streak cards share a single subtype key shape
+            // ("momentum_<iso-year>-W<week>").
+            if subtype.hasPrefix("momentum_") { return "chart.line.uptrend.xyaxis" }
+            return insightType.icon
         default:
             return insightType.icon
         }
@@ -200,6 +206,7 @@ extension Insight {
         case .cleanup:
             switch subtype {
             case "stale":        return "Stale"
+            case "stale_page":    return "Cold Page"
             case "dormant_loop":  return "Dormant"
             case "lonely_loop":  return "Lonely Loop"
             case "inactive_loop": return "Inactive"
@@ -222,6 +229,9 @@ extension Insight {
             }
         case .schedule:
             return "Schedule"
+        case .progress:
+            if subtype.hasPrefix("momentum_") { return "Momentum" }
+            return insightType.label
         default:
             return insightType.label
         }
@@ -234,13 +244,17 @@ extension Insight {
         switch insightType {
         case .cleanup:
             switch subtype {
-            case "nonsense": return .red
-            default:         return .gray
+            case "nonsense":  return .red
+            case "stale_page": return .blue
+            default:          return .gray
             }
         case .list, .link:
             return insightType.tint
         case .safety:
             return .red
+        case .progress:
+            if subtype.hasPrefix("momentum_") { return .green }
+            return insightType.tint
         default:
             return insightType.tint
         }
@@ -259,6 +273,12 @@ extension Insight {
             return 0 // P0 — critical
         case .upcomingEcho:
             return body == "Firing now" ? 1 : 3 // P1 firing, P3 upcoming
+        case .progress:
+            // Momentum/streak card: top-of-intelligence pulse. One per week,
+            // sits just under safety/firing echoes so it reads as a
+            // dashboard summary rather than an alert.
+            if subtype.hasPrefix("momentum_") { return 1 }
+            return 5
         case .list:
             return 3 // P3 — informational
         case .link:
@@ -267,8 +287,9 @@ extension Insight {
             return 2 // P2 — actionable, time-sensitive
         case .cleanup:
             switch subtype {
-            case "nonsense": return 4 // P4 — housekeeping
-            default:         return 5 // P5 — low (stale, dormant_loop, lonely_loop)
+            case "nonsense":   return 4 // P4 — housekeeping
+            case "stale_page":  return 4 // P4 — cold page nudge
+            default:           return 5 // P5 — low (stale, dormant_loop, lonely_loop)
             }
         default:
             return 5

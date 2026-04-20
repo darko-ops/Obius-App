@@ -61,8 +61,10 @@ struct IntelligenceView: View {
 
     // MARK: - Category Grouping
 
-    /// Display order for categories on the main view.
-    private static let categoryOrder: [InsightType] = [.safety, .schedule, .link, .list, .cleanup]
+    /// Display order for categories on the main view. Momentum sits near the
+    /// top so the weekly pulse card acts as a dashboard summary above the
+    /// actionable detection results.
+    private static let categoryOrder: [InsightType] = [.safety, .progress, .schedule, .link, .list, .cleanup]
 
     /// Groups surfaced (non-echo) insights by type.
     private var categoryGroups: [(type: InsightType, insights: [Insight])] {
@@ -111,6 +113,18 @@ struct IntelligenceView: View {
                             .font(.headline)
                             .foregroundStyle(.white)
                     }
+                    // Opaque black capsule keeps the project name legible when
+                    // content scrolls behind the toolbar.
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(Color.black)
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                            )
+                    )
                 }
                 .buttonStyle(.plain)
             }

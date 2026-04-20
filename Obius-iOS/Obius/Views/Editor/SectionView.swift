@@ -789,6 +789,7 @@ struct SectionView: View {
                     onStatusChange: onIntentChange
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
+                .background(TapToFocusCatcher { textFieldFocused = true })
             } else {
                 // Regular text editor using UITextView for proper edit menu support
                 EditableTextView(
@@ -808,6 +809,7 @@ struct SectionView: View {
                     onStatusChange: onIntentChange
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
+                .background(TapToFocusCatcher { textFieldFocused = true })
             }
             #else
             // macOS: use NSTextView for rich text support
@@ -1063,7 +1065,7 @@ struct SectionView: View {
                     onStatusChange: onIntentChange
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
-                // Don't add contentShape - let UITextView handle all gestures natively
+                .background(TapToFocusCatcher { textFieldFocused = true })
             } else {
                 // Regular text editor using UITextView for proper edit menu support
                 EditableTextView(
@@ -1083,7 +1085,7 @@ struct SectionView: View {
                     onStatusChange: onIntentChange
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
-                // Don't add contentShape - let UITextView handle all gestures natively
+                .background(TapToFocusCatcher { textFieldFocused = true })
             }
             #else
             // macOS: use NSTextView for rich text support
@@ -1451,6 +1453,20 @@ class SelfSizingTextView: UITextView {
         return super.gestureRecognizerShouldBegin(gestureRecognizer)
     }
 
+    // When the text view isn't first-responder, report that no point is
+    // inside it. UIKit skips routing touches to us entirely, so vertical
+    // swipes starting on unfocused text pass straight through to the parent
+    // SwiftUI ScrollView's pan gesture. A UIKit tap catcher (see
+    // `TapToFocusCatcher` at the call site) sits behind the text view and
+    // handles tap-to-focus. Once focused, super's result is returned so
+    // UITextView handles taps natively for cursor placement.
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        if !isFirstResponder {
+            return false
+        }
+        return super.point(inside: point, with: event)
+    }
+
     override var intrinsicContentSize: CGSize {
         // Use a reasonable width if bounds isn't set yet
         let width = bounds.width > 0 ? bounds.width : 300
@@ -1576,6 +1592,53 @@ class SelfSizingTextView: UITextView {
         }
 
         return result
+    }
+}
+
+// MARK: - Tap-to-Focus Catcher
+
+/// Transparent UIKit view with a single `UITapGestureRecognizer`, placed
+/// behind `SelfSizingTextView` to catch taps that fall through while the
+/// text view isn't first-responder (its `point(inside:)` returns false in
+/// that state so parent ScrollView pans can pass through for scrolling).
+///
+/// Uses a UIKit recognizer rather than SwiftUI's `.onTapGesture` because
+/// SwiftUI's tap installs a recognizer with `cancelsTouchesInView = true`,
+/// which arbitrates against UITextView's native cursor-placement tap once
+/// the text view is focused. A UIKit recognizer with
+/// `cancelsTouchesInView = false` is invisible to gesture arbitration — it
+/// only fires when the text view declines the hit, and never competes for
+/// taps that reach UITextView directly.
+struct TapToFocusCatcher: UIViewRepresentable {
+    let onTap: () -> Void
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = true
+        let tap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleTap)
+        )
+        tap.cancelsTouchesInView = false
+        tap.delaysTouchesBegan = false
+        tap.delaysTouchesEnded = false
+        view.addGestureRecognizer(tap)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.onTap = onTap
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onTap: onTap)
+    }
+
+    final class Coordinator {
+        var onTap: () -> Void
+        init(onTap: @escaping () -> Void) { self.onTap = onTap }
+        @objc func handleTap() { onTap() }
     }
 }
 #endif

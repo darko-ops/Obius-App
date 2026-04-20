@@ -200,7 +200,7 @@ struct MainTabView: View {
                         onNavigate: { noteId in
                             withAnimation { showBanner = false }
                             pendingEchoId = echo.id
-                            selectedTab = 2
+                            selectedTab = 1
                         }
                     )
                     .overlay(alignment: .topTrailing) {
@@ -217,7 +217,7 @@ struct MainTabView: View {
                     .onTapGesture {
                         withAnimation { showBanner = false }
                         pendingEchoId = echo.id
-                        selectedTab = 2
+                        selectedTab = 1
                     }
                 }
                 .padding(.horizontal, 16)
@@ -231,7 +231,7 @@ struct MainTabView: View {
             if let echoId = notification.userInfo?["echoId"] as? String {
                 DispatchQueue.main.async {
                     pendingEchoId = echoId
-                    selectedTab = 2
+                    selectedTab = 1
                 }
             }
         }
