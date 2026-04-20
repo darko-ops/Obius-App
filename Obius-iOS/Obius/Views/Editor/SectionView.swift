@@ -502,6 +502,9 @@ struct SectionView: View {
             }
         }
         .padding(.leading, CGFloat(section.indentLevel) * 24)
+        .onChange(of: textFieldFocused) { _, newValue in
+            print("[onChange textFieldFocused] section=\(section.id.prefix(8)) → \(newValue)")
+        }
         .onChange(of: isFocused) { _, newValue in
             DispatchQueue.main.async {
                 // Image/audio sections have no text field — skip focus handling
@@ -789,7 +792,11 @@ struct SectionView: View {
                     onStatusChange: onIntentChange
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
-                .background(TapToFocusCatcher { textFieldFocused = true })
+                .background(TapToFocusCatcher {
+                    print("[Closure] section TapCatcher — before: textFieldFocused=\(textFieldFocused)")
+                    textFieldFocused = true
+                    print("[Closure] section TapCatcher — after:  textFieldFocused=\(textFieldFocused)")
+                })
             } else {
                 // Regular text editor using UITextView for proper edit menu support
                 EditableTextView(
@@ -809,7 +816,11 @@ struct SectionView: View {
                     onStatusChange: onIntentChange
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
-                .background(TapToFocusCatcher { textFieldFocused = true })
+                .background(TapToFocusCatcher {
+                    print("[Closure] section TapCatcher — before: textFieldFocused=\(textFieldFocused)")
+                    textFieldFocused = true
+                    print("[Closure] section TapCatcher — after:  textFieldFocused=\(textFieldFocused)")
+                })
             }
             #else
             // macOS: use NSTextView for rich text support
@@ -1065,7 +1076,11 @@ struct SectionView: View {
                     onStatusChange: onIntentChange
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
-                .background(TapToFocusCatcher { textFieldFocused = true })
+                .background(TapToFocusCatcher {
+                    print("[Closure] section TapCatcher — before: textFieldFocused=\(textFieldFocused)")
+                    textFieldFocused = true
+                    print("[Closure] section TapCatcher — after:  textFieldFocused=\(textFieldFocused)")
+                })
             } else {
                 // Regular text editor using UITextView for proper edit menu support
                 EditableTextView(
@@ -1085,7 +1100,11 @@ struct SectionView: View {
                     onStatusChange: onIntentChange
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
-                .background(TapToFocusCatcher { textFieldFocused = true })
+                .background(TapToFocusCatcher {
+                    print("[Closure] section TapCatcher — before: textFieldFocused=\(textFieldFocused)")
+                    textFieldFocused = true
+                    print("[Closure] section TapCatcher — after:  textFieldFocused=\(textFieldFocused)")
+                })
             }
             #else
             // macOS: use NSTextView for rich text support

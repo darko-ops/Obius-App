@@ -95,6 +95,10 @@ private struct NoteEditorContent: View {
     @FocusState private var focusedSectionId: String?
     @FocusState private var bodyFocused: Bool
     @FocusState private var titleFocused: Bool
+    // Diagnostic: control @State counter to isolate whether it's @FocusState
+    // specifically that's failing to propagate writes from the TapToFocusCatcher
+    // coordinator closure, or if ALL state writes from that context are being lost.
+    @State private var bodyFocusDebugCounter: Int = 0
     @State private var emptyPlaceholder: String = PlaceholderProvider.next()
     @State private var titleVisible = true
     @State private var showingHistory = false
@@ -194,10 +198,14 @@ private struct NoteEditorContent: View {
                 }
             }
             .onChange(of: bodyFocused) { _, isFocused in
+                print("[onChange bodyFocused] SwiftUI detected change → \(isFocused)")
                 if isFocused {
                     focusedSectionId = nil
                     viewModel.focusedSectionId = nil
                 }
+            }
+            .onChange(of: bodyFocusDebugCounter) { _, n in
+                print("[onChange bodyFocusDebugCounter] SwiftUI detected change → \(n)")
             }
             .onChange(of: viewModel.isLoading) { _, isLoading in
                 if !isLoading, let body = viewModel.note?.body, body != bodyText {
@@ -2312,7 +2320,12 @@ private struct NoteEditorContent: View {
         // so parent ScrollView pans can pass through for scrolling). Uses a
         // UIKit UITapGestureRecognizer with cancelsTouchesInView = false so it
         // never interferes with UITextView's native cursor-placement tap.
-        .background(TapToFocusCatcher { bodyFocused = true })
+        .background(TapToFocusCatcher {
+            print("[Closure] body TapCatcher — before: bodyFocused=\(bodyFocused), counter=\(bodyFocusDebugCounter)")
+            bodyFocused = true
+            bodyFocusDebugCounter += 1
+            print("[Closure] body TapCatcher — after:  bodyFocused=\(bodyFocused), counter=\(bodyFocusDebugCounter)")
+        })
         .onAppear {
             bodyText = viewModel.note?.body ?? ""
         }
