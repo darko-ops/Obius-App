@@ -1462,6 +1462,34 @@ class SelfSizingTextView: UITextView {
         pan.isEnabled = false  // Only active while focused
         addGestureRecognizer(pan)
         scrollAssistPan = pan
+        saLog("configured; pan attached, disabled")
+    }
+
+    // MARK: - Scroll-Assist Debug Logging
+    //
+    // Instrumentation for diagnosing why the peer pan isn't driving scroll
+    // while focused. Prints with a `[SA id=XXXX]` tag so you can filter the
+    // Xcode console. Remove once the flow is confirmed working.
+
+    private var saShortId: String {
+        String(ObjectIdentifier(self).hashValue & 0xFFFF, radix: 16)
+    }
+
+    private func saLog(_ message: @autoclosure () -> String) {
+        print("[SA id=\(saShortId)] \(message())")
+    }
+
+    private func saLogRecognizers(label: String) {
+        let recognizers = gestureRecognizers ?? []
+        saLog("\(label) — \(recognizers.count) recognizers on text view:")
+        for (i, gr) in recognizers.enumerated() {
+            let marker = (gr === scrollAssistPan) ? "  ← ours" : ""
+            let state = gr.state.rawValue
+            print(
+                "  [\(i)] \(type(of: gr)) enabled=\(gr.isEnabled) state=\(state) "
+                + "cancelsTouchesInView=\(gr.cancelsTouchesInView)\(marker)"
+            )
+        }
     }
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -1469,6 +1497,7 @@ class SelfSizingTextView: UITextView {
         // exception, the blanket pan-block below would refuse it along with
         // UITextView's own scroll pan.
         if gestureRecognizer === scrollAssistPan {
+            saLog("shouldBegin: OUR pan → true")
             return true
         }
         // Block any UIPanGestureRecognizer on this view when scrolling is disabled.
@@ -1476,6 +1505,7 @@ class SelfSizingTextView: UITextView {
         // panGestureRecognizer that can intercept vertical swipes meant for the
         // parent scroll view. Text selection uses separate gesture types (not pan).
         if !isScrollEnabled && gestureRecognizer is UIPanGestureRecognizer {
+            saLog("shouldBegin: blocking \(type(of: gestureRecognizer)) (not ours, !isScrollEnabled)")
             return false
         }
         return super.gestureRecognizerShouldBegin(gestureRecognizer)
@@ -1483,22 +1513,60 @@ class SelfSizingTextView: UITextView {
 
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
-        if result { scrollAssistPan?.isEnabled = true }
+        if result {
+            scrollAssistPan?.isEnabled = true
+            saLog("becameFirstResponder → pan.isEnabled=true")
+            saLogRecognizers(label: "at becomeFirstResponder")
+            saLog("enclosingScrollView lookup result: \(enclosingScrollViewDescription())")
+        } else {
+            saLog("becomeFirstResponder returned false")
+        }
         return result
     }
 
     override func resignFirstResponder() -> Bool {
         let result = super.resignFirstResponder()
-        if result { scrollAssistPan?.isEnabled = false }
+        if result {
+            scrollAssistPan?.isEnabled = false
+            saLog("resignedFirstResponder → pan.isEnabled=false")
+        }
         return result
     }
 
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if isFirstResponder {
+            saLog("touchesBegan count=\(touches.count) (focused)")
+        }
+        super.touchesBegan(touches, with: event)
+    }
+
     @objc private func handleScrollAssistPan(_ recognizer: UIPanGestureRecognizer) {
-        guard isFirstResponder,
-              let scrollView = enclosingScrollView else { return }
+        let stateName: String
+        switch recognizer.state {
+        case .possible:  stateName = "possible"
+        case .began:     stateName = "began"
+        case .changed:   stateName = "changed"
+        case .ended:     stateName = "ended"
+        case .cancelled: stateName = "cancelled"
+        case .failed:    stateName = "failed"
+        default:         stateName = "?"
+        }
+        guard isFirstResponder else {
+            saLog("handler: .\(stateName) but !isFirstResponder — skipping")
+            return
+        }
+        guard let scrollView = enclosingScrollView else {
+            saLog("handler: .\(stateName) but enclosingScrollView == nil")
+            return
+        }
         switch recognizer.state {
         case .began:
             scrollAssistOffsetAtBegin = scrollView.contentOffset
+            saLog("handler: .began sv=\(type(of: scrollView)) "
+                  + "bounds=\(scrollView.bounds.size) "
+                  + "contentSize=\(scrollView.contentSize) "
+                  + "offset=\(scrollView.contentOffset) "
+                  + "inset=\(scrollView.adjustedContentInset)")
         case .changed:
             let translation = recognizer.translation(in: scrollView)
             let minY = -scrollView.adjustedContentInset.top
@@ -1510,10 +1578,15 @@ class SelfSizingTextView: UITextView {
             )
             let proposedY = scrollAssistOffsetAtBegin.y - translation.y
             let clampedY = min(max(proposedY, minY), maxY)
-            scrollView.contentOffset = CGPoint(
-                x: scrollAssistOffsetAtBegin.x,
-                y: clampedY
-            )
+            let newOffset = CGPoint(x: scrollAssistOffsetAtBegin.x, y: clampedY)
+            let before = scrollView.contentOffset
+            scrollView.contentOffset = newOffset
+            let after = scrollView.contentOffset
+            saLog("handler: .changed tr=\(translation) "
+                  + "proposed=\(proposedY) clamped=\(clampedY) "
+                  + "before=\(before) set=\(newOffset) after=\(after)")
+        case .ended, .cancelled, .failed:
+            saLog("handler: .\(stateName) finalOffset=\(scrollView.contentOffset)")
         default:
             break
         }
@@ -1528,6 +1601,21 @@ class SelfSizingTextView: UITextView {
             view = current.superview
         }
         return nil
+    }
+
+    /// Debug helper: describes what `enclosingScrollView` would return,
+    /// including the walk path (classes visited) when no scroll view is found.
+    private func enclosingScrollViewDescription() -> String {
+        var classesSeen: [String] = []
+        var view: UIView? = superview
+        while let current = view {
+            classesSeen.append(String(describing: type(of: current)))
+            if let scroll = current as? UIScrollView, scroll !== self {
+                return "\(type(of: scroll)) (after \(classesSeen.count) hops)"
+            }
+            view = current.superview
+        }
+        return "NONE — walked \(classesSeen.count) ancestors: \(classesSeen.joined(separator: " → "))"
     }
 
     // When the text view isn't first-responder, report that no point is
