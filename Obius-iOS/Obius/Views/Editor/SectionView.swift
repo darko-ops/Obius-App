@@ -790,7 +790,6 @@ struct SectionView: View {
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
                 .background(TapToFocusCatcher { textFieldFocused = true })
-                .background(FocusedScrollAssistant(isFocused: textFieldFocused))
             } else {
                 // Regular text editor using UITextView for proper edit menu support
                 EditableTextView(
@@ -811,7 +810,6 @@ struct SectionView: View {
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
                 .background(TapToFocusCatcher { textFieldFocused = true })
-                .background(FocusedScrollAssistant(isFocused: textFieldFocused))
             }
             #else
             // macOS: use NSTextView for rich text support
@@ -1068,7 +1066,6 @@ struct SectionView: View {
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
                 .background(TapToFocusCatcher { textFieldFocused = true })
-                .background(FocusedScrollAssistant(isFocused: textFieldFocused))
             } else {
                 // Regular text editor using UITextView for proper edit menu support
                 EditableTextView(
@@ -1089,7 +1086,6 @@ struct SectionView: View {
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
                 .background(TapToFocusCatcher { textFieldFocused = true })
-                .background(FocusedScrollAssistant(isFocused: textFieldFocused))
             }
             #else
             // macOS: use NSTextView for rich text support
@@ -1405,6 +1401,14 @@ struct SingleLineTextField: View {
 class SelfSizingTextView: UITextView {
     private var lastWidth: CGFloat = 0
 
+    // Peer pan for driving the enclosing ScrollView's contentOffset while
+    // focused. Attached directly to self. Disabled when not first-responder
+    // so it never fires during normal scroll-to-here-to-focus flow. See
+    // `handleScrollAssistPan(_:)` for details.
+    private let scrollAssistDelegate = ScrollAssistAllowingDelegate()
+    private var scrollAssistPan: UIPanGestureRecognizer?
+    private var scrollAssistOffsetAtBegin: CGPoint = .zero
+
     override var canBecomeFirstResponder: Bool { true }
 
     override init(frame: CGRect, textContainer: NSTextContainer?) {
@@ -1444,9 +1448,29 @@ class SelfSizingTextView: UITextView {
         // - single tap = position cursor
         // - double tap = select word + menu
         // - long press = selection handles
+
+        // Install our scroll-assist pan. We fully own it (fresh target, fresh
+        // delegate) — no existing UIKit recognizer is touched or proxied, so
+        // UITextView's default arbitration graph for tap, caret placement,
+        // selection, and loupe is preserved exactly.
+        let pan = UIPanGestureRecognizer(
+            target: self,
+            action: #selector(handleScrollAssistPan(_:))
+        )
+        pan.cancelsTouchesInView = false
+        pan.delegate = scrollAssistDelegate
+        pan.isEnabled = false  // Only active while focused
+        addGestureRecognizer(pan)
+        scrollAssistPan = pan
     }
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        // Always allow our own scroll-assist pan to begin. Without this
+        // exception, the blanket pan-block below would refuse it along with
+        // UITextView's own scroll pan.
+        if gestureRecognizer === scrollAssistPan {
+            return true
+        }
         // Block any UIPanGestureRecognizer on this view when scrolling is disabled.
         // UITextView (a UIScrollView subclass) has internal pan gestures beyond just
         // panGestureRecognizer that can intercept vertical swipes meant for the
@@ -1455,6 +1479,55 @@ class SelfSizingTextView: UITextView {
             return false
         }
         return super.gestureRecognizerShouldBegin(gestureRecognizer)
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let result = super.becomeFirstResponder()
+        if result { scrollAssistPan?.isEnabled = true }
+        return result
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let result = super.resignFirstResponder()
+        if result { scrollAssistPan?.isEnabled = false }
+        return result
+    }
+
+    @objc private func handleScrollAssistPan(_ recognizer: UIPanGestureRecognizer) {
+        guard isFirstResponder,
+              let scrollView = enclosingScrollView else { return }
+        switch recognizer.state {
+        case .began:
+            scrollAssistOffsetAtBegin = scrollView.contentOffset
+        case .changed:
+            let translation = recognizer.translation(in: scrollView)
+            let minY = -scrollView.adjustedContentInset.top
+            let maxY = max(
+                minY,
+                scrollView.contentSize.height
+                    - scrollView.bounds.height
+                    + scrollView.adjustedContentInset.bottom
+            )
+            let proposedY = scrollAssistOffsetAtBegin.y - translation.y
+            let clampedY = min(max(proposedY, minY), maxY)
+            scrollView.contentOffset = CGPoint(
+                x: scrollAssistOffsetAtBegin.x,
+                y: clampedY
+            )
+        default:
+            break
+        }
+    }
+
+    private var enclosingScrollView: UIScrollView? {
+        var view: UIView? = superview
+        while let current = view {
+            if let scroll = current as? UIScrollView, scroll !== self {
+                return scroll
+            }
+            view = current.superview
+        }
+        return nil
     }
 
     // When the text view isn't first-responder, report that no point is
@@ -1646,125 +1719,20 @@ struct TapToFocusCatcher: UIViewRepresentable {
     }
 }
 
-// MARK: - Focused Scroll Assistant
+// MARK: - Scroll-Assist Pan Delegate
 
-/// While its associated text view is first-responder, adds a peer
-/// `UIPanGestureRecognizer` to the enclosing `UIScrollView` that drives
-/// `contentOffset` directly. The default scroll pan loses to UITextView's
-/// focused-state arbitration and can't fire; this peer recognizer is a
-/// sibling that *we own* — fresh delegate, `cancelsTouchesInView = false`,
-/// votes `shouldRecognizeSimultaneouslyWith = true` for everything — so it
-/// runs alongside tap-to-position, selection drag, and loupe without
-/// competing for them.
-///
-/// Deliberately does not swap any existing delegate (earlier attempts that
-/// proxied the text view's or scroll view's pan delegate broke caret
-/// placement in ways that couldn't be reproduced by reading the code).
-struct FocusedScrollAssistant: UIViewRepresentable {
-    let isFocused: Bool
-
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.backgroundColor = .clear
-        // Host view exists only as a witness for the SwiftUI hierarchy —
-        // the actual recognizer lives on the enclosing scroll view, not here.
-        view.isUserInteractionEnabled = false
-        return view
-    }
-
-    func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.syncFocus(isFocused: isFocused, hostView: uiView)
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
-        coordinator.uninstall()
-    }
-
-    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-        private weak var installedScrollView: UIScrollView?
-        private var pan: UIPanGestureRecognizer?
-        private var offsetAtBegin: CGPoint = .zero
-
-        func syncFocus(isFocused: Bool, hostView: UIView) {
-            if isFocused {
-                install(from: hostView)
-            } else {
-                uninstall()
-            }
-        }
-
-        fileprivate func install(from hostView: UIView) {
-            guard pan == nil else { return }
-
-            var view: UIView? = hostView.superview
-            while let current = view {
-                if let scroll = current as? UIScrollView {
-                    installedScrollView = scroll
-                    break
-                }
-                view = current.superview
-            }
-            guard let scrollView = installedScrollView else { return }
-
-            let recognizer = UIPanGestureRecognizer(
-                target: self,
-                action: #selector(handlePan(_:))
-            )
-            recognizer.cancelsTouchesInView = false
-            recognizer.delegate = self
-            scrollView.addGestureRecognizer(recognizer)
-            pan = recognizer
-        }
-
-        fileprivate func uninstall() {
-            guard let recognizer = pan, let scrollView = installedScrollView else {
-                pan = nil
-                installedScrollView = nil
-                return
-            }
-            scrollView.removeGestureRecognizer(recognizer)
-            pan = nil
-            installedScrollView = nil
-        }
-
-        @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
-            guard let scrollView = installedScrollView else { return }
-            switch recognizer.state {
-            case .began:
-                offsetAtBegin = scrollView.contentOffset
-            case .changed:
-                let translation = recognizer.translation(in: scrollView)
-                let minY = -scrollView.adjustedContentInset.top
-                let maxY = max(
-                    minY,
-                    scrollView.contentSize.height
-                        - scrollView.bounds.height
-                        + scrollView.adjustedContentInset.bottom
-                )
-                let proposedY = offsetAtBegin.y - translation.y
-                let clampedY = min(max(proposedY, minY), maxY)
-                scrollView.contentOffset = CGPoint(x: offsetAtBegin.x, y: clampedY)
-            default:
-                break
-            }
-        }
-
-        // MARK: - UIGestureRecognizerDelegate
-
-        func gestureRecognizer(
-            _ gestureRecognizer: UIGestureRecognizer,
-            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
-        ) -> Bool {
-            // Coexist with every other recognizer in the scroll-view subtree
-            // — text-view taps, selection drag, loupe, context-menu long-press,
-            // the scroll view's own pan. We only drive contentOffset; we don't
-            // fight anyone for touches.
-            return true
-        }
+/// Delegate for `SelfSizingTextView`'s peer scroll-assist pan. Votes `true`
+/// for every arbitration question so the pan coexists with UITextView's
+/// own recognizers (tap/caret placement, selection drag, loupe) and with
+/// the enclosing scroll view's built-in pan. Apple's docs guarantee that
+/// one side returning `true` is enough to allow simultaneous recognition,
+/// so the internal UIKit delegates voting `false` (default) don't block us.
+final class ScrollAssistAllowingDelegate: NSObject, UIGestureRecognizerDelegate {
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+    ) -> Bool {
+        return true
     }
 }
 #endif
