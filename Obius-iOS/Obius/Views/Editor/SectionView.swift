@@ -2361,6 +2361,7 @@ struct EditableTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: SelfSizingTextView, context: Context) {
+        print("[EditableTextView] updateUIView isFocused=\(isFocused.wrappedValue) isFR=\(textView.isFirstResponder)")
         // Never push text back into the text view while the user is actively editing —
         // this prevents cursor jumping and formatting being stripped.
         if !textView.isFirstResponder, textView.text != text {
@@ -3260,6 +3261,7 @@ struct TemplateProtectedTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: SelfSizingTextView, context: Context) {
+        print("[TemplateProtectedTextView] updateUIView isFocused=\(isFocused.wrappedValue) isFR=\(textView.isFirstResponder)")
         // Never push text back while the user is actively editing —
         // prevents cursor jumping and formatting being stripped.
         if !textView.isFirstResponder {

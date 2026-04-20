@@ -2914,6 +2914,7 @@ struct BodyTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: SelfSizingTextView, context: Context) {
+        print("[BodyTextView] updateUIView isFocused=\(isFocused.wrappedValue) isFR=\(textView.isFirstResponder)")
         let textChanged = textView.text != text
         let richTextChanged = richText != context.coordinator.lastAppliedRichText
 
@@ -3008,6 +3009,7 @@ struct BodyTextView: UIViewRepresentable {
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
+            print("[BodyTextView.Coordinator] textViewDidBeginEditing (UIKit says this text view is now editing)")
             parent.isFocused.wrappedValue = true
             // Sync toolbar button states with current typing attributes
             if let toolbar = textView.inputAccessoryView as? BodyKeyboardToolbar {
