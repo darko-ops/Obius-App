@@ -95,10 +95,13 @@ private struct NoteEditorContent: View {
     @FocusState private var focusedSectionId: String?
     @FocusState private var bodyFocused: Bool
     @FocusState private var titleFocused: Bool
-    // Diagnostic: control @State counter to isolate whether it's @FocusState
-    // specifically that's failing to propagate writes from the TapToFocusCatcher
-    // coordinator closure, or if ALL state writes from that context are being lost.
-    @State private var bodyFocusDebugCounter: Int = 0
+    // Trigger for body focus requests coming from UIKit gesture closures.
+    // @FocusState writes are silently dropped when performed from an escaping
+    // closure held by a gesture recognizer coordinator — only @State writes
+    // propagate from that context. So the TapToFocusCatcher closure bumps
+    // this @State integer, and an `.onChange` handler running inside SwiftUI's
+    // view-update context performs the actual @FocusState write, which works.
+    @State private var bodyFocusRequest: Int = 0
     @State private var emptyPlaceholder: String = PlaceholderProvider.next()
     @State private var titleVisible = true
     @State private var showingHistory = false
@@ -198,14 +201,15 @@ private struct NoteEditorContent: View {
                 }
             }
             .onChange(of: bodyFocused) { _, isFocused in
-                print("[onChange bodyFocused] SwiftUI detected change → \(isFocused)")
                 if isFocused {
                     focusedSectionId = nil
                     viewModel.focusedSectionId = nil
                 }
             }
-            .onChange(of: bodyFocusDebugCounter) { _, n in
-                print("[onChange bodyFocusDebugCounter] SwiftUI detected change → \(n)")
+            .onChange(of: bodyFocusRequest) { _, _ in
+                // Running in SwiftUI view-update context → @FocusState write
+                // propagates here (unlike the gesture-closure path).
+                bodyFocused = true
             }
             .onChange(of: viewModel.isLoading) { _, isLoading in
                 if !isLoading, let body = viewModel.note?.body, body != bodyText {
@@ -2321,10 +2325,10 @@ private struct NoteEditorContent: View {
         // UIKit UITapGestureRecognizer with cancelsTouchesInView = false so it
         // never interferes with UITextView's native cursor-placement tap.
         .background(TapToFocusCatcher {
-            print("[Closure] body TapCatcher — before: bodyFocused=\(bodyFocused), counter=\(bodyFocusDebugCounter)")
-            bodyFocused = true
-            bodyFocusDebugCounter += 1
-            print("[Closure] body TapCatcher — after:  bodyFocused=\(bodyFocused), counter=\(bodyFocusDebugCounter)")
+            // @FocusState writes from this closure are silently dropped; bump
+            // a @State trigger instead and let `.onChange` perform the real
+            // focus transition from SwiftUI's view-update context.
+            bodyFocusRequest += 1
         })
         .onAppear {
             bodyText = viewModel.note?.body ?? ""

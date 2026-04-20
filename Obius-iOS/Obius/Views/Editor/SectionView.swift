@@ -415,6 +415,11 @@ struct SectionView: View {
     @State private var imageDominantColor: Color?
     @State private var imageNodeBackground: PlatformImage?
     @FocusState private var textFieldFocused: Bool
+    // Trigger for focus requests from UIKit gesture closures — @FocusState
+    // writes are silently dropped from that context, so we bump a @State
+    // integer and transition to focus via `.onChange` (SwiftUI view-update
+    // context, where @FocusState writes propagate correctly).
+    @State private var textFieldFocusRequest: Int = 0
 
     @StateObject private var biometricManager = BiometricManager.shared
     
@@ -502,8 +507,12 @@ struct SectionView: View {
             }
         }
         .padding(.leading, CGFloat(section.indentLevel) * 24)
-        .onChange(of: textFieldFocused) { _, newValue in
-            print("[onChange textFieldFocused] section=\(section.id.prefix(8)) → \(newValue)")
+        .onChange(of: textFieldFocusRequest) { _, _ in
+            // Running in SwiftUI view-update context → @FocusState write
+            // propagates (gesture-closure writes are silently dropped).
+            textFieldFocused = true
+            isEditing = true
+            onFocus()
         }
         .onChange(of: isFocused) { _, newValue in
             DispatchQueue.main.async {
@@ -793,9 +802,10 @@ struct SectionView: View {
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
                 .background(TapToFocusCatcher {
-                    print("[Closure] section TapCatcher — before: textFieldFocused=\(textFieldFocused)")
-                    textFieldFocused = true
-                    print("[Closure] section TapCatcher — after:  textFieldFocused=\(textFieldFocused)")
+                    // @FocusState writes from this closure are silently
+                    // dropped; bump a @State trigger instead and let
+                    // `.onChange` transition to focus.
+                    textFieldFocusRequest += 1
                 })
             } else {
                 // Regular text editor using UITextView for proper edit menu support
@@ -817,9 +827,10 @@ struct SectionView: View {
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
                 .background(TapToFocusCatcher {
-                    print("[Closure] section TapCatcher — before: textFieldFocused=\(textFieldFocused)")
-                    textFieldFocused = true
-                    print("[Closure] section TapCatcher — after:  textFieldFocused=\(textFieldFocused)")
+                    // @FocusState writes from this closure are silently
+                    // dropped; bump a @State trigger instead and let
+                    // `.onChange` transition to focus.
+                    textFieldFocusRequest += 1
                 })
             }
             #else
@@ -1077,9 +1088,10 @@ struct SectionView: View {
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
                 .background(TapToFocusCatcher {
-                    print("[Closure] section TapCatcher — before: textFieldFocused=\(textFieldFocused)")
-                    textFieldFocused = true
-                    print("[Closure] section TapCatcher — after:  textFieldFocused=\(textFieldFocused)")
+                    // @FocusState writes from this closure are silently
+                    // dropped; bump a @State trigger instead and let
+                    // `.onChange` transition to focus.
+                    textFieldFocusRequest += 1
                 })
             } else {
                 // Regular text editor using UITextView for proper edit menu support
@@ -1101,9 +1113,10 @@ struct SectionView: View {
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
                 .background(TapToFocusCatcher {
-                    print("[Closure] section TapCatcher — before: textFieldFocused=\(textFieldFocused)")
-                    textFieldFocused = true
-                    print("[Closure] section TapCatcher — after:  textFieldFocused=\(textFieldFocused)")
+                    // @FocusState writes from this closure are silently
+                    // dropped; bump a @State trigger instead and let
+                    // `.onChange` transition to focus.
+                    textFieldFocusRequest += 1
                 })
             }
             #else
