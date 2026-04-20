@@ -1515,12 +1515,13 @@ class SelfSizingTextView: UITextView, UIGestureRecognizerDelegate {
         }
         guard coexistingScrollPan != nil else { return }
 
-        // Proxy delegate only on pan/long-press families. The tap-to-position
-        // UITapGestureRecognizer stays untouched so cursor placement is
-        // unaffected.
+        // Proxy delegate only on pan recognizers (the selection-drag family
+        // that blocks the outer scroll). UITextView also installs long-press
+        // recognizers for caret-placement and loupe with near-zero minimum
+        // duration — proxying those would gate tap-to-position on the scroll
+        // pan failing and the cursor would never move. Leave them alone.
         for recognizer in gestureRecognizers ?? [] {
-            guard recognizer is UIPanGestureRecognizer
-                || recognizer is UILongPressGestureRecognizer else { continue }
+            guard recognizer is UIPanGestureRecognizer else { continue }
             originalGestureDelegates[ObjectIdentifier(recognizer)] = recognizer.delegate
             recognizer.delegate = self
         }
