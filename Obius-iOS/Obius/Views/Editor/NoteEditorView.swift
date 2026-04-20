@@ -2964,6 +2964,7 @@ struct BodyTextView: UIViewRepresentable {
         applyInsightHighlights(to: textView)
 
         if isFocused.wrappedValue && !textView.isFirstResponder {
+            print("[BodyTextView] updateUIView → calling textView.becomeFirstResponder()")
             textView.becomeFirstResponder()
         }
     }

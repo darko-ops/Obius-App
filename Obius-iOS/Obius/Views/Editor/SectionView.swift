@@ -1406,7 +1406,7 @@ class SelfSizingTextView: UITextView {
     // so it never fires during normal scroll-to-here-to-focus flow. See
     // `handleScrollAssistPan(_:)` for details.
     private let scrollAssistDelegate = ScrollAssistAllowingDelegate()
-    private var scrollAssistPan: UIPanGestureRecognizer?
+    private var scrollAssistPan: VerticalOnlyPan?
     private var scrollAssistOffsetAtBegin: CGPoint = .zero
 
     override var canBecomeFirstResponder: Bool { true }
@@ -1452,12 +1452,18 @@ class SelfSizingTextView: UITextView {
         // Install our scroll-assist pan. We fully own it (fresh target, fresh
         // delegate) — no existing UIKit recognizer is touched or proxied, so
         // UITextView's default arbitration graph for tap, caret placement,
-        // selection, and loupe is preserved exactly.
-        let pan = UIPanGestureRecognizer(
+        // selection, and loupe is preserved exactly. The recognizer is a
+        // `VerticalOnlyPan` subclass that fails fast on anything that isn't
+        // a clear vertical drag, so taps / horizontal drags / small jitter
+        // never engage it and can't perturb the tap-to-position pipeline.
+        let pan = VerticalOnlyPan(
             target: self,
             action: #selector(handleScrollAssistPan(_:))
         )
         pan.cancelsTouchesInView = false
+        pan.delaysTouchesBegan = false
+        pan.delaysTouchesEnded = false
+        pan.maximumNumberOfTouches = 1
         pan.delegate = scrollAssistDelegate
         pan.isEnabled = false  // Only active while focused
         addGestureRecognizer(pan)
@@ -1803,7 +1809,10 @@ struct TapToFocusCatcher: UIViewRepresentable {
     final class Coordinator {
         var onTap: () -> Void
         init(onTap: @escaping () -> Void) { self.onTap = onTap }
-        @objc func handleTap() { onTap() }
+        @objc func handleTap() {
+            print("[TapCatcher] tap fired → onTap()")
+            onTap()
+        }
     }
 }
 
@@ -1821,6 +1830,73 @@ final class ScrollAssistAllowingDelegate: NSObject, UIGestureRecognizerDelegate 
         shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
     ) -> Bool {
         return true
+    }
+}
+
+// MARK: - Vertical-Only Pan
+
+/// `UIPanGestureRecognizer` subclass that only enters `.began` on a clear
+/// vertical drag. Horizontal swipes and small jitter cause immediate
+/// `.failed` so taps, caret placement, and other touch pipelines aren't
+/// perturbed by the recognizer's presence in arbitration.
+///
+/// Rationale: a vanilla pan will eventually fail on a pure tap (no
+/// movement), but during the arbitration window UIKit may still wait on
+/// it — which on UITextView has been observed to block tap-to-position.
+/// This subclass fails fast on every touch that isn't a vertical drag, so
+/// the pan is essentially invisible to taps and horizontal gestures.
+final class VerticalOnlyPan: UIPanGestureRecognizer {
+    private var startLocation: CGPoint?
+    private static let activationDistance: CGFloat = 8
+
+    override func reset() {
+        super.reset()
+        startLocation = nil
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesBegan(touches, with: event)
+        if let window = view?.window {
+            startLocation = touches.first?.location(in: window)
+        } else {
+            startLocation = touches.first?.location(in: view)
+        }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        // Once we've entered .began, defer entirely to the default
+        // UIPanGestureRecognizer behavior — it tracks translation correctly.
+        if state != .possible {
+            super.touchesMoved(touches, with: event)
+            return
+        }
+
+        guard let touch = touches.first, let start = startLocation else {
+            super.touchesMoved(touches, with: event)
+            return
+        }
+        let current = (view?.window).map { touch.location(in: $0) } ?? touch.location(in: view)
+        let dx = current.x - start.x
+        let dy = current.y - start.y
+        let absDx = abs(dx)
+        let absDy = abs(dy)
+
+        // Clearly horizontal → fail so this recognizer exits the arbitration
+        // graph immediately and the next one (e.g. a horizontal swipe) can win.
+        if absDx >= Self.activationDistance && absDx > absDy * 1.5 {
+            state = .failed
+            return
+        }
+
+        // Not yet enough vertical movement to count as a drag → stay
+        // `.possible` without feeding super, so the recognizer doesn't
+        // transition prematurely.
+        if absDy < Self.activationDistance {
+            return
+        }
+
+        // Clear vertical drag → let super begin tracking as usual.
+        super.touchesMoved(touches, with: event)
     }
 }
 #endif
@@ -2306,7 +2382,9 @@ struct EditableTextView: UIViewRepresentable {
         }
 
         if isFocused.wrappedValue && !textView.isFirstResponder {
+            print("[EditableTextView] updateUIView → dispatching becomeFirstResponder")
             DispatchQueue.main.async {
+                print("[EditableTextView] async → calling textView.becomeFirstResponder()")
                 textView.becomeFirstResponder()
             }
         }
@@ -3199,7 +3277,9 @@ struct TemplateProtectedTextView: UIViewRepresentable {
 
         // Handle focus
         if isFocused.wrappedValue && !textView.isFirstResponder {
+            print("[TemplateProtectedTextView] updateUIView → dispatching becomeFirstResponder")
             DispatchQueue.main.async {
+                print("[TemplateProtectedTextView] async → calling textView.becomeFirstResponder()")
                 textView.becomeFirstResponder()
             }
         }
