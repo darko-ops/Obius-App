@@ -2313,6 +2313,7 @@ private struct NoteEditorContent: View {
         // UIKit UITapGestureRecognizer with cancelsTouchesInView = false so it
         // never interferes with UITextView's native cursor-placement tap.
         .background(TapToFocusCatcher { bodyFocused = true })
+        .background(FocusedScrollAssistant(isFocused: bodyFocused))
         .onAppear {
             bodyText = viewModel.note?.body ?? ""
         }
