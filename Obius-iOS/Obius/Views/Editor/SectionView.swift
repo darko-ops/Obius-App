@@ -1398,8 +1398,16 @@ struct SingleLineTextField: View {
 #if os(iOS)
 /// A UITextView subclass that properly calculates its intrinsic content size
 /// and uses native UIKit text selection (like iMessage composer)
-class SelfSizingTextView: UITextView {
+class SelfSizingTextView: UITextView, UIGestureRecognizerDelegate {
     private var lastWidth: CGFloat = 0
+
+    // Scoped gesture-coexistence state: populated while `isFirstResponder` is
+    // true, cleared on resign. Lets a focused text view share vertical pans
+    // with the enclosing SwiftUI ScrollView so the page can still scroll
+    // while the keyboard is up. See `installScrollCoexistence()` for the
+    // full explanation.
+    private var originalGestureDelegates: [ObjectIdentifier: UIGestureRecognizerDelegate?] = [:]
+    private weak var coexistingScrollPan: UIPanGestureRecognizer?
 
     override var canBecomeFirstResponder: Bool { true }
 
@@ -1465,6 +1473,152 @@ class SelfSizingTextView: UITextView {
             return false
         }
         return super.point(inside: point, with: event)
+    }
+
+    // MARK: - Scroll Coexistence (focused state)
+    //
+    // While focused, UITextView's internal pan/long-press recognizers
+    // (selection drag, loupe, drag-interaction) arbitrate against the
+    // enclosing SwiftUI ScrollView's pan and win, leaving the page
+    // scroll-locked until the keyboard is dismissed. Proxying their
+    // delegates lets us vote "yes, recognize simultaneously with the
+    // scroll pan" and "yes, yield if the scroll pan activates first" —
+    // so a vertical swipe starting on focused text still scrolls.
+    //
+    // Scope is tight: only while `isFirstResponder`. The unfocused case
+    // is already handled by `point(inside:)` returning false.
+
+    override func becomeFirstResponder() -> Bool {
+        let result = super.becomeFirstResponder()
+        if result { installScrollCoexistence() }
+        return result
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let result = super.resignFirstResponder()
+        if result { uninstallScrollCoexistence() }
+        return result
+    }
+
+    private func installScrollCoexistence() {
+        guard coexistingScrollPan == nil else { return }
+
+        // Walk up to the enclosing UIScrollView — that's SwiftUI ScrollView's
+        // underlying host. `self` is itself a UIScrollView, so skip it.
+        var view: UIView? = superview
+        while let current = view {
+            if let scroll = current as? UIScrollView, scroll !== self {
+                coexistingScrollPan = scroll.panGestureRecognizer
+                break
+            }
+            view = current.superview
+        }
+        guard coexistingScrollPan != nil else { return }
+
+        // Proxy delegate only on pan/long-press families. The tap-to-position
+        // UITapGestureRecognizer stays untouched so cursor placement is
+        // unaffected.
+        for recognizer in gestureRecognizers ?? [] {
+            guard recognizer is UIPanGestureRecognizer
+                || recognizer is UILongPressGestureRecognizer else { continue }
+            originalGestureDelegates[ObjectIdentifier(recognizer)] = recognizer.delegate
+            recognizer.delegate = self
+        }
+    }
+
+    private func uninstallScrollCoexistence() {
+        for recognizer in gestureRecognizers ?? [] {
+            let key = ObjectIdentifier(recognizer)
+            if let original = originalGestureDelegates[key] {
+                recognizer.delegate = original
+            }
+        }
+        originalGestureDelegates.removeAll()
+        coexistingScrollPan = nil
+    }
+
+    // MARK: - UIGestureRecognizerDelegate
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+    ) -> Bool {
+        if other === coexistingScrollPan { return true }
+        return forwardedDelegateBool(
+            for: gestureRecognizer,
+            default: false
+        ) { $0.gestureRecognizer?(gestureRecognizer, shouldRecognizeSimultaneouslyWith: other) }
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldBeRequiredToFailBy other: UIGestureRecognizer
+    ) -> Bool {
+        // Our selection/loupe gestures yield when the enclosing scroll pan
+        // activates — this is what prevents the "scroll-locked while focused"
+        // state without changing cursor-placement taps (which are handled by
+        // a different recognizer not touched here).
+        if other === coexistingScrollPan { return true }
+        return forwardedDelegateBool(
+            for: gestureRecognizer,
+            default: false
+        ) { $0.gestureRecognizer?(gestureRecognizer, shouldBeRequiredToFailBy: other) }
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRequireFailureOf other: UIGestureRecognizer
+    ) -> Bool {
+        forwardedDelegateBool(
+            for: gestureRecognizer,
+            default: false
+        ) { $0.gestureRecognizer?(gestureRecognizer, shouldRequireFailureOf: other) }
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldReceive touch: UITouch
+    ) -> Bool {
+        forwardedDelegateBool(
+            for: gestureRecognizer,
+            default: true
+        ) { $0.gestureRecognizer?(gestureRecognizer, shouldReceive: touch) }
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldReceive press: UIPress
+    ) -> Bool {
+        forwardedDelegateBool(
+            for: gestureRecognizer,
+            default: true
+        ) { $0.gestureRecognizer?(gestureRecognizer, shouldReceive: press) }
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldReceive event: UIEvent
+    ) -> Bool {
+        forwardedDelegateBool(
+            for: gestureRecognizer,
+            default: true
+        ) { $0.gestureRecognizer?(gestureRecognizer, shouldReceive: event) }
+    }
+
+    /// Forward a delegate call to the recognizer's original delegate (saved
+    /// at install time). Returns `defaultValue` if the original delegate
+    /// didn't implement the method or wasn't set.
+    private func forwardedDelegateBool(
+        for gestureRecognizer: UIGestureRecognizer,
+        default defaultValue: Bool,
+        call: (UIGestureRecognizerDelegate) -> Bool?
+    ) -> Bool {
+        let key = ObjectIdentifier(gestureRecognizer)
+        if let original = originalGestureDelegates[key] ?? nil,
+           let result = call(original) {
+            return result
+        }
+        return defaultValue
     }
 
     override var intrinsicContentSize: CGSize {
