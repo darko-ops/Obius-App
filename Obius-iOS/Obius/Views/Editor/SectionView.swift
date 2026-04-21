@@ -1855,99 +1855,81 @@ struct TapToFocusCatcher: UIViewRepresentable {
         init(onTap: @escaping () -> Void) { self.onTap = onTap }
 
         @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
-            print("[TapCatcher] tap fired → onTap()")
-
-            // Capture the tap location before invoking onTap — onTap triggers
-            // a SwiftUI state change that may tear down / rebuild views, so
-            // the recognizer's reference frame could become stale.
-            let locationInHost = hostView.map { recognizer.location(in: $0) } ?? .zero
-
-            // Trigger the SwiftUI focus flow (bumps a @State trigger — the
-            // caller's .onChange handler performs the @FocusState transition
-            // in view-update context where that write propagates).
-            onTap()
-
-            // Find the text view the user actually tapped on. With multiple
-            // sections on a page, the catcher's sibling subtree may yield
-            // several candidates; pick the one whose frame is closest (in
-            // window coordinates) to the tap point.
-            guard let hostView = hostView else { return }
-            let tapInWindow = hostView.convert(locationInHost, to: nil)
-            guard let textView = Self.findNearestTextView(from: hostView, tapInWindow: tapInWindow) else { return }
-            let pointInTextView = hostView.convert(locationInHost, to: textView)
-
-            // Defer one main-queue turn so the @State→@FocusState→
-            // updateUIView→becomeFirstResponder chain has completed first;
-            // setting selectedTextRange requires the view to be first
-            // responder and for layout to be up to date.
-            DispatchQueue.main.async { [weak textView] in
-                guard let textView = textView else { return }
-                if !textView.isFirstResponder {
-                    _ = textView.becomeFirstResponder()
-                }
-                // Guard against nonsense points. If the tap point is outside
-                // the text view's bounds (with a small tolerance), we
-                // resolved the wrong sibling or the layout shifted — don't
-                // force the cursor somewhere weird. UITextView's default
-                // cursor placement on becomeFirstResponder is acceptable.
-                let bounds = textView.bounds.insetBy(dx: -8, dy: -8)
-                guard bounds.contains(pointInTextView) else {
-                    print("[TapCatcher] tap point \(pointInTextView) outside textView bounds \(textView.bounds) — skipping cursor placement")
-                    return
-                }
-                if let position = textView.closestPosition(to: pointInTextView),
-                   let range = textView.textRange(from: position, to: position) {
-                    textView.selectedTextRange = range
-                    print("[TapCatcher] placed cursor at tap location \(pointInTextView)")
-                }
-            }
-        }
-
-        /// Collect candidate text views from `host`'s sibling subtree (and one
-        /// level up as fallback), then pick the one whose frame in window
-        /// coordinates is closest to `tapInWindow`. This is robust across
-        /// multi-section pages where the host's immediate siblings may or
-        /// may not contain the target text view and where a naïve "first
-        /// match" can return an unrelated text view elsewhere on the page.
-        private static func findNearestTextView(from host: UIView, tapInWindow: CGPoint) -> UITextView? {
-            guard let parent = host.superview else { return nil }
-
-            var candidates: [UITextView] = []
-            for subview in parent.subviews where subview !== host {
-                collectDescendantTextViews(in: subview, into: &candidates)
-            }
-            if candidates.isEmpty, let grandparent = parent.superview {
-                for subview in grandparent.subviews where subview !== parent {
-                    collectDescendantTextViews(in: subview, into: &candidates)
-                }
-            }
-            guard !candidates.isEmpty else { return nil }
-            if candidates.count == 1 { return candidates[0] }
-
-            return candidates.min { a, b in
-                let aRect = a.convert(a.bounds, to: nil)
-                let bRect = b.convert(b.bounds, to: nil)
-                return distance(from: tapInWindow, to: aRect)
-                    < distance(from: tapInWindow, to: bRect)
-            }
-        }
-
-        private static func collectDescendantTextViews(in view: UIView, into result: inout [UITextView]) {
-            if let tv = view as? UITextView {
-                result.append(tv)
+            guard let hostView = hostView else {
+                print("[TapCatcher] tap fired, no hostView → onTap only")
+                onTap()
                 return
             }
-            for subview in view.subviews {
-                collectDescendantTextViews(in: subview, into: &result)
+            let locationInHost = recognizer.location(in: hostView)
+
+            guard let window = hostView.window else {
+                print("[TapCatcher] tap fired at \(locationInHost), no window → onTap only")
+                onTap()
+                return
+            }
+            let locationInWindow = hostView.convert(locationInHost, to: nil)
+            print("[TapCatcher] tap fired; hostLoc=\(locationInHost) windowLoc=\(locationInWindow)")
+
+            // Find the UITextView the user actually tapped on via a geometric
+            // hit-test rooted at the window. Walking the window hierarchy and
+            // checking frame containment is immune to SwiftUI's sibling
+            // layout quirks — whichever text view is visually under the
+            // tap wins regardless of how the view tree is nested.
+            guard let textView = Self.findTextView(at: locationInWindow, in: window) else {
+                print("[TapCatcher] no UITextView at \(locationInWindow) → onTap only")
+                onTap()
+                return
+            }
+            let tvFrame = textView.convert(textView.bounds, to: nil)
+            print("[TapCatcher] resolved textView with windowFrame=\(tvFrame)")
+
+            // Trigger the SwiftUI focus-sync flow. Redundant with the direct
+            // becomeFirstResponder below but keeps the @State trigger /
+            // .onChange / @FocusState side of the world in sync so other
+            // observers (focusedSectionId, isEditing, etc.) update correctly.
+            onTap()
+
+            // Synchronously focus the text view and place the cursor. Doing
+            // this in the same run-loop turn as the tap avoids any race with
+            // the @State → @FocusState → updateUIView → becomeFirstResponder
+            // chain which runs asynchronously.
+            if !textView.isFirstResponder {
+                let ok = textView.becomeFirstResponder()
+                print("[TapCatcher] becomeFirstResponder returned \(ok)")
+            }
+
+            let pointInTextView = window.convert(locationInWindow, to: textView)
+            print("[TapCatcher] placing cursor at pointInTextView=\(pointInTextView) bounds=\(textView.bounds)")
+            if let position = textView.closestPosition(to: pointInTextView),
+               let range = textView.textRange(from: position, to: position) {
+                textView.selectedTextRange = range
+                print("[TapCatcher] cursor placed")
+            } else {
+                print("[TapCatcher] closestPosition/textRange returned nil")
             }
         }
 
-        /// Distance from `point` to the nearest edge of `rect`. Zero if
-        /// `rect` contains `point`.
-        private static func distance(from point: CGPoint, to rect: CGRect) -> CGFloat {
-            let dx = max(0, max(rect.minX - point.x, point.x - rect.maxX))
-            let dy = max(0, max(rect.minY - point.y, point.y - rect.maxY))
-            return (dx * dx + dy * dy).squareRoot()
+        /// Deepest `UITextView` whose frame in window coordinates contains
+        /// `windowPoint`. Traverses subviews in reverse (topmost first) so
+        /// overlapping siblings resolve to the visually-frontmost match.
+        ///
+        /// This is a pure geometric search — it ignores `point(inside:)`
+        /// overrides (our `SelfSizingTextView` returns `false` when
+        /// unfocused, which would normally hide it from UIKit hit-testing)
+        /// and SwiftUI's sibling layout. Whichever text view is
+        /// actually under the finger at the tap point wins.
+        private static func findTextView(at windowPoint: CGPoint, in root: UIView) -> UITextView? {
+            if root.isHidden { return nil }
+            let frameInWindow = root.convert(root.bounds, to: nil)
+            guard frameInWindow.contains(windowPoint) else { return nil }
+
+            for subview in root.subviews.reversed() {
+                if let match = findTextView(at: windowPoint, in: subview) {
+                    return match
+                }
+            }
+
+            return root as? UITextView
         }
     }
 }
