@@ -1812,6 +1812,14 @@ class SelfSizingTextView: UITextView {
 /// `cancelsTouchesInView = false` is invisible to gesture arbitration — it
 /// only fires when the text view declines the hit, and never competes for
 /// taps that reach UITextView directly.
+///
+/// On tap, triggers the `onTap` callback (used to drive SwiftUI focus via a
+/// @State trigger — @FocusState writes from this context are silently
+/// dropped), *and* replicates UITextView's native "tap = focus + cursor-
+/// at-tap-location" behavior by walking the view tree to find the sibling
+/// UITextView and setting its `selectedTextRange` at the tap point. Without
+/// this, the first tap focuses but the cursor lands wherever UITextView
+/// puts it by default (usually end of text), not where the user tapped.
 struct TapToFocusCatcher: UIViewRepresentable {
     let onTap: () -> Void
 
@@ -1821,17 +1829,19 @@ struct TapToFocusCatcher: UIViewRepresentable {
         view.isUserInteractionEnabled = true
         let tap = UITapGestureRecognizer(
             target: context.coordinator,
-            action: #selector(Coordinator.handleTap)
+            action: #selector(Coordinator.handleTap(_:))
         )
         tap.cancelsTouchesInView = false
         tap.delaysTouchesBegan = false
         tap.delaysTouchesEnded = false
         view.addGestureRecognizer(tap)
+        context.coordinator.hostView = view
         return view
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
         context.coordinator.onTap = onTap
+        context.coordinator.hostView = uiView
     }
 
     func makeCoordinator() -> Coordinator {
@@ -1840,10 +1850,68 @@ struct TapToFocusCatcher: UIViewRepresentable {
 
     final class Coordinator {
         var onTap: () -> Void
+        weak var hostView: UIView?
+
         init(onTap: @escaping () -> Void) { self.onTap = onTap }
-        @objc func handleTap() {
+
+        @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
             print("[TapCatcher] tap fired → onTap()")
+
+            // Capture the tap location before invoking onTap — onTap triggers
+            // a SwiftUI state change that may tear down / rebuild views, so
+            // the recognizer's reference frame could become stale.
+            let locationInHost = hostView.map { recognizer.location(in: $0) } ?? .zero
+
+            // Trigger the SwiftUI focus flow (bumps a @State trigger — the
+            // caller's .onChange handler performs the @FocusState transition
+            // in view-update context where that write propagates).
             onTap()
+
+            // Now replicate UITextView's tap-to-position that we intercepted.
+            guard let hostView = hostView,
+                  let textView = Self.findSiblingTextView(from: hostView) else { return }
+            let pointInTextView = hostView.convert(locationInHost, to: textView)
+
+            // Defer one main-queue turn so the @State→@FocusState→
+            // updateUIView→becomeFirstResponder chain has completed first;
+            // setting selectedTextRange requires the view to be first
+            // responder and for layout to be up to date.
+            DispatchQueue.main.async { [weak textView] in
+                guard let textView = textView else { return }
+                if !textView.isFirstResponder {
+                    _ = textView.becomeFirstResponder()
+                }
+                if let position = textView.closestPosition(to: pointInTextView),
+                   let range = textView.textRange(from: position, to: position) {
+                    textView.selectedTextRange = range
+                    print("[TapCatcher] placed cursor at tap location \(pointInTextView)")
+                }
+            }
+        }
+
+        /// Walks from `host`'s siblings (and one level up, to catch nested
+        /// SwiftUI hosting) looking for a UITextView.
+        private static func findSiblingTextView(from host: UIView) -> UITextView? {
+            guard let parent = host.superview else { return nil }
+            for subview in parent.subviews where subview !== host {
+                if let tv = findDescendantTextView(in: subview) { return tv }
+            }
+            // SwiftUI hosting can nest the text view one level deeper than
+            // the catcher. Widen the search one ancestor up if needed.
+            if let grandparent = parent.superview {
+                for subview in grandparent.subviews where subview !== parent {
+                    if let tv = findDescendantTextView(in: subview) { return tv }
+                }
+            }
+            return nil
+        }
+
+        private static func findDescendantTextView(in view: UIView) -> UITextView? {
+            if let tv = view as? UITextView { return tv }
+            for subview in view.subviews {
+                if let tv = findDescendantTextView(in: subview) { return tv }
+            }
+            return nil
         }
     }
 }
