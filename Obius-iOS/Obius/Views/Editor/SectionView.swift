@@ -1867,9 +1867,13 @@ struct TapToFocusCatcher: UIViewRepresentable {
             // in view-update context where that write propagates).
             onTap()
 
-            // Now replicate UITextView's tap-to-position that we intercepted.
-            guard let hostView = hostView,
-                  let textView = Self.findSiblingTextView(from: hostView) else { return }
+            // Find the text view the user actually tapped on. With multiple
+            // sections on a page, the catcher's sibling subtree may yield
+            // several candidates; pick the one whose frame is closest (in
+            // window coordinates) to the tap point.
+            guard let hostView = hostView else { return }
+            let tapInWindow = hostView.convert(locationInHost, to: nil)
+            guard let textView = Self.findNearestTextView(from: hostView, tapInWindow: tapInWindow) else { return }
             let pointInTextView = hostView.convert(locationInHost, to: textView)
 
             // Defer one main-queue turn so the @State→@FocusState→
@@ -1881,6 +1885,16 @@ struct TapToFocusCatcher: UIViewRepresentable {
                 if !textView.isFirstResponder {
                     _ = textView.becomeFirstResponder()
                 }
+                // Guard against nonsense points. If the tap point is outside
+                // the text view's bounds (with a small tolerance), we
+                // resolved the wrong sibling or the layout shifted — don't
+                // force the cursor somewhere weird. UITextView's default
+                // cursor placement on becomeFirstResponder is acceptable.
+                let bounds = textView.bounds.insetBy(dx: -8, dy: -8)
+                guard bounds.contains(pointInTextView) else {
+                    print("[TapCatcher] tap point \(pointInTextView) outside textView bounds \(textView.bounds) — skipping cursor placement")
+                    return
+                }
                 if let position = textView.closestPosition(to: pointInTextView),
                    let range = textView.textRange(from: position, to: position) {
                     textView.selectedTextRange = range
@@ -1889,29 +1903,51 @@ struct TapToFocusCatcher: UIViewRepresentable {
             }
         }
 
-        /// Walks from `host`'s siblings (and one level up, to catch nested
-        /// SwiftUI hosting) looking for a UITextView.
-        private static func findSiblingTextView(from host: UIView) -> UITextView? {
+        /// Collect candidate text views from `host`'s sibling subtree (and one
+        /// level up as fallback), then pick the one whose frame in window
+        /// coordinates is closest to `tapInWindow`. This is robust across
+        /// multi-section pages where the host's immediate siblings may or
+        /// may not contain the target text view and where a naïve "first
+        /// match" can return an unrelated text view elsewhere on the page.
+        private static func findNearestTextView(from host: UIView, tapInWindow: CGPoint) -> UITextView? {
             guard let parent = host.superview else { return nil }
+
+            var candidates: [UITextView] = []
             for subview in parent.subviews where subview !== host {
-                if let tv = findDescendantTextView(in: subview) { return tv }
+                collectDescendantTextViews(in: subview, into: &candidates)
             }
-            // SwiftUI hosting can nest the text view one level deeper than
-            // the catcher. Widen the search one ancestor up if needed.
-            if let grandparent = parent.superview {
+            if candidates.isEmpty, let grandparent = parent.superview {
                 for subview in grandparent.subviews where subview !== parent {
-                    if let tv = findDescendantTextView(in: subview) { return tv }
+                    collectDescendantTextViews(in: subview, into: &candidates)
                 }
             }
-            return nil
+            guard !candidates.isEmpty else { return nil }
+            if candidates.count == 1 { return candidates[0] }
+
+            return candidates.min { a, b in
+                let aRect = a.convert(a.bounds, to: nil)
+                let bRect = b.convert(b.bounds, to: nil)
+                return distance(from: tapInWindow, to: aRect)
+                    < distance(from: tapInWindow, to: bRect)
+            }
         }
 
-        private static func findDescendantTextView(in view: UIView) -> UITextView? {
-            if let tv = view as? UITextView { return tv }
-            for subview in view.subviews {
-                if let tv = findDescendantTextView(in: subview) { return tv }
+        private static func collectDescendantTextViews(in view: UIView, into result: inout [UITextView]) {
+            if let tv = view as? UITextView {
+                result.append(tv)
+                return
             }
-            return nil
+            for subview in view.subviews {
+                collectDescendantTextViews(in: subview, into: &result)
+            }
+        }
+
+        /// Distance from `point` to the nearest edge of `rect`. Zero if
+        /// `rect` contains `point`.
+        private static func distance(from point: CGPoint, to rect: CGRect) -> CGFloat {
+            let dx = max(0, max(rect.minX - point.x, point.x - rect.maxX))
+            let dy = max(0, max(rect.minY - point.y, point.y - rect.maxY))
+            return (dx * dx + dy * dy).squareRoot()
         }
     }
 }
