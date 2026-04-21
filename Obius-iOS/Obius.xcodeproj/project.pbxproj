@@ -59,6 +59,7 @@
 		B8A1D0010000000000000046 /* NoteEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000046 /* NoteEditorView.swift */; };
 		B8A1D0010000000000000047 /* SectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000047 /* SectionView.swift */; };
 		B8A1D0010000000000000048 /* IntelligenceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000048 /* IntelligenceView.swift */; };
+		B8A1D0010000000000000503 /* MacAIWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000503 /* MacAIWorkspaceView.swift */; };
 		B8A1D0010000000000000049 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000049 /* LibraryView.swift */; };
 		B8A1D0010000000000000050 /* NoteRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000050 /* NoteRowView.swift */; };
 		B8A1D0010000000000000104 /* BlockDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000104 /* BlockDetailView.swift */; };
@@ -66,6 +67,11 @@
 		B8A1D0010000000000000052 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000052 /* SearchView.swift */; };
 		B8A1D0010000000000000053 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000053 /* SettingsView.swift */; };
 		B8A1D0010000000000000056 /* Echo.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000056 /* Echo.swift */; };
+		B8A1D0010000000000000400 /* CalendarMemo.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000400 /* CalendarMemo.swift */; };
+		B8A1D0010000000000000401 /* CalendarMemoRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000401 /* CalendarMemoRepository.swift */; };
+		B8A1D0010000000000000500 /* NoteIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000500 /* NoteIndex.swift */; };
+		B8A1D0010000000000000501 /* NoteIndexRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000501 /* NoteIndexRepository.swift */; };
+		B8A1D0010000000000000502 /* ContextAssembler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000502 /* ContextAssembler.swift */; };
 		B8A1D0010000000000000057 /* EchoRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000057 /* EchoRepository.swift */; };
 		B8A1D0010000000000000058 /* EchoManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000058 /* EchoManager.swift */; };
 		B8A1D0010000000000000059 /* EchoConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000059 /* EchoConfigSheet.swift */; };
@@ -73,6 +79,7 @@
 		B8A1D0010000000000000301 /* WorkspaceTerminalPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000301 /* WorkspaceTerminalPanel.swift */; };
 		B8A1D0010000000000000302 /* MacSidebarProjectList.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000302 /* MacSidebarProjectList.swift */; };
 		B8A1D0010000000000000303 /* MacWelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000303 /* MacWelcomeView.swift */; };
+		B8A1D0010000000000000304 /* EchoCalendarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000304 /* EchoCalendarView.swift */; };
 		B8A1D0010000000000000060 /* ImageNodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000060 /* ImageNodeView.swift */; };
 		B8A1D0010000000000000061 /* ImagePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000061 /* ImagePickerView.swift */; };
 		B8A1D0030000000000000001 /* ActivityViewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0030000000000000001 /* ActivityViewSheet.swift */; };
@@ -201,6 +208,7 @@
 		B8A1F0010000000000000046 /* NoteEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteEditorView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000047 /* SectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000048 /* IntelligenceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntelligenceView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000503 /* MacAIWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacAIWorkspaceView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000049 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000050 /* NoteRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteRowView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000104 /* BlockDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockDetailView.swift; sourceTree = "<group>"; };
@@ -208,6 +216,11 @@
 		B8A1F0010000000000000052 /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000053 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000056 /* Echo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Echo.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000400 /* CalendarMemo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarMemo.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000401 /* CalendarMemoRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarMemoRepository.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000500 /* NoteIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteIndex.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000501 /* NoteIndexRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteIndexRepository.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000502 /* ContextAssembler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextAssembler.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000057 /* EchoRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoRepository.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000058 /* EchoManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoManager.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000059 /* EchoConfigSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoConfigSheet.swift; sourceTree = "<group>"; };
@@ -215,6 +228,7 @@
 		B8A1F0010000000000000301 /* WorkspaceTerminalPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTerminalPanel.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000302 /* MacSidebarProjectList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSidebarProjectList.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000303 /* MacWelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacWelcomeView.swift; sourceTree = "<group>"; };
+		B8A1F0010000000000000304 /* EchoCalendarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoCalendarView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000060 /* ImageNodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageNodeView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000061 /* ImagePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePickerView.swift; sourceTree = "<group>"; };
 		B8A1F0030000000000000001 /* ActivityViewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityViewSheet.swift; sourceTree = "<group>"; };
@@ -346,6 +360,7 @@
 				B8A1G0010000000000000009 /* Sync */,
 				B8A1G0010000000000000010 /* Utilities */,
 				B8A1F0090000000000000003 /* InsightEngine.swift */,
+				B8A1F0010000000000000502 /* ContextAssembler.swift */,
 				B8A1F0200000000000000090 /* TierManager.swift */,
 				B8A1F0200000000000000091 /* StoreManager.swift */,
 				B8A1F0200000000000000094 /* SubscriptionAnalytics.swift */,
@@ -425,6 +440,7 @@
 			children = (
 				B8A1F0010000000000000020 /* Commit.swift */,
 				B8A1F0010000000000000056 /* Echo.swift */,
+				B8A1F0010000000000000400 /* CalendarMemo.swift */,
 				B8A1F0010000000000000021 /* Handle.swift */,
 				B8A1F0010000000000000022 /* IntentType.swift */,
 				B8A1F0010000000000000023 /* Media.swift */,
@@ -437,6 +453,7 @@
 				B8A1F0090000000000000001 /* Insight.swift */,
 				B8A1F0090000000000000030 /* SuggestedAction.swift */,
 				B8A1F0090000000000000032 /* ExtractedEntity.swift */,
+				B8A1F0010000000000000500 /* NoteIndex.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -446,6 +463,7 @@
 			children = (
 				B8A1F0010000000000000027 /* CommitRepository.swift */,
 				B8A1F0010000000000000057 /* EchoRepository.swift */,
+				B8A1F0010000000000000401 /* CalendarMemoRepository.swift */,
 				B8A1F0010000000000000028 /* HandleRepository.swift */,
 				B8A1F0010000000000000029 /* MediaRepository.swift */,
 				B8A1F0080000000000000002 /* ModuleRepository.swift */,
@@ -454,6 +472,7 @@
 				B8A1F0020000000000000004 /* CommentRepository.swift */,
 				B8A1F0020000000000000003 /* ShareLinkRepository.swift */,
 				B8A1F0090000000000000002 /* InsightRepository.swift */,
+				B8A1F0010000000000000501 /* NoteIndexRepository.swift */,
 			);
 			path = Repositories;
 			sourceTree = "<group>";
@@ -536,6 +555,8 @@
 			isa = PBXGroup;
 			children = (
 				B8A1F0010000000000000048 /* IntelligenceView.swift */,
+				B8A1F0010000000000000503 /* MacAIWorkspaceView.swift */,
+				B8A1F0010000000000000304 /* EchoCalendarView.swift */,
 				B8A1F0090000000000000004 /* InsightCardView.swift */,
 				B8A1F0090000000000000031 /* ActionCardView.swift */,
 			);
@@ -785,6 +806,7 @@
 				B8A1D0010000000000000046 /* NoteEditorView.swift in Sources */,
 				B8A1D0010000000000000047 /* SectionView.swift in Sources */,
 				B8A1D0010000000000000048 /* IntelligenceView.swift in Sources */,
+				B8A1D0010000000000000503 /* MacAIWorkspaceView.swift in Sources */,
 				B8A1D0010000000000000049 /* LibraryView.swift in Sources */,
 				B8A1D0010000000000000050 /* NoteRowView.swift in Sources */,
 				B8A1D0010000000000000051 /* NotesListView.swift in Sources */,
@@ -792,6 +814,8 @@
 				B8A1D0010000000000000052 /* SearchView.swift in Sources */,
 				B8A1D0010000000000000053 /* SettingsView.swift in Sources */,
 				B8A1D0010000000000000056 /* Echo.swift in Sources */,
+				B8A1D0010000000000000400 /* CalendarMemo.swift in Sources */,
+				B8A1D0010000000000000401 /* CalendarMemoRepository.swift in Sources */,
 				B8A1D0010000000000000057 /* EchoRepository.swift in Sources */,
 				B8A1D0010000000000000058 /* EchoManager.swift in Sources */,
 				B8A1D0010000000000000059 /* EchoConfigSheet.swift in Sources */,
@@ -799,6 +823,7 @@
 				B8A1D0010000000000000301 /* WorkspaceTerminalPanel.swift in Sources */,
 				B8A1D0010000000000000302 /* MacSidebarProjectList.swift in Sources */,
 				B8A1D0010000000000000303 /* MacWelcomeView.swift in Sources */,
+				B8A1D0010000000000000304 /* EchoCalendarView.swift in Sources */,
 				B8A1D0020000000000000001 /* ShareLink.swift in Sources */,
 				B8A1D0020000000000000002 /* Comment.swift in Sources */,
 				B8A1D0020000000000000003 /* ShareLinkRepository.swift in Sources */,
@@ -825,6 +850,9 @@
 				B8A1D0090000000000000001 /* Insight.swift in Sources */,
 				B8A1D0090000000000000002 /* InsightRepository.swift in Sources */,
 				B8A1D0090000000000000003 /* InsightEngine.swift in Sources */,
+				B8A1D0010000000000000500 /* NoteIndex.swift in Sources */,
+				B8A1D0010000000000000501 /* NoteIndexRepository.swift in Sources */,
+				B8A1D0010000000000000502 /* ContextAssembler.swift in Sources */,
 				B8A1D0090000000000000004 /* InsightCardView.swift in Sources */,
 				B8A1D0090000000000000030 /* SuggestedAction.swift in Sources */,
 				B8A1D0090000000000000031 /* ActionCardView.swift in Sources */,

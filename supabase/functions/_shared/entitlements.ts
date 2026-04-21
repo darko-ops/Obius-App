@@ -196,7 +196,7 @@ export async function getTokensUsedToday(
 export async function requireEntityCreate(
   supabase: SupabaseClient,
   userId: string,
-  entityType: 'note' | 'section',
+  entityType: string,
   noteId?: string,
 ): Promise<Response | null> {
   const { tier } = await getUserTier(supabase, userId);

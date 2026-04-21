@@ -156,37 +156,23 @@ const TOOL_DEFINITIONS = [
       required: ['section_id', 'section_preview', 'new_content'],
     },
   },
+  // create_section removed — users create nodes manually
   {
-    name: 'create_section',
+    name: 'update_interstitial_content',
     description:
-      'Create a new section (node or line) on the focused page. Use this when the user asks to add a node, create a section, convert content into a node, turn text into nodes, or restructure a page into sections. Call this tool MULTIPLE TIMES to create several nodes at once.',
+      'Update the text that appears between or after sections (nodes). Use this to write body text below a specific node, or after all nodes. The page body (before sections) is separate — use update_page_body for that.',
     input_schema: {
       type: 'object',
       properties: {
-        note_id: { type: 'string', description: 'The UUID of the page to add the section to' },
+        note_id: { type: 'string', description: 'The UUID of the page' },
         note_title: { type: 'string', description: 'The title of the page (for the confirmation card)' },
-        content: { type: 'string', description: 'The content for the new section' },
-        section_type: {
-          type: 'string',
-          enum: ['fold', 'line'],
-          description: 'fold = node with colored background, line = plain text',
-        },
-        content_type: {
-          type: 'string',
-          enum: ['text', 'checklist', 'code', 'quote'],
-          description: 'The content type (default: text)',
-        },
         after_section_id: {
           type: 'string',
-          description: 'Insert after this section ID. Null or omitted = add at the end.',
+          description: 'The section ID to place text after. Use null or omit to place text after ALL sections (at the very end of the page).',
         },
-        intent: {
-          type: 'string',
-          enum: ['idea', 'question', 'task', 'evidence'],
-          description: 'The intent/color for the new section (default: idea)',
-        },
+        new_content: { type: 'string', description: 'The full text content to place after the specified section (or at the end). Empty string to clear.' },
       },
-      required: ['note_id', 'content', 'section_type'],
+      required: ['note_id', 'note_title', 'new_content'],
     },
   },
   {
@@ -246,6 +232,11 @@ const TOOL_DEFINITIONS = [
             required: ['section_id'],
           },
         },
+        interstitial_content: {
+          type: 'object',
+          description: 'Optional text to place between or after sections. Keys are "after_<section_id>" for text after a specific section, or "end" for text after all sections. Values are the text content.',
+          additionalProperties: { type: 'string' },
+        },
         summary: { type: 'string', description: 'A short human-readable summary of what changed (e.g. "Removed 3 task nodes and trimmed the intro")' },
       },
       required: ['note_id', 'note_title', 'new_body', 'keep_sections', 'summary'],
@@ -295,6 +286,71 @@ async function getExtractEntitiesSystem(): Promise<string> {
     'Analyze note sections for recurring entities. Return a JSON array.';
 }
 
+// ---------- Adaptive token budgeting ----------
+
+/**
+ * Estimate the right max_tokens based on the user's request.
+ * Short edits get a small budget; content generation gets a large one.
+ */
+function estimateMaxTokens(messages: { role: string; content: string }[]): number {
+  const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')?.content?.toLowerCase() || '';
+
+  // Extreme — user explicitly wants maximum length output
+  const extremePatterns = [
+    /\b(as\s+(long|detailed|much)\s+as\s+(possible|you\s+can))\b/,
+    /\b(don'?t\s+(hold\s+back|limit|truncate|cut\s+(short|off)|stop\s+early))\b/,
+    /\b(maximum|max)\s+(length|detail|depth|output)\b/,
+    /\b(keep\s+going|make\s+it\s+longer|extend|expand\s+(on\s+)?(this|that|it))\b/,
+    /\b(longer|more\s+detail|not\s+enough|too\s+short|finish\s+it|continue)\b/,
+  ];
+
+  // Heavy — content generation (essays, analyses, stories)
+  const heavyPatterns = [
+    /\b(essay|analysis|analy[sz]e|report|article|story|chapter|guide|tutorial|review|critique|breakdown|deep\s*dive)\b/,
+    /\b(write|create|generate|build|draft|compose|produce|develop)\b.*\b(full|detailed|comprehensive|complete|thorough|in[- ]depth|extensive|long[- ]form)\b/,
+    /\b(full|detailed|comprehensive|complete|thorough|in[- ]depth|extensive|long[- ]form)\b.*\b(write|create|generate|build|draft|compose|produce|develop)\b/,
+    /\b(explain|describe|summarize|compare)\b.*\b(detail|depth|thorough)/,
+    /\bfill\s+(out|in)\s+(this|the)\s+(page|note|doc)/,
+  ];
+
+  // Medium — standard content creation
+  const mediumPatterns = [
+    /\b(write|create|generate|build)\s+(me\s+)?(a|an|the)\s+\w+/,
+    /\b(outline|summarize|explain|describe)\b/,
+  ];
+
+  // Light — quick targeted changes
+  const lightPatterns = [
+    /\b(rename|retitle|change\s+the\s+title|fix\s+typo|correct|update\s+the\s+intent)\b/,
+    /\b(delete|remove)\s+(this|the|that)\s+(section|node|line)\b/,
+    /\b(set|change|update)\s+(intent|status|tag)\b/,
+    /\b(move|reorder|indent|outdent)\b/,
+  ];
+
+  // Check in order: light → medium → heavy → extreme
+  for (const p of lightPatterns) {
+    if (p.test(lastUserMsg)) return 2048;
+  }
+
+  for (const p of extremePatterns) {
+    if (p.test(lastUserMsg)) return 32768;
+  }
+
+  for (const p of heavyPatterns) {
+    if (p.test(lastUserMsg)) return 16384;
+  }
+
+  for (const p of mediumPatterns) {
+    if (p.test(lastUserMsg)) return 8192;
+  }
+
+  // Long instructions suggest the user wants a substantial response
+  if (lastUserMsg.length > 300) return 8192;
+
+  // Default — enough for a section rewrite or a couple of paragraphs
+  return 4096;
+}
+
 // ---------- Action handlers ----------
 
 interface ActionRequest {
@@ -311,12 +367,13 @@ async function handleSendWithTools(body: ActionRequest, userId: string, supabase
   }
 
   const system = await systemPromptForSendWithTools(noteContext);
+  const maxTokens = estimateMaxTokens(messages);
 
   const raw = await sendRaw(
     messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
     {
       model: MODELS.architect,
-      maxTokens: 4096,
+      maxTokens,
       system,
       tools: TOOL_DEFINITIONS,
     }
@@ -336,11 +393,12 @@ async function handleSendChat(body: ActionRequest, userId: string, supabase: Sup
   }
 
   const system = await systemPromptForChat(noteContext);
+  const maxTokens = estimateMaxTokens(messages);
 
   const raw = await sendRaw(
     messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
     {
-      maxTokens: 4096,
+      maxTokens,
       system,
       model: MODELS.conversationalist,
     }

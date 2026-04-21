@@ -14,7 +14,12 @@ enum ModuleStorageType: String, Codable, CaseIterable {
 
     var icon: String {
         switch self {
-        case .local: return "iphone"
+        case .local:
+            #if os(macOS)
+            return "laptopcomputer"
+            #else
+            return "iphone"
+            #endif
         case .cloud: return "cloud"
         }
     }
@@ -36,7 +41,7 @@ struct Module: Codable, Identifiable, Hashable {
         name: String,
         icon: String = "folder",
         isDefault: Bool = false,
-        storageType: ModuleStorageType = .local,
+        storageType: ModuleStorageType = .cloud,
         orderIndex: Int = 0,
         createdAt: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
         updatedAt: Int64 = Int64(Date().timeIntervalSince1970 * 1000),

@@ -75,11 +75,12 @@ struct WorkspaceFAB: View {
                 Button(action: action) {
                     Image("MobiusStrip")
                         .renderingMode(.template)
+                        .interpolation(.high)
                         .resizable()
                         .scaledToFit()
-                        .frame(width: 70, height: 70)
+                        .frame(width: 56, height: 56)
                         .foregroundStyle(.white)
-                        .frame(width: 44, height: 44)
+                        .frame(width: 40, height: 40)
                         .background(Color(red: 0.08, green: 0.08, blue: 0.08))
                         .clipShape(Circle())
                         .overlay(

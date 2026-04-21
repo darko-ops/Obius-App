@@ -19,19 +19,23 @@ struct SyncPullResponse: Decodable {
     let sections: [RemoteSection]
     let handles: [RemoteHandle]?  // Handle Loop support
     let echoes: [RemoteEcho]?  // Echo cloud sync
+    let calendarMemos: [RemoteCalendarMemo]?
     let deletedNoteIds: [String]
     let deletedSectionIds: [String]
     let deletedHandleIds: [String]?  // Handle Loop support
     let deletedEchoIds: [String]?  // Echo cloud sync
+    let deletedCalendarMemoIds: [String]?
     let serverTimestamp: String
     let hasMore: Bool
 
     enum CodingKeys: String, CodingKey {
         case notes, sections, handles, echoes
+        case calendarMemos = "calendar_memos"
         case deletedNoteIds = "deleted_note_ids"
         case deletedSectionIds = "deleted_section_ids"
         case deletedHandleIds = "deleted_handle_ids"
         case deletedEchoIds = "deleted_echo_ids"
+        case deletedCalendarMemoIds = "deleted_calendar_memo_ids"
         case serverTimestamp = "server_timestamp"
         case hasMore = "has_more"
     }
@@ -316,6 +320,43 @@ struct RemoteEcho: Decodable {
             nextFireDate: nextFireDate,
             isAlerted: isAlerted.value,
             lastAcknowledgedAt: lastAcknowledgedAt,
+            createdAt: parseTimestamp(createdAt),
+            updatedAt: parseTimestamp(updatedAt),
+            localVersion: version,
+            serverVersion: version,
+            syncStatus: .synced
+        )
+    }
+}
+
+// MARK: - Remote Calendar Memo
+
+struct RemoteCalendarMemo: Decodable {
+    let id: String
+    let userId: String
+    let dateKey: String
+    let content: String
+    let createdAt: String
+    let updatedAt: String
+    let deletedAt: String?
+    let version: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case dateKey = "date_key"
+        case content
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case deletedAt = "deleted_at"
+        case version
+    }
+
+    func toLocal() -> CalendarMemo {
+        CalendarMemo(
+            id: id.uppercased(),
+            dateKey: dateKey,
+            content: content,
             createdAt: parseTimestamp(createdAt),
             updatedAt: parseTimestamp(updatedAt),
             localVersion: version,

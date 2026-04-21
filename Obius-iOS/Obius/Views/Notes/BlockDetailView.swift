@@ -57,6 +57,9 @@ struct BlockDetailView: View {
                                     Button {
                                         Task {
                                             try? await noteRepository.setModuleId(noteId: note.id, moduleId: module.id)
+                                            if let updated = try? await noteRepository.getNote(id: note.id) {
+                                                syncLogger.logNoteUpdate(updated)
+                                            }
                                         }
                                     } label: {
                                         Label(module.name, systemImage: module.icon)

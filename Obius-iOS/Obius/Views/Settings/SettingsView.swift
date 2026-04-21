@@ -9,12 +9,14 @@ struct SettingsView: View {
     @State private var showingSignOut = false
     @State private var showingAuth = false
     @State private var showingEditProfile = false
+    @State private var showingChangePassword = false
     @State private var settingsPath: [SettingsDestination] = []
 
     enum SettingsDestination: Hashable {
         case subscription
         case dataManagement
         case ledger
+        case versionRetention
     }
 
     var body: some View {
@@ -43,6 +45,12 @@ struct SettingsView: View {
                         showingEditProfile = true
                     } label: {
                         Label("Edit Profile", systemImage: "pencil")
+                    }
+
+                    Button {
+                        showingChangePassword = true
+                    } label: {
+                        Label("Change Password", systemImage: "lock.rotation")
                     }
 
                     Button(role: .destructive) {
@@ -96,6 +104,10 @@ struct SettingsView: View {
                 NavigationLink(value: SettingsDestination.ledger) {
                     Label("Ledger", systemImage: "list.bullet.rectangle")
                 }
+
+                NavigationLink(value: SettingsDestination.versionRetention) {
+                    Label("Retention", systemImage: "clock.arrow.circlepath")
+                }
             }
 
             // About Section
@@ -107,11 +119,11 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Link(destination: URL(string: "https://obius.io/privacy")!) {
+                Link(destination: URL(string: "https://docs.google.com/document/d/e/2PACX-1vRbJ9cYTWnyQSYeL8JrTOizC0eC-f8rhoicqh3GttTDIrbNlesR-_auwkFz2OLsTTzguDG3YLtzwnEY/pub")!) {
                     Label("Privacy Policy", systemImage: "doc.text")
                 }
 
-                Link(destination: URL(string: "https://obius.io/terms")!) {
+                Link(destination: URL(string: "https://docs.google.com/document/d/e/2PACX-1vRq_bt_Z_V7ci7lS3hHLzq4QjRrDFJsJu6Ab-oedeeSakGPGcx_dJlG3EDAzdetptd21GPyEtzTxKbg/pub")!) {
                     Label("Terms of Service", systemImage: "doc.text")
                 }
             }
@@ -126,6 +138,9 @@ struct SettingsView: View {
                 DataManagementView()
             case .ledger:
                 LedgerView()
+                    .environmentObject(appState)
+            case .versionRetention:
+                VersionRetentionView()
                     .environmentObject(appState)
             }
         }
@@ -152,6 +167,123 @@ struct SettingsView: View {
         .sheet(isPresented: $showingEditProfile) {
             EditProfileView()
                 .environmentObject(authManager)
+        }
+        .sheet(isPresented: $showingChangePassword) {
+            ChangePasswordView()
+                .environmentObject(authManager)
+        }
+    }
+}
+
+// MARK: - Change Password View
+
+struct ChangePasswordView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var authManager: AuthManager
+
+    @State private var currentPassword = ""
+    @State private var newPassword = ""
+    @State private var confirmPassword = ""
+    @State private var errorMessage: String?
+    @State private var isLoading = false
+    @State private var didSucceed = false
+
+    private var isValid: Bool {
+        !currentPassword.isEmpty && newPassword.count >= 6 && newPassword == confirmPassword
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                SwiftUI.Section {
+                    SecureField("Current Password", text: $currentPassword)
+                        .textContentType(.password)
+                } header: {
+                    Text("Verify Identity")
+                }
+
+                SwiftUI.Section {
+                    SecureField("New Password", text: $newPassword)
+                        .textContentType(.newPassword)
+                    SecureField("Confirm New Password", text: $confirmPassword)
+                        .textContentType(.newPassword)
+                } header: {
+                    Text("New Password")
+                } footer: {
+                    if newPassword.count > 0 && newPassword.count < 6 {
+                        Text("Password must be at least 6 characters.")
+                            .foregroundStyle(.red)
+                    } else if !confirmPassword.isEmpty && newPassword != confirmPassword {
+                        Text("Passwords do not match.")
+                            .foregroundStyle(.red)
+                    }
+                }
+
+                if let error = errorMessage {
+                    SwiftUI.Section {
+                        Text(error)
+                            .foregroundStyle(.red)
+                            .font(.caption)
+                    }
+                }
+
+                if didSucceed {
+                    SwiftUI.Section {
+                        Label("Password changed successfully.", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle("Change Password")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if didSucceed {
+                        Button("Done") { dismiss() }
+                    } else {
+                        Button("Save") {
+                            changePassword()
+                        }
+                        .disabled(!isValid || isLoading)
+                    }
+                }
+            }
+            .disabled(isLoading)
+            .overlay {
+                if isLoading {
+                    ProgressView()
+                }
+            }
+        }
+    }
+
+    private func changePassword() {
+        errorMessage = nil
+        isLoading = true
+
+        Task {
+            do {
+                try await authManager.changePassword(
+                    currentPassword: currentPassword,
+                    newPassword: newPassword
+                )
+                await MainActor.run {
+                    isLoading = false
+                    didSucceed = true
+                }
+            } catch {
+                await MainActor.run {
+                    isLoading = false
+                    if error.localizedDescription.contains("Invalid login") {
+                        errorMessage = "Current password is incorrect."
+                    } else {
+                        errorMessage = error.localizedDescription
+                    }
+                }
+            }
         }
     }
 }
@@ -196,6 +328,156 @@ struct DataManagementView: View {
         } message: {
             Text("This cannot be undone. All local notes will be permanently deleted.")
         }
+    }
+}
+
+// MARK: - Version Retention View
+
+struct VersionRetentionView: View {
+    @EnvironmentObject var appState: AppState
+    @AppStorage("retention_auto_days") private var autoRetentionDays: Int = 30
+    @AppStorage("retention_ai_days") private var aiRetentionDays: Int = 7
+    @AppStorage("retention_manual") private var manualRetention: String = "permanent"
+    @State private var lastCleanupCount = 0
+    @State private var showingCleanupResult = false
+
+    private let dayOptions = [7, 14, 30, 60, 90, 180, 365]
+
+    var body: some View {
+        Form {
+            SwiftUI.Section {
+                Picker("Auto Versions", selection: $autoRetentionDays) {
+                    ForEach(dayOptions, id: \.self) { days in
+                        Text(formatDays(days)).tag(days)
+                    }
+                }
+
+                Picker("AI Versions", selection: $aiRetentionDays) {
+                    ForEach(dayOptions, id: \.self) { days in
+                        Text(formatDays(days)).tag(days)
+                    }
+                }
+
+                HStack {
+                    Text("Manual Versions")
+                    Spacer()
+                    Text("Permanent")
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Retention Policy")
+            } footer: {
+                Text("Versions older than the retention period will be automatically removed from this device on app launch.")
+            }
+
+            SwiftUI.Section {
+                Button {
+                    Task { await runCleanup() }
+                } label: {
+                    Label("Clean Up Now", systemImage: "trash.circle")
+                }
+            } footer: {
+                if let lastRun = lastCleanupDate {
+                    Text("Last cleanup: \(lastRun, style: .relative) ago")
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Version Retention")
+        .alert("Cleanup Complete", isPresented: $showingCleanupResult) {
+            Button("OK") {}
+        } message: {
+            Text(lastCleanupCount == 0
+                 ? "No expired versions found."
+                 : "Removed \(lastCleanupCount) expired version\(lastCleanupCount == 1 ? "" : "s") from this device.")
+        }
+    }
+
+    private var lastCleanupDate: Date? {
+        let ts = UserDefaults.standard.double(forKey: "retention_last_cleanup")
+        return ts > 0 ? Date(timeIntervalSince1970: ts) : nil
+    }
+
+    private func formatDays(_ days: Int) -> String {
+        switch days {
+        case 7: return "7 days"
+        case 14: return "14 days"
+        case 30: return "30 days"
+        case 60: return "60 days"
+        case 90: return "90 days"
+        case 180: return "6 months"
+        case 365: return "1 year"
+        default: return "\(days) days"
+        }
+    }
+
+    private func runCleanup() async {
+        let count = await VersionRetentionManager.runCleanup(
+            commitRepository: appState.commitRepository,
+            coldStore: appState.coldStore
+        )
+        lastCleanupCount = count
+        showingCleanupResult = true
+    }
+}
+
+// MARK: - Version Retention Manager
+
+enum VersionRetentionManager {
+    /// Deletes expired commits based on retention settings.
+    /// Returns the number of commits deleted.
+    @MainActor
+    static func runCleanup(commitRepository: CommitRepository, coldStore: ColdStore) async -> Int {
+        let autoRetentionDays = UserDefaults.standard.integer(forKey: "retention_auto_days")
+        let aiRetentionDays = UserDefaults.standard.integer(forKey: "retention_ai_days")
+
+        // Use defaults if not yet configured
+        let autoDays = autoRetentionDays > 0 ? autoRetentionDays : 30
+        let aiDays = aiRetentionDays > 0 ? aiRetentionDays : 7
+
+        let now = Date()
+        let autoExpiry = now.addingTimeInterval(-Double(autoDays) * 86400)
+        let aiExpiry = now.addingTimeInterval(-Double(aiDays) * 86400)
+
+        let autoExpiryMs = Int64(autoExpiry.timeIntervalSince1970 * 1000)
+        let aiExpiryMs = Int64(aiExpiry.timeIntervalSince1970 * 1000)
+
+        guard let allCommits = try? await commitRepository.getAllCommits() else { return 0 }
+
+        var deleted = 0
+        for commit in allCommits {
+            let isAI = commit.name?.hasPrefix("AI:") ?? false
+            let isAuto = commit.isAutoCommit && !isAI
+            let isManual = !commit.isAutoCommit && !isAI
+
+            // Manual commits are permanent — never auto-delete
+            if isManual { continue }
+
+            let expired: Bool
+            if isAuto {
+                expired = commit.createdAt < autoExpiryMs
+            } else if isAI {
+                expired = commit.createdAt < aiExpiryMs
+            } else {
+                continue
+            }
+
+            if expired {
+                do {
+                    try coldStore.deleteCommit(hash: commit.hash)
+                    try await commitRepository.deleteCommit(id: commit.id)
+                    deleted += 1
+                } catch {
+                    print("[Retention] Failed to delete commit \(commit.shortId): \(error)")
+                }
+            }
+        }
+
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "retention_last_cleanup")
+        if deleted > 0 {
+            print("[Retention] Cleaned up \(deleted) expired version(s)")
+        }
+        return deleted
     }
 }
 
@@ -407,7 +689,7 @@ struct LedgerView: View {
 struct EditProfileView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var authManager: AuthManager
-    @StateObject private var profileImages = ProfileImageManager.shared
+    @ObservedObject private var profileImages = ProfileImageManager.shared
 
     @State private var displayName = ""
     @State private var bio = ""

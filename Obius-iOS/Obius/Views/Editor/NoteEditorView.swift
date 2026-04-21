@@ -61,6 +61,8 @@ private struct NoteEditorContent: View {
     @StateObject private var biometricManager = BiometricManager.shared
     @StateObject private var handleManager = HandleManager.shared
     @StateObject private var möbiusNavigation = MöbiusNavigationState()
+    @Environment(\.undoManager) private var undoManager
+    @Environment(\.dismiss) private var dismiss
     @State private var editingTitle = false
     @State private var titleText = ""
     @State private var bodyText = ""
@@ -96,10 +98,24 @@ private struct NoteEditorContent: View {
     @State private var emptyPlaceholder: String = PlaceholderProvider.next()
     @State private var titleVisible = true
     @State private var showingHistory = false
+    @State private var showInsightRadar = false
+    @State private var radarInsights: [Insight] = []
+    @State private var selectedRadarInsight: Insight?
     @State private var showWorkspaceSheet = false
+    @State private var showingAIWorkspace = false
+    @State private var aiEditSectionId: String?
+    @State private var showingDeleteConfirmation = false
+    // Find in page
+    @State private var isSearchBarVisible = false
+    @State private var searchQuery = ""
+    @State private var searchMatches: [SearchMatch] = []
+    @State private var currentMatchIndex = 0
+    @FocusState private var searchFieldFocused: Bool
     #if os(macOS)
     @State private var showWorkspacePanel = false
     @State private var bodyEditorHeight: CGFloat = 22
+    @AppStorage("macSelectedNoteId") private var macSelectedNoteId: String?
+    @AppStorage("macIsInEditor") private var macIsInEditor = false
     #endif
 
     let noteId: String
@@ -159,28 +175,34 @@ private struct NoteEditorContent: View {
             }
             #endif
             .onChange(of: viewModel.focusedSectionId) { _, newValue in
-                focusedSectionId = newValue
+                guard focusedSectionId != newValue else { return }
+                print("[DEBUG] focusedSectionId: vm → local: \(newValue?.prefix(8) ?? "nil")")
+                DispatchQueue.main.async { focusedSectionId = newValue }
             }
             .onChange(of: focusedSectionId) { oldValue, newValue in
-                // Re-lock the previous section if it was locked
-                if let oldId = oldValue,
-                   oldId != newValue,
-                   let oldSection = viewModel.sections.first(where: { $0.id == oldId }),
-                   oldSection.isLocked {
-                    biometricManager.revokeAuthentication(for: oldId)
+                DispatchQueue.main.async {
+                    if let oldId = oldValue,
+                       oldId != newValue,
+                       let oldSection = viewModel.sections.first(where: { $0.id == oldId }),
+                       oldSection.isLocked {
+                        biometricManager.revokeAuthentication(for: oldId)
+                    }
+                    if let newValue = newValue, viewModel.focusedSectionId != newValue {
+                        print("[DEBUG] focusedSectionId: local → vm: \(newValue.prefix(8))")
+                        viewModel.focusedSectionId = newValue
+                    }
                 }
-
-                // Only sync non-nil values back to ViewModel.
-                // The @FocusState isn't bound to section views, so SwiftUI
-                // may reset it to nil — don't let that clear the ViewModel's focus.
-                if let newValue = newValue, viewModel.focusedSectionId != newValue {
-                    viewModel.focusedSectionId = newValue
+            }
+            .onChange(of: bodyFocused) { _, isFocused in
+                if isFocused {
+                    focusedSectionId = nil
+                    viewModel.focusedSectionId = nil
                 }
             }
             .onChange(of: viewModel.isLoading) { _, isLoading in
-                // Sync bodyText when the ViewModel finishes loading from DB
                 if !isLoading, let body = viewModel.note?.body, body != bodyText {
-                    bodyText = body
+                    print("[DEBUG] isLoading → false, syncing bodyText")
+                    DispatchQueue.main.async { bodyText = body }
                 }
             }
             .onAppear {
@@ -208,6 +230,7 @@ private struct NoteEditorContent: View {
             }
             .task {
                 try? await appState.noteRepository.incrementViewCount(noteId)
+                await loadRadarInsights()
             }
             .task {
                 // Scroll to target section from insight navigation
@@ -240,6 +263,35 @@ private struct NoteEditorContent: View {
                 if viewModel.isLoading {
                     ProgressView()
                 }
+            }
+            .overlay(alignment: .top) {
+                if isSearchBarVisible {
+                    findInPageBar
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .animation(.easeInOut(duration: 0.2), value: isSearchBarVisible)
+            .background {
+                // Hidden buttons to capture keyboard shortcuts
+                Button("") {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isSearchBarVisible = true
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        searchFieldFocused = true
+                    }
+                }
+                .keyboardShortcut("f", modifiers: .command)
+                .hidden()
+            }
+            .onKeyPress(.escape) {
+                if isSearchBarVisible {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        dismissSearch()
+                    }
+                    return .handled
+                }
+                return .ignored
             }
             .overlay(alignment: .bottom) {
                 if showingCommitConfirmation, let name = lastCommitName {
@@ -279,11 +331,36 @@ private struct NoteEditorContent: View {
                     NodeShareSheet(url: url, title: shareTitle, preview: sharePreview)
                 }
             }
+            .sheet(item: $selectedRadarInsight) { insight in
+                InsightDetailSheet(
+                    insight: insight,
+                    onTrack: {
+                        Task {
+                            try? await appState.insightRepository.trackInsight(insight.id)
+                            await loadRadarInsights()
+                        }
+                    },
+                    onDismiss: {
+                        Task {
+                            try? await appState.insightRepository.dismissInsight(insight.id)
+                            await loadRadarInsights()
+                        }
+                    },
+                    onUntrack: {
+                        Task {
+                            try? await appState.insightRepository.untrackInsight(insight.id)
+                            await loadRadarInsights()
+                        }
+                    }
+                )
+            }
             #if os(iOS)
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
-                if pendingShare {
-                    pendingShare = false
-                    showingNativeShare = true
+                DispatchQueue.main.async {
+                    if pendingShare {
+                        pendingShare = false
+                        showingNativeShare = true
+                    }
                 }
             }
             #endif
@@ -343,12 +420,13 @@ private struct NoteEditorContent: View {
             }
             .onChange(of: showingAudioRecorder) { _, isShowing in
                 if !isShowing, let sectionId = audioRecorderTargetSectionId {
-                    // Clean up empty audio section if recorder was cancelled
-                    if let section = viewModel.getSection(sectionId),
-                       section.content.trimmingCharacters(in: .whitespaces).isEmpty {
-                        Task { try? await viewModel.deleteSection(sectionId) }
+                    DispatchQueue.main.async {
+                        if let section = viewModel.getSection(sectionId),
+                           section.content.trimmingCharacters(in: .whitespaces).isEmpty {
+                            Task { try? await viewModel.deleteSection(sectionId) }
+                        }
+                        audioRecorderTargetSectionId = nil
                     }
-                    audioRecorderTargetSectionId = nil
                 }
             }
             #if os(iOS)
@@ -382,9 +460,17 @@ private struct NoteEditorContent: View {
             .overlay {
                 WorkspaceFAB { showWorkspaceSheet = true }
             }
-            .sheet(isPresented: $showWorkspaceSheet) {
+            .sheet(isPresented: $showWorkspaceSheet, onDismiss: resyncFromViewModel) {
                 WorkspaceSheet(handles: handleManager.handles, preselectedPageId: noteId)
                     .environmentObject(appState)
+            }
+            .sheet(isPresented: $showingAIWorkspace, onDismiss: resyncFromViewModel) {
+                WorkspaceSheet(
+                    handles: handleManager.handles,
+                    preselectedPageId: noteId,
+                    preselectedSectionId: aiEditSectionId
+                )
+                .environmentObject(appState)
             }
             #else
             .overlay(alignment: .bottomTrailing) {
@@ -414,13 +500,15 @@ private struct NoteEditorContent: View {
             #endif
             .onChange(of: showingImagePicker) { _, isShowing in
                 if !isShowing {
-                    imagePickerTargetSectionId = nil
-                    imagePickerPreselectedAssetIds = []
+                    DispatchQueue.main.async {
+                        imagePickerTargetSectionId = nil
+                        imagePickerPreselectedAssetIds = []
+                    }
                 }
             }
             .onChange(of: showingHandleSheet) { _, isShowing in
                 if !isShowing {
-                    handleSheetSectionId = nil
+                    DispatchQueue.main.async { handleSheetSectionId = nil }
                 }
             }
     }
@@ -513,18 +601,24 @@ private struct NoteEditorContent: View {
                 guard let sectionId = newId,
                       let section = viewModel.getSection(sectionId),
                       section.contentType != .image && section.contentType != .audio else { return }
+                // Use .bottom anchor for the last section so it scrolls into view
+                // without yanking the entire page upward (prevents flicker on Return).
+                let isLast = viewModel.sections.last?.id == sectionId
                 withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(sectionId, anchor: .top)
+                    proxy.scrollTo(sectionId, anchor: isLast ? .bottom : .top)
                 }
             }
-            .onChange(of: viewModel.sections.count) { _, _ in
-                // When a new section appears, scroll to it if it's the focus target (text sections only).
-                guard let sectionId = viewModel.focusedSectionId,
+            .onChange(of: viewModel.sections.count) { oldCount, newCount in
+                // When a new section is added, scroll to it if it's the focus target (text sections only).
+                // Skip if the count didn't increase (deletion) to avoid fighting the focus handler above.
+                guard newCount > oldCount,
+                      let sectionId = viewModel.focusedSectionId,
                       let section = viewModel.getSection(sectionId),
                       section.contentType != .image && section.contentType != .audio else { return }
+                let isLast = viewModel.sections.last?.id == sectionId
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(sectionId, anchor: .top)
+                        proxy.scrollTo(sectionId, anchor: isLast ? .bottom : .top)
                     }
                 }
             }
@@ -543,6 +637,11 @@ private struct NoteEditorContent: View {
                 titleView
                 loopsAndTagsView
                 noteBodyEditor
+                    .overlay(alignment: .topLeading) {
+                        if showInsightRadar {
+                            bodyInsightBoxOverlay
+                        }
+                    }
             }
             .padding(.horizontal)
             .zIndex(1)  // Keep header above section list for hit testing so title/body stay tappable when image nodes exist
@@ -558,7 +657,7 @@ private struct NoteEditorContent: View {
     @ViewBuilder
     private func sectionListView(nonEmptySections: [Section], visibleSections: [Section]) -> some View {
         DraggableSectionList(
-            sections: .constant(nonEmptySections),
+            sections: Binding(get: { nonEmptySections }, set: { _ in }),
             focusedSectionId: viewModel.focusedSectionId,
             isAuthenticated: { biometricManager.isAuthenticated(sectionId: $0) },
             hasChildren: { viewModel.hasChildren($0) },
@@ -681,6 +780,15 @@ private struct NoteEditorContent: View {
                 } else if let lastSection = viewModel.sections.last {
                     viewModel.focusedSectionId = lastSection.id
                 }
+            },
+            onEditWithAI: { sectionId in
+                aiEditSectionId = sectionId
+                showingAIWorkspace = true
+            },
+            insightHighlights: insightHighlightMap,
+            sectionInsights: sectionInsightMap,
+            onInsightTap: { insight in
+                selectedRadarInsight = insight
             }
         )
     }
@@ -774,6 +882,7 @@ private struct NoteEditorContent: View {
         return section.intent
     }
 
+    @State private var showingMacIntentPopover = false
     @StateObject private var macFmtState = MacFormattingState.shared
 
     @ViewBuilder
@@ -809,26 +918,61 @@ private struct NoteEditorContent: View {
 
             macBarDivider
 
-            // Intent picker (only for sections)
-            Menu {
-                ForEach(IntentType.allCases, id: \.self) { intent in
-                    Button {
-                        if let sectionId = viewModel.focusedSectionId {
-                            Task { try? await viewModel.setSectionIntent(sectionId, intent: intent) }
-                        }
-                    } label: {
-                        Label(intent.displayName, systemImage: intent.icon)
-                    }
-                }
+            // Intent picker (only for sections — enabled only when cursor is in a node)
+            Button {
+                showingMacIntentPopover.toggle()
             } label: {
-                Image(systemName: currentFocusedIntent.icon)
-                    .font(.system(size: 12))
-                    .foregroundStyle(viewModel.focusedSectionId != nil ? currentFocusedIntent.color : Color(white: 0.3))
+                Circle()
+                    .fill(macFmtState.activeSectionId != nil ? currentFocusedIntent.color : Color(white: 0.3))
+                    .frame(width: 10, height: 10)
                     .frame(width: 28, height: 24)
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .disabled(viewModel.focusedSectionId == nil)
+            .buttonStyle(.plain)
+            .disabled(macFmtState.activeSectionId == nil)
+            .popover(isPresented: $showingMacIntentPopover) {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(IntentType.allCases, id: \.self) { intent in
+                        Button {
+                            if let sectionId = macFmtState.activeSectionId {
+                                Task { try? await viewModel.setSectionIntent(sectionId, intent: intent) }
+                            }
+                            showingMacIntentPopover = false
+                        } label: {
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(intent.color)
+                                    .frame(width: 8, height: 8)
+                                Text(intent.displayName)
+                                    .font(.system(size: 13))
+                                Spacer()
+                                if currentFocusedIntent == intent {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 6)
+                .frame(width: 160)
+            }
+
+            macBarDivider
+
+            macBarButton(icon: "arrow.uturn.backward", active: false, disabled: undoManager?.canUndo != true) {
+                undoManager?.undo()
+            }
+            .keyboardShortcut("z", modifiers: .command)
+
+            macBarButton(icon: "arrow.uturn.forward", active: false, disabled: undoManager?.canRedo != true) {
+                undoManager?.redo()
+            }
+            .keyboardShortcut("z", modifiers: [.command, .shift])
 
             Spacer()
         }
@@ -881,7 +1025,466 @@ private struct NoteEditorContent: View {
             }
         }
 
+        #if os(macOS)
+        Button {
+            showingDeleteConfirmation = true
+        } label: {
+            Image(systemName: "trash")
+                .foregroundStyle(.red.opacity(0.7))
+        }
+        .confirmationDialog("Delete this page?", isPresented: $showingDeleteConfirmation, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                Task {
+                    try? await appState.noteRepository.deleteNote(noteId)
+                    appState.syncLogger.logNoteDelete(noteId)
+                    await MainActor.run {
+                        macSelectedNoteId = nil
+                        macIsInEditor = false
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        #endif
+
         mainMenu
+    }
+
+    // MARK: - Insight Radar
+
+    @ViewBuilder
+    private var insightRadarButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showInsightRadar.toggle()
+            }
+            if showInsightRadar {
+                Task { await loadRadarInsights() }
+            }
+        } label: {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(showInsightRadar ? .white : .secondary)
+        }
+        .overlay(alignment: .topTrailing) {
+            if !showInsightRadar && !radarInsights.isEmpty {
+                Circle()
+                    .fill(.orange)
+                    .frame(width: 6, height: 6)
+                    .offset(x: 3, y: -3)
+            }
+        }
+    }
+
+    private func loadRadarInsights() async {
+        do {
+            radarInsights = try await appState.insightRepository.insightsForNote(noteId)
+            resolvedInsightLocations = resolveInsightLocations()
+        } catch {
+            print("[InsightRadar] Failed to load: \(error)")
+        }
+    }
+
+    // MARK: - Insight Location Resolution
+
+    /// Resolved location for each insight: either a section ID, "__body__", or nil (unresolved).
+    @State private var resolvedInsightLocations: [String: String] = [:]
+
+    /// Pattern-match page-level insights against body text and section content
+    /// to determine where they actually belong.
+    private func resolveInsightLocations() -> [String: String] {
+        let sectionIds = Set(viewModel.sections.map(\.id))
+        var locations: [String: String] = [:]
+
+        for insight in radarInsights {
+            // Already has a real section ID
+            if let sectionId = insight.sourceSectionId, sectionIds.contains(sectionId) {
+                locations[insight.id] = sectionId
+                continue
+            }
+
+            // For safety insights, pattern-match to find the actual source
+            if insight.insightType == .safety {
+                if let loc = locateSafetyInsight(insight) {
+                    locations[insight.id] = loc
+                    continue
+                }
+            }
+
+            // For list insights without a section match, try content matching
+            if insight.insightType == .list {
+                if let loc = locateByContentMatch(insight) {
+                    locations[insight.id] = loc
+                    continue
+                }
+            }
+
+            // Default: body-level
+            locations[insight.id] = "__body__"
+        }
+        return locations
+    }
+
+    /// Locate a safety insight by re-running its pattern against body and each section.
+    private func locateSafetyInsight(_ insight: Insight) -> String? {
+        let patterns: [NSRegularExpression]
+        switch insight.sourceSectionId {
+        case "api_key":
+            patterns = [
+                try! NSRegularExpression(pattern: #"sk-[a-zA-Z0-9]{20,}"#),
+                try! NSRegularExpression(pattern: #"pk_[a-zA-Z0-9]{20,}"#),
+                try! NSRegularExpression(pattern: #"AKIA[0-9A-Z]{16}"#),
+            ]
+        case "password":
+            patterns = [
+                try! NSRegularExpression(pattern: #"(?:password|pwd|secret|token)\s*[:=]\s*\S+"#, options: [.caseInsensitive])
+            ]
+        case "personal_data":
+            patterns = [
+                try! NSRegularExpression(pattern: #"\b\d{3}-\d{2}-\d{4}\b"#),
+                try! NSRegularExpression(pattern: #"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b"#),
+                try! NSRegularExpression(pattern: #"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}"#),
+            ]
+        default:
+            return nil
+        }
+
+        // Check each section first
+        for section in viewModel.sections {
+            guard section.contentType == .text else { continue }
+            let text = section.content
+            guard !text.isEmpty else { continue }
+            let range = NSRange(text.startIndex..<text.endIndex, in: text)
+            for pattern in patterns {
+                if pattern.firstMatch(in: text, range: range) != nil {
+                    return section.id
+                }
+            }
+        }
+
+        // Check body text
+        let body = bodyText
+        if !body.isEmpty {
+            let range = NSRange(body.startIndex..<body.endIndex, in: body)
+            for pattern in patterns {
+                if pattern.firstMatch(in: body, range: range) != nil {
+                    return "__body__"
+                }
+            }
+        }
+
+        return nil
+    }
+
+    /// Try to locate an insight by searching for keywords from its title in section content.
+    private func locateByContentMatch(_ insight: Insight) -> String? {
+        for section in viewModel.sections {
+            guard section.contentType == .text, !section.content.isEmpty else { continue }
+            // Check if the section content is referenced in the insight body
+            let sectionWords = Set(section.content.lowercased().split(separator: " ").prefix(5).map(String.init))
+            let insightWords = Set(insight.body.lowercased().split(separator: " ").map(String.init))
+            if sectionWords.count >= 3 && !sectionWords.intersection(insightWords).isEmpty {
+                return section.id
+            }
+        }
+        return nil
+    }
+
+    /// Build a map of sectionId → tint color for left-border highlights.
+    private var insightHighlightMap: [String: Color] {
+        guard showInsightRadar else { return [:] }
+        var map: [String: Color] = [:]
+        for insight in radarInsights {
+            if let loc = resolvedInsightLocations[insight.id],
+               loc != "__body__",
+               viewModel.sections.contains(where: { $0.id == loc }) {
+                map[loc] = insight.displayTint.color
+            }
+        }
+        return map
+    }
+
+    /// Build a map of sectionId → [Insight] for inline chips.
+    private var sectionInsightMap: [String: [Insight]] {
+        guard showInsightRadar else { return [:] }
+        var map: [String: [Insight]] = [:]
+        for insight in radarInsights {
+            if let loc = resolvedInsightLocations[insight.id],
+               loc != "__body__",
+               viewModel.sections.contains(where: { $0.id == loc }) {
+                map[loc, default: []].append(insight)
+            }
+        }
+        return map
+    }
+
+    /// Insights resolved to the body text area.
+    private var bodyInsights: [Insight] {
+        guard showInsightRadar else { return [] }
+        return radarInsights.filter { resolvedInsightLocations[$0.id] == "__body__" }
+    }
+
+    /// Compute highlight ranges in the body text for each body-level insight.
+    private var bodyInsightHighlightRanges: [(NSRange, PlatformColor)] {
+        guard showInsightRadar else { return [] }
+        let text = bodyText
+        guard !text.isEmpty else { return [] }
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        var ranges: [(NSRange, PlatformColor)] = []
+
+        for insight in bodyInsights {
+            var patterns: [NSRegularExpression] = []
+            let color: PlatformColor
+
+            switch insight.insightType {
+            case .safety:
+                color = .systemRed
+                switch insight.sourceSectionId {
+                case "api_key":
+                    patterns = [
+                        try! NSRegularExpression(pattern: #"sk-[a-zA-Z0-9]{20,}"#),
+                        try! NSRegularExpression(pattern: #"pk_[a-zA-Z0-9]{20,}"#),
+                        try! NSRegularExpression(pattern: #"AKIA[0-9A-Z]{16}"#),
+                    ]
+                case "password":
+                    patterns = [
+                        try! NSRegularExpression(pattern: #"(?:password|pwd|secret|token)\s*[:=]\s*\S+"#, options: [.caseInsensitive])
+                    ]
+                case "personal_data":
+                    patterns = [
+                        try! NSRegularExpression(pattern: #"\b\d{3}-\d{2}-\d{4}\b"#),
+                        try! NSRegularExpression(pattern: #"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b"#),
+                        try! NSRegularExpression(pattern: #"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}"#),
+                    ]
+                default:
+                    break
+                }
+            case .list:
+                color = .systemBlue
+                patterns = [
+                    try! NSRegularExpression(pattern: #"(?m)^[\s]*[-•*]\s+.+"#),
+                    try! NSRegularExpression(pattern: #"(?m)^[\s]*\d+[.)]\s+.+"#),
+                ]
+            case .cleanup:
+                color = .systemOrange
+            case .drift:
+                color = .systemPurple
+            case .link:
+                color = .systemGreen
+            case .progress:
+                color = .systemTeal
+            default:
+                color = .systemGray
+            }
+
+            // Pattern-based matching for types with patterns
+            for pattern in patterns {
+                let matches = pattern.matches(in: text, range: fullRange)
+                for match in matches {
+                    ranges.append((match.range, color))
+                }
+            }
+
+            // Keyword-based fallback for insights without specific patterns:
+            // Extract key phrases from the insight body and highlight their occurrence in the text.
+            if patterns.isEmpty {
+                let keywords = extractKeywords(from: insight)
+                for keyword in keywords {
+                    let escaped = NSRegularExpression.escapedPattern(for: keyword)
+                    guard let regex = try? NSRegularExpression(pattern: #"\b"# + escaped + #"\b"#, options: [.caseInsensitive]) else { continue }
+                    let matches = regex.matches(in: text, range: fullRange)
+                    for match in matches {
+                        ranges.append((match.range, color))
+                    }
+                }
+            }
+        }
+        return ranges
+    }
+
+    /// Extract key phrases from an insight's body text for keyword-based matching.
+    private func extractKeywords(from insight: Insight) -> [String] {
+        let stopWords: Set<String> = ["the", "a", "an", "is", "are", "was", "were", "be", "been",
+                                       "has", "have", "had", "do", "does", "did", "will", "would",
+                                       "could", "should", "may", "might", "can", "this", "that",
+                                       "with", "from", "for", "and", "but", "or", "not", "in",
+                                       "on", "at", "to", "of", "it", "its", "by", "as", "if",
+                                       "your", "you", "their", "there", "here", "about", "into"]
+        let words = insight.body
+            .components(separatedBy: .whitespacesAndNewlines)
+            .map { $0.trimmingCharacters(in: .punctuationCharacters) }
+            .filter { $0.count > 3 && !stopWords.contains($0.lowercased()) }
+
+        // Return unique multi-word phrases (2-3 consecutive significant words)
+        // or single significant words if content is short
+        if words.count <= 3 { return words }
+
+        // Use the longest significant words as keywords
+        let sorted = Array(Set(words)).sorted { $0.count > $1.count }
+        return Array(sorted.prefix(5))
+    }
+
+    @ViewBuilder
+    private var bodyInsightChips: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(bodyInsights) { insight in
+                HStack(spacing: 4) {
+                    Image(systemName: insight.displayIcon)
+                        .font(.system(size: 9))
+                    Text(insight.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(insight.displayTint.color)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(insight.displayTint.color.opacity(0.1))
+                .clipShape(Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(insight.displayTint.color.opacity(0.25), lineWidth: 0.5)
+                )
+                .contentShape(Capsule())
+                .simultaneousGesture(TapGesture().onEnded { selectedRadarInsight = insight })
+            }
+        }
+    }
+
+    /// SwiftUI overlay that draws thin bordered boxes around insight-highlighted body text regions.
+    @ViewBuilder
+    private var bodyInsightBoxOverlay: some View {
+        let boxes = bodyInsightBoxes
+        if !boxes.isEmpty {
+            GeometryReader { geo in
+                let totalLines = max(1, bodyText.components(separatedBy: "\n").count)
+                let lineHeight = geo.size.height / CGFloat(totalLines)
+
+                ForEach(Array(boxes.enumerated()), id: \.offset) { _, box in
+                    let topY = CGFloat(box.firstLine) * lineHeight
+                    let height = CGFloat(box.lastLine - box.firstLine + 1) * lineHeight
+                    let tint = box.insight.displayTint.color
+
+                    VStack(spacing: 0) {
+                        // The bordered box
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(tint.opacity(0.4), lineWidth: 1)
+                            .frame(height: height)
+                            .allowsHitTesting(false)
+
+                        // Tag label attached to the bottom
+                        HStack(spacing: 3) {
+                            Image(systemName: box.insight.displayIcon)
+                                .font(.system(size: 8))
+                            Text(box.insight.displayLabel)
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .foregroundStyle(tint)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(tint.opacity(0.08))
+                        .clipShape(Capsule())
+                        .overlay(Capsule().stroke(tint.opacity(0.25), lineWidth: 0.5))
+                        .padding(.top, 2)
+                        .contentShape(Capsule())
+                        .onTapGesture { selectedRadarInsight = box.insight }
+                    }
+                    .offset(y: topY)
+                }
+            }
+        }
+    }
+
+    /// Per-insight bounding line ranges in the body text, used for drawing box overlays.
+    /// Returns the first and last line indices that each insight covers.
+    private var bodyInsightBoxes: [(insight: Insight, firstLine: Int, lastLine: Int)] {
+        guard showInsightRadar else { return [] }
+        let text = bodyText
+        guard !text.isEmpty else { return [] }
+
+        // Build a line-start offset table
+        let lines = text.components(separatedBy: "\n")
+        var lineStarts: [Int] = []
+        var offset = 0
+        for line in lines {
+            lineStarts.append(offset)
+            offset += line.count + 1 // +1 for "\n"
+        }
+
+        var result: [(Insight, Int, Int)] = []
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+
+        for insight in bodyInsights {
+            // Re-run the same pattern matching to find ranges for this insight
+            let ranges = highlightRangesForInsight(insight, in: text, nsText: nsText, fullRange: fullRange)
+            guard !ranges.isEmpty else { continue }
+
+            // Find the line indices that these ranges span
+            var minLine = lines.count
+            var maxLine = 0
+            for range in ranges {
+                let startOffset = range.location
+                let endOffset = range.location + range.length
+                for (i, lineStart) in lineStarts.enumerated() {
+                    let lineEnd = lineStart + lines[i].count
+                    if startOffset <= lineEnd && endOffset >= lineStart {
+                        minLine = min(minLine, i)
+                        maxLine = max(maxLine, i)
+                    }
+                }
+            }
+            if minLine <= maxLine {
+                result.append((insight, minLine, maxLine))
+            }
+        }
+        return result
+    }
+
+    /// Get highlight ranges for a single insight (shared logic with bodyInsightHighlightRanges).
+    private func highlightRangesForInsight(_ insight: Insight, in text: String, nsText: NSString, fullRange: NSRange) -> [NSRange] {
+        var patterns: [NSRegularExpression] = []
+
+        switch insight.insightType {
+        case .safety:
+            switch insight.sourceSectionId {
+            case "api_key":
+                patterns = [
+                    try! NSRegularExpression(pattern: #"sk-[a-zA-Z0-9]{20,}"#),
+                    try! NSRegularExpression(pattern: #"pk_[a-zA-Z0-9]{20,}"#),
+                    try! NSRegularExpression(pattern: #"AKIA[0-9A-Z]{16}"#),
+                ]
+            case "password":
+                patterns = [try! NSRegularExpression(pattern: #"(?:password|pwd|secret|token)\s*[:=]\s*\S+"#, options: [.caseInsensitive])]
+            case "personal_data":
+                patterns = [
+                    try! NSRegularExpression(pattern: #"\b\d{3}-\d{2}-\d{4}\b"#),
+                    try! NSRegularExpression(pattern: #"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b"#),
+                    try! NSRegularExpression(pattern: #"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}"#),
+                ]
+            default: break
+            }
+        case .list:
+            patterns = [
+                try! NSRegularExpression(pattern: #"(?m)^[\s]*[-•*]\s+.+"#),
+                try! NSRegularExpression(pattern: #"(?m)^[\s]*\d+[.)]\s+.+"#),
+            ]
+        default: break
+        }
+
+        var ranges: [NSRange] = []
+        for pattern in patterns {
+            ranges += pattern.matches(in: text, range: fullRange).map { $0.range }
+        }
+
+        if patterns.isEmpty {
+            let keywords = extractKeywords(from: insight)
+            for keyword in keywords {
+                let escaped = NSRegularExpression.escapedPattern(for: keyword)
+                guard let regex = try? NSRegularExpression(pattern: #"\b"# + escaped + #"\b"#, options: [.caseInsensitive]) else { continue }
+                ranges += regex.matches(in: text, range: fullRange).map { $0.range }
+            }
+        }
+        return ranges
     }
 
     @ViewBuilder
@@ -921,38 +1524,92 @@ private struct NoteEditorContent: View {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
 
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isSearchBarVisible = true
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    searchFieldFocused = true
+                }
+            } label: {
+                Label("Find in Page", systemImage: "doc.text.magnifyingglass")
+            }
+
             Divider()
 
             Button(role: .destructive) {
-                // Delete note with confirmation
+                showingDeleteConfirmation = true
             } label: {
-                Label("Delete Note", systemImage: "trash")
+                Label("Delete Page", systemImage: "trash")
             }
+
         } label: {
             Image(systemName: "ellipsis.circle")
         }
+        #if os(iOS)
+        .confirmationDialog("Delete this page?", isPresented: $showingDeleteConfirmation, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                Task {
+                    try? await appState.noteRepository.deleteNote(noteId)
+                    appState.syncLogger.logNoteDelete(noteId)
+                    await MainActor.run { dismiss() }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        #endif
     }
+
+    @State private var showingIntentPopover = false
 
     @ViewBuilder
     private var intentPickerMenu: some View {
-        Menu {
-            ForEach(IntentType.allCases, id: \.self) { intent in
-                Button {
-                    Task { try? await viewModel.setIntent(intent) }
-                } label: {
-                    HStack {
-                        Image(systemName: intent.icon)
-                            .foregroundStyle(intent.color)
-                        Text(intent.displayName)
-                        if viewModel.note?.intent == intent {
-                            Spacer()
-                            Image(systemName: "checkmark")
+        let hasFocus = viewModel.focusedSectionId != nil
+        let currentIntent: IntentType = {
+            guard let id = viewModel.focusedSectionId,
+                  let section = viewModel.getSection(id) else { return .idea }
+            return section.intent
+        }()
+
+        Button {
+            showingIntentPopover.toggle()
+        } label: {
+            Circle()
+                .fill(hasFocus ? currentIntent.color : Color.gray.opacity(0.3))
+                .frame(width: 12, height: 12)
+        }
+        .disabled(!hasFocus)
+        .popover(isPresented: $showingIntentPopover) {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(IntentType.allCases, id: \.self) { intent in
+                    Button {
+                        if let id = viewModel.focusedSectionId {
+                            Task { try? await viewModel.setSectionIntent(id, intent: intent) }
                         }
+                        showingIntentPopover = false
+                    } label: {
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(intent.color)
+                                .frame(width: 8, height: 8)
+                            Text(intent.displayName)
+                                .font(.system(size: 13))
+                            Spacer()
+                            if currentIntent == intent {
+                                Image(systemName: "checkmark")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
                 }
             }
-        } label: {
-            Label("Status", systemImage: "paintpalette")
+            .padding(.vertical, 6)
+            .frame(width: 160)
         }
     }
 
@@ -986,6 +1643,22 @@ private struct NoteEditorContent: View {
         Spacer()
 
         Button {
+            undoManager?.undo()
+        } label: {
+            Image(systemName: "arrow.uturn.backward")
+                .foregroundStyle(undoManager?.canUndo == true ? .primary : .tertiary)
+        }
+        .disabled(undoManager?.canUndo != true)
+
+        Button {
+            undoManager?.redo()
+        } label: {
+            Image(systemName: "arrow.uturn.forward")
+                .foregroundStyle(undoManager?.canRedo == true ? .primary : .tertiary)
+        }
+        .disabled(undoManager?.canRedo != true)
+
+        Button {
             dismissKeyboard()
         } label: {
             Image(systemName: "keyboard.chevron.compact.down")
@@ -1005,6 +1678,35 @@ private struct NoteEditorContent: View {
     }
     
     // MARK: - Helper Methods
+
+    /// Force re-sync local @State from the ViewModel after the workspace sheet dismisses.
+    /// The ViewModel's GRDB observation may have already received DB updates while the
+    /// sheet was presented, but the editor's @State text fields could be stale.
+    private func resyncFromViewModel() {
+        #if os(macOS)
+        // Resign first responder so the text view takes the clean (non-focused)
+        // update path in updateNSView — avoids cursor/scroll issues.
+        if let window = NSApp.keyWindow {
+            window.makeFirstResponder(nil)
+        }
+        #endif
+        // Defer state mutations to the next run-loop tick so the sheet
+        // dismissal animation completes first, avoiding a layout conflict
+        // that can freeze the scroll view.
+        DispatchQueue.main.async {
+            if let body = viewModel.note?.body, body != bodyText {
+                isExternalBodyUpdate = true
+                bodyText = body
+                // Delay reset to absorb the full cascade of onContentChange events
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    isExternalBodyUpdate = false
+                }
+            }
+            if let title = viewModel.note?.title, title != titleText {
+                titleText = title
+            }
+        }
+    }
 
     private func getCurrentSectionIntent() -> IntentType {
         guard let id = focusedSectionId,
@@ -1392,7 +2094,10 @@ private struct NoteEditorContent: View {
                         }
                     }
                     .onChange(of: titleFocused) { _, isFocused in
-                        if !isFocused {
+                        if isFocused {
+                            focusedSectionId = nil
+                            viewModel.focusedSectionId = nil
+                        } else {
                             saveTitle()
                         }
                     }
@@ -1575,16 +2280,22 @@ private struct NoteEditorContent: View {
             richText: viewModel.note?.bodyRichText,
             minHeight: isPageEmpty ? 100 : 44,
             onContentChange: { newValue, richText in
+                // Don't write to DB while workspace is open or during external updates
+                guard !showWorkspaceSheet && !showingAIWorkspace else { return }
                 guard !isExternalBodyUpdate else {
-                    isExternalBodyUpdate = false
+                    // Keep the guard up — reset after a delay to absorb all writeback events
+                    // from the programmatic text update cascade (multiple onContentChange calls
+                    // fire when rich text is loaded externally).
                     return
                 }
                 Task {
                     try? await viewModel.updateBody(newValue, richText: richText)
                 }
-            }
+            },
+            insightHighlightRanges: bodyInsightHighlightRanges
         )
         .frame(minHeight: isPageEmpty ? 100 : 44)
+        .animation(nil, value: bodyText) // Prevent ambient animations from animating height changes
         .padding(.horizontal, 10)
         .overlay(alignment: .topLeading) {
             if isPageEmpty && !bodyFocused {
@@ -1600,11 +2311,18 @@ private struct NoteEditorContent: View {
             bodyText = viewModel.note?.body ?? ""
         }
         .onReceive(viewModel.$note) { note in
+            // Skip live updates while workspace is open — resyncFromViewModel handles dismiss
+            guard !showWorkspaceSheet && !showingAIWorkspace else { return }
             if let body = note?.body, body != bodyText {
-                print("[Sync] Editor body updated from observation: \(body.prefix(50))")
-                isExternalBodyUpdate = true
+                print("[DEBUG] .onReceive(note) body changed: \(body.prefix(50))")
                 DispatchQueue.main.async {
+                    isExternalBodyUpdate = true
                     bodyText = body
+                }
+                // Delay reset to absorb the full cascade of onContentChange events
+                // that fire when the BodyTextView reloads rich text programmatically.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    isExternalBodyUpdate = false
                 }
             }
         }
@@ -1614,18 +2332,27 @@ private struct NoteEditorContent: View {
             isFocused: $bodyFocused,
             richText: viewModel.note?.bodyRichText,
             onContentChange: { newValue, richText in
+                // Don't write to DB while workspace is open or during external updates
+                guard !showWorkspaceSheet && !showingAIWorkspace else { return }
                 guard !isExternalBodyUpdate else {
-                    isExternalBodyUpdate = false
+                    print("[DEBUG] onContentChange SKIPPED (external update)")
                     return
                 }
+                print("[DEBUG] onContentChange → updateBody: \(newValue.prefix(50))")
                 Task {
                     try? await viewModel.updateBody(newValue, richText: richText)
                 }
             },
-            onFocusChange: { _ in },
-            dynamicHeight: $bodyEditorHeight
+            onFocusChange: { focused in
+                if focused {
+                    focusedSectionId = nil
+                    viewModel.focusedSectionId = nil
+                }
+            },
+            dynamicHeight: $bodyEditorHeight,
+            insightHighlightRanges: bodyInsightHighlightRanges
         )
-        .frame(height: max(isPageEmpty ? 100 : 22, bodyEditorHeight))
+        .frame(minHeight: max(isPageEmpty ? 100 : 22, bodyEditorHeight))
         .padding(.horizontal, 10)
         .overlay(alignment: .topLeading) {
             if isPageEmpty && !bodyFocused {
@@ -1648,14 +2375,182 @@ private struct NoteEditorContent: View {
             }
         }
         .onChange(of: viewModel.note?.body) { _, newBody in
+            // Skip live updates while workspace is open — resyncFromViewModel handles dismiss
+            guard !showWorkspaceSheet && !showingAIWorkspace else { return }
             if let newBody = newBody, newBody != bodyText {
-                print("[Sync] Editor body updated from observation: \(newBody.prefix(50))")
+                print("[DEBUG] .onChange(note.body) → bodyText: \(newBody.prefix(50))")
+                isExternalBodyUpdate = true
                 DispatchQueue.main.async {
                     bodyText = newBody
+                }
+                // Delay reset to absorb the full cascade of onContentChange events
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    isExternalBodyUpdate = false
                 }
             }
         }
         #endif
+    }
+
+    // MARK: - Find in Page
+
+    /// Represents a single search hit: either in the page body or a section.
+    struct SearchMatch: Equatable {
+        enum Location: Equatable {
+            case body
+            case section(id: String)
+        }
+        let location: Location
+        let range: Range<String.Index>
+    }
+
+    private func performSearch() {
+        guard !searchQuery.isEmpty else {
+            searchMatches = []
+            currentMatchIndex = 0
+            return
+        }
+        var matches: [SearchMatch] = []
+        let query = searchQuery.lowercased()
+
+        // Search page body
+        let bodyLower = bodyText.lowercased()
+        var searchStart = bodyLower.startIndex
+        while let range = bodyLower.range(of: query, range: searchStart..<bodyLower.endIndex) {
+            let originalRange = range.lowerBound..<range.upperBound
+            matches.append(SearchMatch(location: .body, range: originalRange))
+            searchStart = range.upperBound
+        }
+
+        // Search page title
+        let titleLower = titleText.lowercased()
+        searchStart = titleLower.startIndex
+        while let range = titleLower.range(of: query, range: searchStart..<titleLower.endIndex) {
+            let originalRange = range.lowerBound..<range.upperBound
+            matches.append(SearchMatch(location: .body, range: originalRange))
+            searchStart = range.upperBound
+        }
+
+        // Search sections
+        for section in viewModel.sections {
+            let text = section.fullContent
+            let textLower = text.lowercased()
+            var start = textLower.startIndex
+            while let range = textLower.range(of: query, range: start..<textLower.endIndex) {
+                let originalRange = range.lowerBound..<range.upperBound
+                matches.append(SearchMatch(location: .section(id: section.id), range: originalRange))
+                start = range.upperBound
+            }
+            // Also search section title
+            if let title = section.title {
+                let titleLow = title.lowercased()
+                var tStart = titleLow.startIndex
+                while let tRange = titleLow.range(of: query, range: tStart..<titleLow.endIndex) {
+                    matches.append(SearchMatch(location: .section(id: section.id), range: tRange))
+                    tStart = tRange.upperBound
+                }
+            }
+        }
+
+        searchMatches = matches
+        currentMatchIndex = matches.isEmpty ? 0 : 0
+    }
+
+    private func navigateToCurrentMatch() {
+        guard !searchMatches.isEmpty else { return }
+        let match = searchMatches[currentMatchIndex]
+        switch match.location {
+        case .body:
+            // Scroll to top / focus body
+            bodyFocused = true
+            focusedSectionId = nil
+            viewModel.focusedSectionId = nil
+        case .section(let id):
+            viewModel.focusedSectionId = id
+        }
+    }
+
+    private func nextMatch() {
+        guard !searchMatches.isEmpty else { return }
+        currentMatchIndex = (currentMatchIndex + 1) % searchMatches.count
+        navigateToCurrentMatch()
+    }
+
+    private func previousMatch() {
+        guard !searchMatches.isEmpty else { return }
+        currentMatchIndex = (currentMatchIndex - 1 + searchMatches.count) % searchMatches.count
+        navigateToCurrentMatch()
+    }
+
+    private func dismissSearch() {
+        isSearchBarVisible = false
+        searchQuery = ""
+        searchMatches = []
+        currentMatchIndex = 0
+    }
+
+    @ViewBuilder
+    private var findInPageBar: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                    .font(.subheadline)
+                TextField("Find in page", text: $searchQuery)
+                    .textFieldStyle(.plain)
+                    .font(.subheadline)
+                    .focused($searchFieldFocused)
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    #endif
+                    .onSubmit { nextMatch() }
+                    .onChange(of: searchQuery) { _, _ in performSearch() }
+                if !searchQuery.isEmpty {
+                    Button { searchQuery = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                            .font(.subheadline)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(Color(white: 0.15))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            if !searchMatches.isEmpty {
+                Text("\(currentMatchIndex + 1)/\(searchMatches.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .frame(minWidth: 36)
+            }
+
+            Button { previousMatch() } label: {
+                Image(systemName: "chevron.up")
+                    .font(.subheadline.weight(.medium))
+            }
+            .buttonStyle(.plain)
+            .disabled(searchMatches.isEmpty)
+
+            Button { nextMatch() } label: {
+                Image(systemName: "chevron.down")
+                    .font(.subheadline.weight(.medium))
+            }
+            .buttonStyle(.plain)
+            .disabled(searchMatches.isEmpty)
+
+            Button { dismissSearch() } label: {
+                Text("Done")
+                    .font(.subheadline.weight(.medium))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
     }
 }
 
@@ -1663,7 +2558,7 @@ private struct NoteEditorContent: View {
 
 #if os(iOS)
 /// Keyboard toolbar for body text with formatting buttons
-private class BodyKeyboardToolbar: UIToolbar {
+class BodyKeyboardToolbar: UIToolbar {
     weak var textView: UITextView?
     var onDismiss: (() -> Void)?
 
@@ -1683,7 +2578,7 @@ private class BodyKeyboardToolbar: UIToolbar {
     }
 
     private var titleFontSize: CGFloat {
-        UIFont.preferredFont(forTextStyle: .body).pointSize * 2
+        UIFont.preferredFont(forTextStyle: .body).pointSize * 1.65
     }
 
     override init(frame: CGRect) {
@@ -1973,13 +2868,13 @@ private class BodyKeyboardToolbar: UIToolbar {
     }
 }
 
-/// UITextView wrapper for the note body with formatting toolbar
 struct BodyTextView: UIViewRepresentable {
     @Binding var text: String
     var isFocused: FocusState<Bool>.Binding
     var richText: String?
     let minHeight: CGFloat
     let onContentChange: (String, String?) -> Void
+    var insightHighlightRanges: [(NSRange, PlatformColor)] = []
 
     func makeUIView(context: Context) -> SelfSizingTextView {
         // Use SelfSizingTextView which has proper single-tap handling
@@ -2013,27 +2908,83 @@ struct BodyTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: SelfSizingTextView, context: Context) {
-        if textView.text != text {
-            // Update text even when focused — needed for sync updates from other devices.
-            // Preserve cursor position as best we can.
+        let textChanged = textView.text != text
+        let richTextChanged = richText != context.coordinator.lastAppliedRichText
+
+        // When the user is actively typing, skip redundant updates that are just
+        // the DB round-trip echo (onContentChange → DB → ViewModel → binding).
+        // textViewDidChange already handled the text, layout, and invalidation.
+        // Only apply external updates (rich text changes from AI/sync).
+        if textView.isFirstResponder && textChanged && !richTextChanged {
+            // Text diverged due to the binding round-trip — sync the coordinator
+            // state without touching the text view or triggering a layout pass.
+            context.coordinator.lastAppliedRichText = richText
+            applyInsightHighlights(to: textView)
+            return
+        }
+
+        if textChanged || richTextChanged {
+            // External update (sync, AI edit, rich text change) — apply it.
+            // Suppress delegate to prevent textViewDidChange from firing during
+            // programmatic updates, which would trigger a DB write-back loop.
             let selectedRange = textView.selectedRange
+            textView.delegate = nil
             if let richText = richText,
                let attrText = RichTextHelper.deserialize(richText) {
                 textView.attributedText = attrText
             } else {
+                // Reset typingAttributes to body defaults before reassigning
+                // .text — otherwise UITextView repaints the whole document with
+                // whatever style was last armed via the keyboard toolbar (e.g.
+                // Title at 28pt), which manifests as "all big text".
+                let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+                textView.typingAttributes = [
+                    .font: bodyFont,
+                    .foregroundColor: UIColor.label
+                ]
                 textView.text = text
             }
+            textView.delegate = context.coordinator
+            context.coordinator.lastAppliedRichText = richText
             // Restore cursor if still valid
             if selectedRange.location + selectedRange.length <= (textView.text?.count ?? 0) {
                 textView.selectedRange = selectedRange
             }
             HashtagHelper.applyHighlighting(to: textView)
+            textView.invalidateIntrinsicContentSize()
         }
-        textView.invalidateIntrinsicContentSize()
+
+        // Apply or clear insight radar highlights
+        applyInsightHighlights(to: textView)
 
         if isFocused.wrappedValue && !textView.isFirstResponder {
             textView.becomeFirstResponder()
         }
+    }
+
+    private func applyInsightHighlights(to textView: UITextView) {
+        guard let attributed = textView.attributedText, attributed.length > 0 else { return }
+        let fullRange = NSRange(location: 0, length: attributed.length)
+        let mutable = NSMutableAttributedString(attributedString: attributed)
+
+        // Clear previous insight highlights (tagged by our marker attribute)
+        mutable.enumerateAttribute(.insightHighlight, in: fullRange, options: []) { value, range, _ in
+            guard value != nil else { return }
+            mutable.removeAttribute(.backgroundColor, range: range)
+            mutable.removeAttribute(.insightHighlight, range: range)
+        }
+
+        // Apply subtle background tint to highlighted ranges
+        for (range, color) in insightHighlightRanges {
+            guard range.location + range.length <= mutable.length else { continue }
+            mutable.addAttribute(.backgroundColor, value: color.withAlphaComponent(0.06), range: range)
+            mutable.addAttribute(.insightHighlight, value: true, range: range)
+        }
+
+        if mutable.isEqual(to: attributed) { return }
+        let savedRange = textView.selectedRange
+        textView.attributedText = mutable
+        textView.selectedRange = savedRange
     }
 
     func makeCoordinator() -> Coordinator {
@@ -2042,9 +2993,11 @@ struct BodyTextView: UIViewRepresentable {
 
     class Coordinator: NSObject, UITextViewDelegate {
         var parent: BodyTextView
+        var lastAppliedRichText: String?
 
         init(_ parent: BodyTextView) {
             self.parent = parent
+            self.lastAppliedRichText = parent.richText
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
@@ -2071,17 +3024,58 @@ struct BodyTextView: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             HashtagHelper.applyHighlighting(to: textView)
-            let newText = textView.text ?? ""
-            let richText = RichTextHelper.serialize(textView.attributedText)
-            if parent.text != newText {
-                parent.text = newText
-            }
-            parent.onContentChange(newText, richText)
             textView.invalidateIntrinsicContentSize()
+
+            let newText = textView.text ?? ""
+            // Update the binding inside a non-animated transaction so that
+            // ambient withAnimation contexts (e.g. scrollTo calls) can't
+            // animate the height change — which causes a flicker on the last line.
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                if parent.text != newText {
+                    parent.text = newText
+                }
+            }
+            // Skip expensive RTF serialization during active typing — pass nil
+            // so only the plain text is persisted. Rich text is saved on focus
+            // loss (textViewDidEndEditing) which already does full serialization.
+            parent.onContentChange(newText, nil)
+
+            // Scroll the caret into view after the text grows — SwiftUI's
+            // ScrollView doesn't auto-track the cursor when a child view's
+            // intrinsic size changes, so the last visible line flickers without this.
+            Self.scrollCaretToVisible(in: textView)
+        }
+
+        /// Finds the parent UIScrollView and scrolls the caret rect into view.
+        private static func scrollCaretToVisible(in textView: UITextView) {
+            guard let selectedRange = textView.selectedTextRange else { return }
+            let caretRect = textView.caretRect(for: selectedRange.end)
+            guard !caretRect.isNull && !caretRect.isInfinite else { return }
+            // Walk up to find the SwiftUI ScrollView's underlying UIScrollView
+            var view: UIView? = textView.superview
+            while let v = view {
+                if let scrollView = v as? UIScrollView {
+                    let rectInScroll = textView.convert(caretRect, to: scrollView)
+                    // Pad so the caret isn't jammed at the very edge
+                    let visible = rectInScroll.insetBy(dx: 0, dy: -20)
+                    scrollView.scrollRectToVisible(visible, animated: false)
+                    return
+                }
+                view = v.superview
+            }
         }
     }
 }
 #endif
+
+// MARK: - Insight Highlight Attribute
+
+extension NSAttributedString.Key {
+    /// Marker attribute to tag insight radar background highlights for cleanup.
+    static let insightHighlight = NSAttributedString.Key("com.obius.insightHighlight")
+}
 
 // MARK: - PageCommitItem
 
@@ -2291,8 +3285,10 @@ struct AddContentBar: View {
         .padding(.vertical, 4)
         #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-            if isExpanded {
-                withAnimation(.easeOut(duration: 0.2)) { isExpanded = false }
+            DispatchQueue.main.async {
+                if isExpanded {
+                    withAnimation(.easeOut(duration: 0.2)) { isExpanded = false }
+                }
             }
         }
         #endif
@@ -2365,6 +3361,12 @@ struct PageHistorySheet: View {
                                         } label: {
                                             Label("Hide", systemImage: "eye.slash")
                                         }
+
+                                        Button(role: .destructive) {
+                                            Task { await deleteCommit(commit) }
+                                        } label: {
+                                            Label("Delete from Device", systemImage: "trash")
+                                        }
                                     }
                             }
                         }
@@ -2388,11 +3390,26 @@ struct PageHistorySheet: View {
             .task {
                 await loadCommits()
             }
-            .sheet(item: $selectedCommit) { commit in
-                CommitDetailSheet(commit: commit, noteName: noteName)
+            #if os(macOS)
+            .navigationDestination(item: $selectedCommit) { commit in
+                CommitDetailSheet(
+                    commit: commit,
+                    noteName: noteName,
+                    onDelete: { commits.removeAll { $0.id == commit.id } },
+                    presentedAsSheet: false
+                )
                     .environmentObject(appState)
                     .environmentObject(AuthManager.shared)
             }
+            #else
+            .sheet(item: $selectedCommit) { commit in
+                CommitDetailSheet(commit: commit, noteName: noteName) {
+                    commits.removeAll { $0.id == commit.id }
+                }
+                    .environmentObject(appState)
+                    .environmentObject(AuthManager.shared)
+            }
+            #endif
         }
     }
 
@@ -2414,6 +3431,16 @@ struct PageHistorySheet: View {
             commits.removeAll { $0.id == commit.id }
         } catch {
             print("Failed to hide commit: \(error)")
+        }
+    }
+
+    private func deleteCommit(_ commit: Commit) async {
+        do {
+            try appState.coldStore.deleteCommit(hash: commit.hash)
+            try await appState.commitRepository.deleteCommit(id: commit.id)
+            commits.removeAll { $0.id == commit.id }
+        } catch {
+            print("Failed to delete commit: \(error)")
         }
     }
 }

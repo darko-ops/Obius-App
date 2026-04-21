@@ -30,11 +30,96 @@ enum RichTextHelper {
         )
     }
 
+    /// Convert base64-encoded RTF back to markdown text.
+    /// Reconstructs # headings, **bold**, and *italic* from font attributes.
+    static func toMarkdown(_ base64String: String) -> String? {
+        guard let attrText = deserialize(base64String) else { return nil }
+        let baseSize = UIFont.preferredFont(forTextStyle: .body).pointSize
+        let fullRange = NSRange(location: 0, length: attrText.length)
+        var result = ""
+        let plainText = attrText.string
+
+        // Process line by line to detect headings
+        let lines = plainText.components(separatedBy: "\n")
+        var charIndex = 0
+
+        for (lineIdx, line) in lines.enumerated() {
+            let lineRange = NSRange(location: charIndex, length: line.utf16.count)
+
+            if line.isEmpty {
+                result += "\n"
+                charIndex += line.utf16.count + 1 // +1 for newline
+                continue
+            }
+
+            // Check the font of the first character to detect heading level
+            var isHeading = false
+            if lineRange.length > 0 {
+                let attrs = attrText.attributes(at: lineRange.location, effectiveRange: nil)
+                if let font = attrs[.font] as? UIFont {
+                    let ratio = font.pointSize / baseSize
+                    if ratio > 1.5 {
+                        result += "# "
+                        isHeading = true
+                    } else if ratio > 1.2 {
+                        result += "## "
+                        isHeading = true
+                    } else if ratio > 1.05 {
+                        result += "### "
+                        isHeading = true
+                    }
+                }
+            }
+
+            if isHeading {
+                // Headings: just append the line text (already has prefix)
+                result += line
+            } else {
+                // Process inline formatting (bold/italic) within the line
+                var pos = lineRange.location
+                let lineEnd = lineRange.location + lineRange.length
+                while pos < lineEnd {
+                    var effectiveRange = NSRange()
+                    let attrs = attrText.attributes(at: pos, effectiveRange: &effectiveRange)
+                    // Clamp effective range to this line
+                    let rangeEnd = min(effectiveRange.location + effectiveRange.length, lineEnd)
+                    let runRange = NSRange(location: pos, length: rangeEnd - pos)
+                    let runText = (plainText as NSString).substring(with: runRange)
+
+                    if let font = attrs[.font] as? UIFont {
+                        let isBold = font.fontDescriptor.symbolicTraits.contains(.traitBold)
+                        let isItalic = font.fontDescriptor.symbolicTraits.contains(.traitItalic)
+                        if isBold && isItalic {
+                            result += "***\(runText)***"
+                        } else if isBold {
+                            result += "**\(runText)**"
+                        } else if isItalic {
+                            result += "*\(runText)*"
+                        } else {
+                            result += runText
+                        }
+                    } else {
+                        result += runText
+                    }
+                    pos = rangeEnd
+                }
+            }
+
+            charIndex += line.utf16.count + 1 // +1 for newline
+            if lineIdx < lines.count - 1 {
+                result += "\n"
+            }
+        }
+
+        return result
+    }
+
     /// Convert markdown-style text to NSAttributedString with rich formatting.
     /// Supports: # headings, ## subheadings, **bold**, *italic*
     static func fromMarkdown(_ text: String) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        let bodyFont = UIFont.systemFont(ofSize: 17)
+        let baseSize = UIFont.preferredFont(forTextStyle: .body).pointSize
+        let bodyFont = UIFont.systemFont(ofSize: baseSize)
         let bodyColor = UIColor.label
 
         let lines = text.components(separatedBy: "\n")
@@ -43,25 +128,29 @@ enum RichTextHelper {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
             if index > 0 {
-                result.append(NSAttributedString(string: "\n"))
+                // Explicit body font on newlines prevents RTF round-trip from
+                // inheriting bold/heading attributes from adjacent runs.
+                result.append(NSAttributedString(string: "\n", attributes: [
+                    .font: bodyFont, .foregroundColor: bodyColor
+                ]))
             }
 
-            // Headings
+            // Headings — scaled relative to dynamic body size
             if trimmed.hasPrefix("### ") {
                 let content = String(trimmed.dropFirst(4))
-                let font = UIFont.systemFont(ofSize: 19, weight: .semibold)
+                let font = UIFont.systemFont(ofSize: baseSize * 1.12, weight: .semibold)
                 result.append(NSAttributedString(string: content, attributes: [
                     .font: font, .foregroundColor: bodyColor
                 ]))
             } else if trimmed.hasPrefix("## ") {
                 let content = String(trimmed.dropFirst(3))
-                let font = UIFont.systemFont(ofSize: 22, weight: .bold)
+                let font = UIFont.systemFont(ofSize: baseSize * 1.3, weight: .bold)
                 result.append(NSAttributedString(string: content, attributes: [
                     .font: font, .foregroundColor: bodyColor
                 ]))
             } else if trimmed.hasPrefix("# ") {
                 let content = String(trimmed.dropFirst(2))
-                let font = UIFont.systemFont(ofSize: 28, weight: .bold)
+                let font = UIFont.systemFont(ofSize: baseSize * 1.65, weight: .bold)
                 result.append(NSAttributedString(string: content, attributes: [
                     .font: font, .foregroundColor: bodyColor
                 ]))
@@ -136,6 +225,63 @@ enum RichTextHelper {
         )
     }
 
+    /// Convert base64-encoded RTF back to markdown text.
+    static func toMarkdown(_ base64String: String) -> String? {
+        guard let attrText = deserialize(base64String) else { return nil }
+        let baseSize: CGFloat = 17
+        let fullRange = NSRange(location: 0, length: attrText.length)
+        var result = ""
+        let plainText = attrText.string
+        let lines = plainText.components(separatedBy: "\n")
+        var charIndex = 0
+
+        for (lineIdx, line) in lines.enumerated() {
+            let lineRange = NSRange(location: charIndex, length: line.utf16.count)
+            if line.isEmpty {
+                result += "\n"
+                charIndex += line.utf16.count + 1
+                continue
+            }
+            var isHeading = false
+            if lineRange.length > 0 {
+                let attrs = attrText.attributes(at: lineRange.location, effectiveRange: nil)
+                if let font = attrs[.font] as? NSFont {
+                    let ratio = font.pointSize / baseSize
+                    if ratio > 1.5 { result += "# "; isHeading = true }
+                    else if ratio > 1.2 { result += "## "; isHeading = true }
+                    else if ratio > 1.05 { result += "### "; isHeading = true }
+                }
+            }
+            if isHeading {
+                result += line
+            } else {
+                var pos = lineRange.location
+                let lineEnd = lineRange.location + lineRange.length
+                while pos < lineEnd {
+                    var effectiveRange = NSRange()
+                    let attrs = attrText.attributes(at: pos, effectiveRange: &effectiveRange)
+                    let rangeEnd = min(effectiveRange.location + effectiveRange.length, lineEnd)
+                    let runRange = NSRange(location: pos, length: rangeEnd - pos)
+                    let runText = (plainText as NSString).substring(with: runRange)
+                    if let font = attrs[.font] as? NSFont {
+                        let isBold = font.fontDescriptor.symbolicTraits.contains(.bold)
+                        let isItalic = font.fontDescriptor.symbolicTraits.contains(.italic)
+                        if isBold && isItalic { result += "***\(runText)***" }
+                        else if isBold { result += "**\(runText)**" }
+                        else if isItalic { result += "*\(runText)*" }
+                        else { result += runText }
+                    } else {
+                        result += runText
+                    }
+                    pos = rangeEnd
+                }
+            }
+            charIndex += line.utf16.count + 1
+            if lineIdx < lines.count - 1 { result += "\n" }
+        }
+        return result
+    }
+
     static func fromMarkdown(_ text: String) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let bodyFont = NSFont.systemFont(ofSize: 17)
@@ -147,7 +293,11 @@ enum RichTextHelper {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
             if index > 0 {
-                result.append(NSAttributedString(string: "\n"))
+                // Explicit body font on newlines prevents RTF round-trip from
+                // inheriting bold/heading attributes from adjacent runs.
+                result.append(NSAttributedString(string: "\n", attributes: [
+                    .font: bodyFont, .foregroundColor: bodyColor
+                ]))
             }
 
             if trimmed.hasPrefix("### ") {
@@ -249,6 +399,9 @@ struct SectionView: View {
     let onPaste: () -> Void  // Paste copied node after this node
     let hasCopiedSection: Bool  // Whether a section is on the clipboard
 
+    // AI editing callback
+    var onEditWithAI: (() -> Void)? = nil  // Open AI Workspace focused on this section
+
     // Image node callback
     let onImageTap: () -> Void  // Open image picker for this section
     let mediaRepository: MediaRepository?  // For loading image data
@@ -290,6 +443,7 @@ struct SectionView: View {
         onCopy: @escaping () -> Void = {},
         onPaste: @escaping () -> Void = {},
         hasCopiedSection: Bool = false,
+        onEditWithAI: (() -> Void)? = nil,
         onImageTap: @escaping () -> Void = {},
         mediaRepository: MediaRepository? = nil,
         onResolveConflict: @escaping () -> Void = {}
@@ -318,6 +472,7 @@ struct SectionView: View {
         self.onCopy = onCopy
         self.onPaste = onPaste
         self.hasCopiedSection = hasCopiedSection
+        self.onEditWithAI = onEditWithAI
         self.onImageTap = onImageTap
         self.mediaRepository = mediaRepository
         self.onResolveConflict = onResolveConflict
@@ -348,18 +503,18 @@ struct SectionView: View {
         }
         .padding(.leading, CGFloat(section.indentLevel) * 24)
         .onChange(of: isFocused) { _, newValue in
-            // Image/audio sections have no text field — skip focus handling
-            guard section.contentType != .image && section.contentType != .audio else { return }
+            DispatchQueue.main.async {
+                // Image/audio sections have no text field — skip focus handling
+                guard section.contentType != .image && section.contentType != .audio else { return }
 
-            if newValue && (!section.isLocked || isAuthenticated) {
-                // Small delay to ensure view is ready
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    textFieldFocused = true
-                    isEditing = true
+                if newValue && (!section.isLocked || isAuthenticated) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        textFieldFocused = true
+                        isEditing = true
+                    }
+                } else if !newValue && section.isLocked {
+                    biometricManager.lockSection(section.id)
                 }
-            } else if !newValue && section.isLocked {
-                // Auto-lock when focus leaves a locked node
-                biometricManager.lockSection(section.id)
             }
         }
         .onAppear {
@@ -383,12 +538,16 @@ struct SectionView: View {
                 onContentChange(content, nil)
             }
         }
-        .onChange(of: displayContent) { _, newValue in
-            // Only sync from external source when NOT actively editing
-            // to prevent cursor jumping during typing
-            if !textFieldFocused && content != newValue {
-                content = newValue
+        .onChange(of: displayContent) { oldValue, newValue in
+            // Always sync when content changed externally (e.g. AI workspace action).
+            // Only skip if the user is actively typing AND the change is just
+            // their own keystroke echoing back (old == what we had before).
+            guard content != newValue else { return }
+            if textFieldFocused && oldValue == content {
+                // User is typing and this is their own edit propagating — skip to avoid cursor jump
+                return
             }
+            content = newValue
         }
         .onChange(of: section.handleId) { _, _ in
             // When a section is linked/unlinked from a handle,
@@ -666,7 +825,8 @@ struct SectionView: View {
                 onIndent: onIndent,
                 onOutdent: onOutdent,
                 currentStatus: section.intent,
-                onStatusChange: onIntentChange
+                onStatusChange: onIntentChange,
+                sectionId: section.id
             )
             .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
             #endif
@@ -861,19 +1021,27 @@ struct SectionView: View {
 
     /// Calculate estimated height based on content
     private var estimatedHeight: CGFloat {
-        let lineCount = max(1, content.components(separatedBy: "\n").count)
+        // Use content as-is (including trailing newlines) so the minHeight
+        // matches the text view's intrinsic size. Trimming trailing \n caused
+        // a one-frame height mismatch → visible flicker when pressing Return
+        // on the last line of the page.
+        let lines = content.components(separatedBy: "\n")
+        let lineCount = max(1, lines.count)
         #if os(macOS)
-        // macOS has wider windows — use more chars per line estimate
         let avgCharsPerLine: CGFloat = 80
         #else
-        let avgCharsPerLine: CGFloat = 40
+        let avgCharsPerLine: CGFloat = 35
         #endif
-        let totalChars = CGFloat(content.count)
-        let estimatedWrappedLines = max(1, ceil(totalChars / avgCharsPerLine))
-        let visualLines = max(CGFloat(lineCount), estimatedWrappedLines)
+        // Count wrapped lines per paragraph for a more accurate estimate
+        var visualLines: CGFloat = 0
+        for line in lines {
+            let charCount = CGFloat(line.count)
+            visualLines += max(1, ceil(charCount / avgCharsPerLine))
+        }
         let lineHeight: CGFloat = 22
-        let padding: CGFloat = 12
-        return visualLines * lineHeight + padding
+        let padding: CGFloat = 16
+        let result = visualLines * lineHeight + padding
+        return result
     }
 
     private var contentEditor: some View {
@@ -895,7 +1063,6 @@ struct SectionView: View {
                     onStatusChange: onIntentChange
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
-                // Don't add contentShape - let UITextView handle all gestures natively
             } else {
                 // Regular text editor using UITextView for proper edit menu support
                 EditableTextView(
@@ -915,7 +1082,6 @@ struct SectionView: View {
                     onStatusChange: onIntentChange
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
-                // Don't add contentShape - let UITextView handle all gestures natively
             }
             #else
             // macOS: use NSTextView for rich text support
@@ -933,7 +1099,8 @@ struct SectionView: View {
                 onIndent: onIndent,
                 onOutdent: onOutdent,
                 currentStatus: section.intent,
-                onStatusChange: onIntentChange
+                onStatusChange: onIntentChange,
+                sectionId: section.id
             )
             .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
             #endif
@@ -1039,6 +1206,16 @@ struct SectionView: View {
             HapticFeedback.notification(.success)
         } label: {
             Label("Duplicate", systemImage: "plus.square.on.square")
+        }
+
+        // 7. Edit with AI
+        if let onEditWithAI {
+            Button {
+                onEditWithAI()
+                HapticFeedback.selection()
+            } label: {
+                Label("Edit with AI", systemImage: "sparkles")
+            }
         }
 
         // 9. Delete
@@ -1220,6 +1397,14 @@ struct SingleLineTextField: View {
 class SelfSizingTextView: UITextView {
     private var lastWidth: CGFloat = 0
 
+    // Peer pan for driving the enclosing ScrollView's contentOffset while
+    // focused. Attached directly to self. Disabled when not first-responder
+    // so it never fires during normal scroll-to-here-to-focus flow. See
+    // `handleScrollAssistPan(_:)` for details.
+    private let scrollAssistDelegate = ScrollAssistAllowingDelegate()
+    private var scrollAssistPan: VerticalOnlyPan?
+    private var scrollAssistOffsetAtBegin: CGPoint = .zero
+
     override var canBecomeFirstResponder: Bool { true }
 
     override init(frame: CGRect, textContainer: NSTextContainer?) {
@@ -1259,24 +1444,109 @@ class SelfSizingTextView: UITextView {
         // - single tap = position cursor
         // - double tap = select word + menu
         // - long press = selection handles
+
+        // Peer scroll-assist pan, attached to self. Only runs while the text
+        // view is first-responder — and only then on a clear vertical drag
+        // (VerticalOnlyPan). `cancelsTouchesInView = true` means: when it
+        // transitions from .possible → .began (after enough vertical motion),
+        // UIKit cancels the in-flight touches on this text view, so
+        // UITextView's own selection/loupe recognizers abort and our pan
+        // alone drives scroll. Taps don't trigger the transition (no motion),
+        // so native tap-to-position fires unperturbed.
+        let pan = VerticalOnlyPan(
+            target: self,
+            action: #selector(handleScrollAssistPan(_:))
+        )
+        pan.cancelsTouchesInView = true
+        pan.delaysTouchesBegan = false
+        pan.delaysTouchesEnded = false
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = scrollAssistDelegate
+        pan.isEnabled = false  // Only active while focused
+        addGestureRecognizer(pan)
+        scrollAssistPan = pan
     }
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        // Block any UIPanGestureRecognizer on this view when scrolling is disabled.
-        // UITextView (a UIScrollView subclass) has internal pan gestures beyond just
-        // panGestureRecognizer that can intercept vertical swipes meant for the
-        // parent scroll view. Text selection uses separate gesture types (not pan).
+        // Always allow our own scroll-assist pan to begin. Without this
+        // exception, the blanket pan-block below would refuse it along with
+        // UITextView's own scroll pan.
+        if gestureRecognizer === scrollAssistPan {
+            return true
+        }
+        // Block any UIPanGestureRecognizer on this view when scrolling is
+        // disabled. UITextView (a UIScrollView subclass) has internal pan
+        // gestures beyond just `panGestureRecognizer` that can intercept
+        // vertical swipes meant for the parent scroll view. Text selection
+        // uses separate (non-pan) gesture types, so this doesn't affect
+        // tap-to-position or text selection.
         if !isScrollEnabled && gestureRecognizer is UIPanGestureRecognizer {
             return false
         }
         return super.gestureRecognizerShouldBegin(gestureRecognizer)
     }
 
+    override func becomeFirstResponder() -> Bool {
+        let result = super.becomeFirstResponder()
+        if result { scrollAssistPan?.isEnabled = true }
+        return result
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let result = super.resignFirstResponder()
+        if result { scrollAssistPan?.isEnabled = false }
+        return result
+    }
+
+    @objc private func handleScrollAssistPan(_ recognizer: UIPanGestureRecognizer) {
+        guard isFirstResponder,
+              let scrollView = enclosingScrollView else { return }
+        switch recognizer.state {
+        case .began:
+            scrollAssistOffsetAtBegin = scrollView.contentOffset
+        case .changed:
+            let translation = recognizer.translation(in: scrollView)
+            let minY = -scrollView.adjustedContentInset.top
+            let maxY = max(
+                minY,
+                scrollView.contentSize.height
+                    - scrollView.bounds.height
+                    + scrollView.adjustedContentInset.bottom
+            )
+            let proposedY = scrollAssistOffsetAtBegin.y - translation.y
+            let clampedY = min(max(proposedY, minY), maxY)
+            scrollView.contentOffset = CGPoint(
+                x: scrollAssistOffsetAtBegin.x,
+                y: clampedY
+            )
+        default:
+            break
+        }
+    }
+
+    private var enclosingScrollView: UIScrollView? {
+        var view: UIView? = superview
+        while let current = view {
+            if let scroll = current as? UIScrollView, scroll !== self {
+                return scroll
+            }
+            view = current.superview
+        }
+        return nil
+    }
+
     override var intrinsicContentSize: CGSize {
         // Use a reasonable width if bounds isn't set yet
         let width = bounds.width > 0 ? bounds.width : 300
-        let size = sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-        return CGSize(width: UIView.noIntrinsicMetric, height: max(32, ceil(size.height)))
+        // Use layoutManager's usedRect for accurate height — sizeThatFits can
+        // underestimate when word-wrapping produces more visual lines than expected.
+        let containerWidth = width - textContainerInset.left - textContainerInset.right
+            - textContainer.lineFragmentPadding * 2
+        textContainer.size = CGSize(width: containerWidth, height: .greatestFiniteMagnitude)
+        layoutManager.ensureLayout(for: textContainer)
+        let textHeight = ceil(layoutManager.usedRect(for: textContainer).height)
+        let totalHeight = textHeight + textContainerInset.top + textContainerInset.bottom
+        return CGSize(width: UIView.noIntrinsicMetric, height: max(32, ceil(totalHeight)))
     }
 
     override func layoutSubviews() {
@@ -1286,6 +1556,194 @@ class SelfSizingTextView: UITextView {
             lastWidth = bounds.width
             invalidateIntrinsicContentSize()
         }
+    }
+
+    // MARK: - Paste Sanitization
+
+    /// Override paste to strip foreign formatting from copied content (websites,
+    /// other apps) so it matches the editor's style. Preserves bold, italic, and
+    /// underline but normalizes font family, size, and color.
+    override func paste(_ sender: Any?) {
+        let pasteboard = UIPasteboard.general
+
+        // Try rich text sources — RTF first, then HTML
+        if let sanitized = sanitizedAttributedString(from: pasteboard) {
+            let location = selectedRange.location
+            textStorage.replaceCharacters(in: selectedRange, with: sanitized)
+            selectedRange = NSRange(location: location + sanitized.length, length: 0)
+            delegate?.textViewDidChange?(self)
+            return
+        }
+
+        // Plain text — insert with current typing attributes so it matches
+        if let plain = pasteboard.string {
+            let attrString = NSAttributedString(string: plain, attributes: typingAttributes)
+            let location = selectedRange.location
+            textStorage.replaceCharacters(in: selectedRange, with: attrString)
+            selectedRange = NSRange(location: location + attrString.length, length: 0)
+            delegate?.textViewDidChange?(self)
+            return
+        }
+
+        super.paste(sender)
+    }
+
+    private func sanitizedAttributedString(from pasteboard: UIPasteboard) -> NSAttributedString? {
+        // Try RTF
+        if let data = pasteboard.data(forPasteboardType: "public.rtf"),
+           let source = try? NSAttributedString(
+               data: data,
+               options: [.documentType: NSAttributedString.DocumentType.rtf],
+               documentAttributes: nil
+           ) {
+            return sanitize(source)
+        }
+        // Try HTML
+        if let data = pasteboard.data(forPasteboardType: "public.html"),
+           let source = try? NSAttributedString(
+               data: data,
+               options: [
+                   .documentType: NSAttributedString.DocumentType.html,
+                   .characterEncoding: String.Encoding.utf8.rawValue
+               ],
+               documentAttributes: nil
+           ) {
+            return sanitize(source)
+        }
+        return nil
+    }
+
+    private func sanitize(_ source: NSAttributedString) -> NSAttributedString {
+        let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+        let bodySize = bodyFont.pointSize
+        let result = NSMutableAttributedString()
+
+        source.enumerateAttributes(
+            in: NSRange(location: 0, length: source.length),
+            options: []
+        ) { attrs, range, _ in
+            let text = (source.string as NSString).substring(with: range)
+            var newAttrs: [NSAttributedString.Key: Any] = [
+                .foregroundColor: UIColor.label
+            ]
+
+            // Map bold/italic traits to the editor's font
+            if let font = attrs[.font] as? UIFont {
+                let traits = font.fontDescriptor.symbolicTraits
+                let isBold = traits.contains(.traitBold)
+                let isItalic = traits.contains(.traitItalic)
+
+                if isBold && isItalic {
+                    let desc = UIFont.systemFont(ofSize: bodySize, weight: .bold).fontDescriptor
+                    if let combined = desc.withSymbolicTraits([.traitBold, .traitItalic]) {
+                        newAttrs[.font] = UIFont(descriptor: combined, size: bodySize)
+                    } else {
+                        newAttrs[.font] = UIFont.systemFont(ofSize: bodySize, weight: .bold)
+                    }
+                } else if isBold {
+                    newAttrs[.font] = UIFont.systemFont(ofSize: bodySize, weight: .bold)
+                } else if isItalic {
+                    newAttrs[.font] = UIFont.italicSystemFont(ofSize: bodySize)
+                } else {
+                    newAttrs[.font] = bodyFont
+                }
+            } else {
+                newAttrs[.font] = bodyFont
+            }
+
+            // Preserve underline
+            if let underline = attrs[.underlineStyle] as? Int, underline != 0 {
+                newAttrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+            }
+
+            result.append(NSAttributedString(string: text, attributes: newAttrs))
+        }
+
+        return result
+    }
+}
+
+// MARK: - Scroll-Assist Pan Delegate
+
+/// Delegate for `SelfSizingTextView`'s peer scroll-assist pan. Votes `true`
+/// for every arbitration question so the pan coexists with UITextView's
+/// own recognizers (tap/caret placement, selection drag, loupe) and with
+/// the enclosing scroll view's built-in pan. Apple's docs guarantee that
+/// one side returning `true` is enough to allow simultaneous recognition,
+/// so the internal UIKit delegates voting `false` (default) don't block us.
+final class ScrollAssistAllowingDelegate: NSObject, UIGestureRecognizerDelegate {
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+    ) -> Bool {
+        return true
+    }
+}
+
+// MARK: - Vertical-Only Pan
+
+/// `UIPanGestureRecognizer` subclass that only enters `.began` on a clear
+/// vertical drag. Horizontal swipes and small jitter cause immediate
+/// `.failed` so taps, caret placement, and other touch pipelines aren't
+/// perturbed by the recognizer's presence in arbitration.
+///
+/// Rationale: a vanilla pan will eventually fail on a pure tap (no
+/// movement), but during the arbitration window UIKit may still wait on
+/// it — which on UITextView has been observed to block tap-to-position.
+/// This subclass fails fast on every touch that isn't a vertical drag, so
+/// the pan is essentially invisible to taps and horizontal gestures.
+final class VerticalOnlyPan: UIPanGestureRecognizer {
+    private var startLocation: CGPoint?
+    private static let activationDistance: CGFloat = 8
+
+    override func reset() {
+        super.reset()
+        startLocation = nil
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesBegan(touches, with: event)
+        if let window = view?.window {
+            startLocation = touches.first?.location(in: window)
+        } else {
+            startLocation = touches.first?.location(in: view)
+        }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        // Once we've entered .began, defer entirely to the default
+        // UIPanGestureRecognizer behavior — it tracks translation correctly.
+        if state != .possible {
+            super.touchesMoved(touches, with: event)
+            return
+        }
+
+        guard let touch = touches.first, let start = startLocation else {
+            super.touchesMoved(touches, with: event)
+            return
+        }
+        let current = (view?.window).map { touch.location(in: $0) } ?? touch.location(in: view)
+        let dx = current.x - start.x
+        let dy = current.y - start.y
+        let absDx = abs(dx)
+        let absDy = abs(dy)
+
+        // Clearly horizontal → fail so this recognizer exits the arbitration
+        // graph immediately and the next one (e.g. a horizontal swipe) can win.
+        if absDx >= Self.activationDistance && absDx > absDy * 1.5 {
+            state = .failed
+            return
+        }
+
+        // Not yet enough vertical movement to count as a drag → stay
+        // `.possible` without feeding super, so the recognizer doesn't
+        // transition prematurely.
+        if absDy < Self.activationDistance {
+            return
+        }
+
+        // Clear vertical drag → let super begin tracking as usual.
+        super.touchesMoved(touches, with: event)
     }
 }
 #endif
@@ -1319,7 +1777,7 @@ class KeyboardAccessoryToolbar: UIToolbar {
     }
 
     private var titleFontSize: CGFloat {
-        UIFont.preferredFont(forTextStyle: .body).pointSize * 2
+        UIFont.preferredFont(forTextStyle: .body).pointSize * 1.65
     }
 
     init(showIndentButtons: Bool = false, showStatusButton: Bool = false) {
@@ -1757,6 +2215,14 @@ struct EditableTextView: UIViewRepresentable {
                let attrText = RichTextHelper.deserialize(richText) {
                 textView.attributedText = attrText
             } else {
+                // Reset typingAttributes to body defaults before setting .text —
+                // otherwise stale Title/Bold from the keyboard toolbar would
+                // repaint the whole section text.
+                let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+                textView.typingAttributes = [
+                    .font: bodyFont,
+                    .foregroundColor: UIColor.label
+                ]
                 textView.text = text
             }
             textView.invalidateIntrinsicContentSize()
@@ -1799,13 +2265,16 @@ struct EditableTextView: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             HashtagHelper.applyHighlighting(to: textView)
+            // Invalidate size FIRST so SwiftUI sees the correct height
+            // before we update the binding and trigger a re-layout.
+            textView.invalidateIntrinsicContentSize()
             let newText = textView.text ?? ""
-            let richText = RichTextHelper.serialize(textView.attributedText)
+            // Skip expensive RTF serialization during active typing — pass nil.
+            // Rich text is saved on focus loss (textViewDidEndEditing).
             if parent.text != newText {
                 parent.text = newText
             }
-            parent.onContentChange(newText, richText)
-            textView.invalidateIntrinsicContentSize()
+            parent.onContentChange(newText, nil)
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
@@ -1817,6 +2286,134 @@ struct EditableTextView: UIViewRepresentable {
     }
 }
 #elseif os(macOS)
+
+// MARK: - Paste-Sanitizing NSTextView (macOS)
+
+/// NSTextView subclass that strips foreign formatting on paste, keeping only
+/// bold, italic, and underline while normalizing to the editor's font and color.
+class PasteSanitizingTextView: NSTextView {
+
+    /// Whether this text view is embedded inside a SwiftUI ScrollView.
+    /// When true, scrollRangeToVisible is suppressed so the inner NSScrollView
+    /// doesn't fight the outer SwiftUI ScrollView (which causes flicker).
+    var suppressScrollToVisible = false
+
+    override func scrollRangeToVisible(_ range: NSRange) {
+        guard !suppressScrollToVisible else { return }
+        super.scrollRangeToVisible(range)
+    }
+
+    /// Creates a scroll view hosting this subclass (replacement for
+    /// `NSTextView.scrollableTextView()` which always creates a bare NSTextView).
+    static func makeScrollable() -> NSScrollView {
+        let textStorage = NSTextStorage()
+        let layoutManager = NSLayoutManager()
+        textStorage.addLayoutManager(layoutManager)
+        let textContainer = NSTextContainer()
+        textContainer.widthTracksTextView = true
+        textContainer.lineBreakMode = .byWordWrapping
+        layoutManager.addTextContainer(textContainer)
+
+        let textView = PasteSanitizingTextView(frame: .zero, textContainer: textContainer)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                  height: CGFloat.greatestFiniteMagnitude)
+
+        let scrollView = NSScrollView()
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    override func paste(_ sender: Any?) {
+        let pasteboard = NSPasteboard.general
+        let bodyFont = NSFont.systemFont(ofSize: 17)
+        let bodySize = bodyFont.pointSize
+
+        // Try to read rich text from pasteboard (RTF or HTML)
+        var source: NSAttributedString?
+        if let rtfData = pasteboard.data(forType: .rtf) {
+            source = try? NSAttributedString(
+                data: rtfData,
+                options: [.documentType: NSAttributedString.DocumentType.rtf],
+                documentAttributes: nil
+            )
+        } else if let htmlData = pasteboard.data(forType: .html) {
+            source = try? NSAttributedString(
+                data: htmlData,
+                options: [
+                    .documentType: NSAttributedString.DocumentType.html,
+                    .characterEncoding: String.Encoding.utf8.rawValue
+                ],
+                documentAttributes: nil
+            )
+        }
+
+        if let source = source {
+            let sanitized = NSMutableAttributedString()
+            source.enumerateAttributes(
+                in: NSRange(location: 0, length: source.length),
+                options: []
+            ) { attrs, range, _ in
+                let text = (source.string as NSString).substring(with: range)
+                var newAttrs: [NSAttributedString.Key: Any] = [
+                    .foregroundColor: NSColor.labelColor
+                ]
+
+                if let font = attrs[.font] as? NSFont {
+                    let traits = NSFontManager.shared.traits(of: font)
+                    let isBold = traits.contains(.boldFontMask)
+                    let isItalic = traits.contains(.italicFontMask)
+
+                    if isBold && isItalic {
+                        var f = NSFont.systemFont(ofSize: bodySize, weight: .bold)
+                        f = NSFontManager.shared.convert(f, toHaveTrait: .italicFontMask)
+                        newAttrs[.font] = f
+                    } else if isBold {
+                        newAttrs[.font] = NSFont.systemFont(ofSize: bodySize, weight: .bold)
+                    } else if isItalic {
+                        newAttrs[.font] = NSFontManager.shared.convert(bodyFont, toHaveTrait: .italicFontMask)
+                    } else {
+                        newAttrs[.font] = bodyFont
+                    }
+                } else {
+                    newAttrs[.font] = bodyFont
+                }
+
+                if let underline = attrs[.underlineStyle] as? Int, underline != 0 {
+                    newAttrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+                }
+
+                sanitized.append(NSAttributedString(string: text, attributes: newAttrs))
+            }
+
+            let insertionRange = selectedRange()
+            if shouldChangeText(in: insertionRange, replacementString: sanitized.string) {
+                textStorage?.replaceCharacters(in: insertionRange, with: sanitized)
+                setSelectedRange(NSRange(location: insertionRange.location + sanitized.length, length: 0))
+                didChangeText()
+            }
+            return
+        }
+
+        // Plain text — insert with current typing attributes
+        if let plain = pasteboard.string(forType: .string) {
+            let attrString = NSAttributedString(string: plain, attributes: typingAttributes)
+            let insertionRange = selectedRange()
+            if shouldChangeText(in: insertionRange, replacementString: plain) {
+                textStorage?.replaceCharacters(in: insertionRange, with: attrString)
+                setSelectedRange(NSRange(location: insertionRange.location + attrString.length, length: 0))
+                didChangeText()
+            }
+            return
+        }
+
+        super.paste(sender)
+    }
+}
+
 /// macOS editable text view using NSViewRepresentable wrapping NSTextView
 struct EditableTextView: NSViewRepresentable {
     @Binding var text: String
@@ -1828,13 +2425,18 @@ struct EditableTextView: NSViewRepresentable {
     var onOutdent: (() -> Void)?
     var currentStatus: IntentType?
     var onStatusChange: ((IntentType) -> Void)?
+    /// Section ID this editor belongs to, or nil for the body editor.
+    var sectionId: String? = nil
     /// Optional binding for dynamic height — when provided, the view reports its content height.
     var dynamicHeight: Binding<CGFloat>? = nil
+    /// Insight radar highlight ranges — (NSRange, PlatformColor) pairs for inline highlighting.
+    var insightHighlightRanges: [(NSRange, PlatformColor)] = []
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSTextView.scrollableTextView()
-        let textView = scrollView.documentView as! NSTextView
+        let scrollView = PasteSanitizingTextView.makeScrollable()
+        let textView = scrollView.documentView as! PasteSanitizingTextView
         textView.delegate = context.coordinator
+        textView.suppressScrollToVisible = true
         textView.isEditable = true
         textView.isSelectable = true
         textView.isRichText = true
@@ -1848,20 +2450,29 @@ struct EditableTextView: NSViewRepresentable {
         textView.font = NSFont.systemFont(ofSize: 17)
         textView.textColor = NSColor.labelColor
 
-        // Disable scroll view scrolling — parent ScrollView handles it
+        // Disable scroll view scrolling — parent ScrollView handles it.
+        // Pin content to top so the inner NSScrollView never auto-scrolls
+        // to reveal the cursor (which fights the outer SwiftUI ScrollView
+        // and causes a visible flicker when pressing Return at the bottom).
         scrollView.hasVerticalScroller = false
         scrollView.hasHorizontalScroller = false
         scrollView.drawsBackground = false
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        scrollView.verticalScrollElasticity = .none
 
         // Load rich text if available, otherwise plain text
+        // Suppress textDidChange during initial load and hashtag highlighting —
+        // otherwise HashtagHelper's textStorage edits fire a non-suppressed
+        // textDidChange that schedules a spurious writeback of the AI body.
+        context.coordinator.isProgrammaticUpdate = true
         if let richText = richText,
            let attrText = RichTextHelper.deserialize(richText) {
             textView.textStorage?.setAttributedString(attrText)
         } else {
             textView.string = text
         }
-
         HashtagHelper.applyHighlighting(to: textView)
+        context.coordinator.isProgrammaticUpdate = false
         context.coordinator.textView = textView
         // Report initial content height after layout
         DispatchQueue.main.async {
@@ -1872,28 +2483,94 @@ struct EditableTextView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
-        // Only update when not focused to prevent cursor jumping
-        if textView.window?.firstResponder != textView, textView.string != text {
+        let isFirstResponder = textView.window?.firstResponder == textView
+        // Only update when not focused, OR when focused and the text has changed
+        // significantly (e.g. external sync). Skip small diffs while focused to
+        // avoid scroll freezes and visual glitches during normal typing.
+        let textDiffers = textView.string != text
+        let shouldUpdate = textDiffers && (!isFirstResponder || abs(textView.string.count - text.count) > 1)
+        if shouldUpdate {
+            // Suppress textDidChange callback during programmatic updates
+            // to prevent observation → setText → textDidChange → DB write → observation loop.
+            context.coordinator.isProgrammaticUpdate = true
+            let selectedRanges = textView.selectedRanges
+            // Always prefer the rich-text path when available — assigning
+            // textView.string strips all attributes and inherits typingAttributes,
+            // which can collapse a mixed-format document (headings/bold/body) into
+            // whatever style the caret happens to sit in.
             if let richText = richText,
                let attrText = RichTextHelper.deserialize(richText) {
                 textView.textStorage?.setAttributedString(attrText)
             } else {
+                // Reset typingAttributes to body defaults BEFORE setting .string —
+                // otherwise NSTextView paints the whole text with whatever style
+                // was last armed (e.g. a 28pt Title toggle still live from the
+                // formatting bar), making the body appear as "all big text".
+                let bodyFont = NSFont.systemFont(ofSize: 17)
+                textView.typingAttributes = [
+                    .font: bodyFont,
+                    .foregroundColor: NSColor.labelColor
+                ]
                 textView.string = text
             }
+            if isFirstResponder {
+                // Restore selection, clamping to new text length
+                let maxLen = textView.string.count
+                let restored = selectedRanges.compactMap { rangeValue -> NSValue? in
+                    let r = rangeValue.rangeValue
+                    let loc = min(r.location, maxLen)
+                    let len = min(r.length, maxLen - loc)
+                    return NSValue(range: NSRange(location: loc, length: len))
+                }
+                if !restored.isEmpty {
+                    textView.setSelectedRanges(restored, affinity: .downstream, stillSelecting: false)
+                }
+            }
+            // Apply hashtag highlighting before releasing the programmatic guard —
+            // otherwise HashtagHelper's textStorage edits fire a non-suppressed
+            // textDidChange, scheduling a debounced writeback that round-trips the
+            // body through the DB and cascades onContentChange firings.
+            HashtagHelper.applyHighlighting(to: textView)
+            context.coordinator.isProgrammaticUpdate = false
             // Recalculate height after external text change
             DispatchQueue.main.async {
                 context.coordinator.updateDynamicHeight()
             }
         }
 
+        // Apply insight radar highlights — subtle background tint
+        if let textStorage = textView.textStorage {
+            let fullRange = NSRange(location: 0, length: textStorage.length)
+            textStorage.beginEditing()
+            // Clear previous insight highlights
+            textStorage.enumerateAttribute(.insightHighlight, in: fullRange, options: []) { value, range, _ in
+                guard value != nil else { return }
+                textStorage.removeAttribute(.backgroundColor, range: range)
+                textStorage.removeAttribute(.insightHighlight, range: range)
+            }
+            // Apply subtle background tint
+            for (range, color) in insightHighlightRanges {
+                guard range.location + range.length <= textStorage.length else { continue }
+                textStorage.addAttribute(.backgroundColor, value: color.withAlphaComponent(0.06), range: range)
+                textStorage.addAttribute(.insightHighlight, value: true, range: range)
+            }
+            textStorage.endEditing()
+        }
+
         if isFocused.wrappedValue && textView.window?.firstResponder != textView {
             let coordinator = context.coordinator
-            // Set activeTextView immediately so formatting works even before
-            // the async makeFirstResponder completes.
-            MacFormattingState.shared.activeTextView = textView
-            MacFormattingState.shared.hasActiveEditor = true
             Coordinator.activeCoordinator = coordinator
             DispatchQueue.main.async {
+                // Defer @Published mutations out of the view update cycle,
+                // and guard with equality so idempotent writes don't republish.
+                let state = MacFormattingState.shared
+                state.activeTextView = textView
+                if !state.hasActiveEditor {
+                    state.hasActiveEditor = true
+                }
+                if state.activeSectionId != self.sectionId {
+                    state.activeSectionId = self.sectionId
+                }
                 textView.window?.makeFirstResponder(textView)
                 coordinator.syncFormattingState()
             }
@@ -1913,6 +2590,9 @@ struct EditableTextView: NSViewRepresentable {
         /// Debounce timer for expensive per-keystroke work (rich text
         /// serialization, hashtag highlighting, database persistence).
         private var contentDebounceTimer: Timer?
+        /// True when updateNSView is setting text programmatically — suppresses
+        /// textDidChange to prevent observation → write → observation loops.
+        var isProgrammaticUpdate = false
 
         /// Tracks the most recently focused text view coordinator so formatting
         /// buttons can call applyBold/Italic/etc directly on the active editor.
@@ -1955,10 +2635,22 @@ struct EditableTextView: NSViewRepresentable {
             Coordinator.activeCoordinator = self
             parent.isFocused.wrappedValue = true
             parent.onFocusChange(true)
+            // Set activeTextView synchronously so it is available
+            // immediately if a formatting button fires right after focus.
             let state = MacFormattingState.shared
-            state.hasActiveEditor = true
-            state.activeTextView = textView
-            syncFormattingState()
+            state.activeTextView = self.textView
+            // @Published writes publish on every set, even when the value is unchanged,
+            // which re-renders any view observing MacFormattingState and can loop
+            // during AppKit layout passes. Guard with equality.
+            if state.activeSectionId != self.parent.sectionId {
+                state.activeSectionId = self.parent.sectionId
+            }
+            DispatchQueue.main.async {
+                if !state.hasActiveEditor {
+                    state.hasActiveEditor = true
+                }
+                self.syncFormattingState()
+            }
         }
 
         func textDidEndEditing(_ notification: Notification) {
@@ -1967,32 +2659,72 @@ struct EditableTextView: NSViewRepresentable {
             parent.onFocusChange(false)
             if Coordinator.activeCoordinator === self {
                 DispatchQueue.main.async {
-                    MacFormattingState.shared.hasActiveEditor = false
+                    let state = MacFormattingState.shared
+                    if state.hasActiveEditor {
+                        state.hasActiveEditor = false
+                    }
+                    if state.activeSectionId != nil {
+                        state.activeSectionId = nil
+                    }
                 }
             }
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
-            if let textView = textView {
-                let range = textView.selectedRange()
-                if range.length > 0 {
-                    savedSelectedRange = range
-                    MacFormattingState.shared.savedSelectedRange = range
-                }
-                // Always keep activeTextView current when user interacts
-                MacFormattingState.shared.activeTextView = textView
+            guard let textView = textView else { return }
+            let range = textView.selectedRange()
+            savedSelectedRange = range
+            // Update savedSelectedRange synchronously so it is always
+            // current when a formatting button reads it.
+            let state = MacFormattingState.shared
+            state.savedSelectedRange = range
+            state.activeTextView = textView
+            // Only publish @Published mutations when the value actually changes.
+            // Programmatic text loads fire repeated selection changes during AppKit
+            // layout, and each unconditional publish re-renders observing views —
+            // previously cascading into a "Publishing changes from within view
+            // updates" storm that froze the editor.
+            if state.activeSectionId != self.parent.sectionId {
+                state.activeSectionId = self.parent.sectionId
             }
-            syncFormattingState()
+            // Defer only @Published mutations to avoid re-rendering during view updates
+            DispatchQueue.main.async {
+                self.syncFormattingState()
+            }
         }
 
         func syncFormattingState() {
             guard let textView = textView else { return }
+            // Read formatting state from the text view
+            let bodySize = NSFont.systemFont(ofSize: 17).pointSize
+            let attrs: [NSAttributedString.Key: Any]
+            let range = textView.selectedRange()
+            // With a selection: read storage attrs. With a collapsed cursor:
+            // prefer typingAttributes so the toolbar reflects the armed style.
+            if range.length > 0, range.location < (textView.textStorage?.length ?? 0) {
+                attrs = textView.textStorage?.attributes(at: range.location, effectiveRange: nil) ?? textView.typingAttributes
+            } else {
+                attrs = textView.typingAttributes
+            }
+            let font = (attrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: bodySize)
+            let traits = NSFontManager.shared.traits(of: font)
             let state = MacFormattingState.shared
-            state.syncState(from: textView)
+            let isBold = traits.contains(.boldFontMask)
+            let isItalic = traits.contains(.italicFontMask)
+            let isUnderline = (attrs[.underlineStyle] as? Int) == NSUnderlineStyle.single.rawValue
+            let isTitle = font.pointSize > bodySize + 2
+            // Only publish when values actually change — otherwise every selection
+            // change re-renders every view observing MacFormattingState.
+            if state.isBold != isBold { state.isBold = isBold }
+            if state.isItalic != isItalic { state.isItalic = isItalic }
+            if state.isUnderline != isUnderline { state.isUnderline = isUnderline }
+            if state.isTitle != isTitle { state.isTitle = isTitle }
         }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = textView else { return }
+            // Skip when updateNSView is setting text programmatically
+            guard !isProgrammaticUpdate else { return }
             // Update the binding immediately so SwiftUI stays in sync
             let newText = textView.string
             if parent.text != newText {
@@ -2018,9 +2750,11 @@ struct EditableTextView: NSViewRepresentable {
             let usedRect = layoutManager.usedRect(for: container)
             let inset = textView.textContainerInset
             let newHeight = ceil(usedRect.height + inset.height * 2)
-            DispatchQueue.main.async { [weak self] in
-                self?.parent.dynamicHeight?.wrappedValue = max(newHeight, 22)
-            }
+            let finalHeight = max(newHeight, 22)
+            // Set height synchronously so it updates in the same render pass
+            // as the text binding — async dispatch caused a one-frame desync
+            // where the text grew but the frame height lagged, producing a flicker.
+            parent.dynamicHeight?.wrappedValue = finalHeight
         }
     }
 }
@@ -2040,6 +2774,8 @@ final class MacFormattingState: ObservableObject {
     @Published var isTitle = false
     /// True when any NSTextView (section or body) is the active editor.
     @Published var hasActiveEditor = false
+    /// The section ID of the currently focused section editor, or nil if body/title is focused.
+    @Published var activeSectionId: String? = nil
     /// Direct reference to the active text view for formatting commands.
     weak var activeTextView: NSTextView?
     /// Saved selection range — preserved so formatting works even if button click collapses selection.
@@ -2047,15 +2783,68 @@ final class MacFormattingState: ObservableObject {
 
     /// Save the selection range (called from textViewDidChangeSelection).
     func saveSelection(_ range: NSRange) {
-        if range.length > 0 {
-            savedSelectedRange = range
-        }
+        savedSelectedRange = range
     }
 
     private var effectiveRange: NSRange {
         guard let tv = activeTextView else { return NSRange(location: 0, length: 0) }
         let live = tv.selectedRange()
-        return live.length > 0 ? live : savedSelectedRange
+        let textLength = tv.textStorage?.length ?? 0
+        // Validate the live range is within bounds
+        if live.location + live.length <= textLength {
+            return live
+        }
+        // Fall back to saved range if it's valid
+        if savedSelectedRange.location + savedSelectedRange.length <= textLength {
+            return savedSelectedRange
+        }
+        // Last resort: cursor at end of text
+        return NSRange(location: textLength, length: 0)
+    }
+
+    /// If the cursor is collapsed, expand to the word containing it.
+    /// This lets a user click inside a word and toggle bold/italic without
+    /// having to manually select — matches WYSIWYG editor expectations.
+    private func rangeOrCurrentWord(_ range: NSRange, in storage: NSTextStorage) -> NSRange {
+        guard range.length == 0 else { return range }
+        let text = storage.string as NSString
+        let length = text.length
+        guard length > 0 else { return range }
+        var start = min(range.location, length)
+        var end = start
+        let wordChars = CharacterSet.whitespacesAndNewlines.inverted
+        while start > 0, let scalar = Unicode.Scalar(text.character(at: start - 1)),
+              wordChars.contains(scalar) {
+            start -= 1
+        }
+        while end < length, let scalar = Unicode.Scalar(text.character(at: end)),
+              wordChars.contains(scalar) {
+            end += 1
+        }
+        if end > start {
+            return NSRange(location: start, length: end - start)
+        }
+        return range
+    }
+
+    /// Expand a collapsed cursor to the paragraph (line) containing it.
+    /// Title/heading is a paragraph-level style, so this matches Word/Pages.
+    private func rangeOrCurrentParagraph(_ range: NSRange, in storage: NSTextStorage) -> NSRange {
+        guard range.length == 0 else { return range }
+        let text = storage.string as NSString
+        let length = text.length
+        guard length > 0 else { return range }
+        let loc = min(range.location, length)
+        let paragraphRange = text.paragraphRange(for: NSRange(location: loc, length: 0))
+        // Trim a trailing newline so the newline's font doesn't get promoted,
+        // which would bleed heading size into the next paragraph's empty line.
+        var trimmed = paragraphRange
+        while trimmed.length > 0,
+              let scalar = Unicode.Scalar(text.character(at: trimmed.location + trimmed.length - 1)),
+              CharacterSet.newlines.contains(scalar) {
+            trimmed.length -= 1
+        }
+        return trimmed.length > 0 ? trimmed : paragraphRange
     }
 
     // MARK: - Formatting Commands
@@ -2065,6 +2854,9 @@ final class MacFormattingState: ObservableObject {
 
     private func toggleFontTrait(_ trait: NSFontTraitMask) {
         guard let tv = activeTextView, let storage = tv.textStorage else { return }
+        // With a selection: toggle the trait on the selected range.
+        // With a collapsed cursor: only flip typingAttributes so the NEXT typed
+        // character carries the style — don't auto-expand into the word.
         let range = effectiveRange
         let textLength = storage.length
 
@@ -2098,6 +2890,7 @@ final class MacFormattingState: ObservableObject {
 
     func applyUnderline() {
         guard let tv = activeTextView, let storage = tv.textStorage else { return }
+        // Cursor-only: flip typingAttributes for the next-typed char.
         let range = effectiveRange
         let textLength = storage.length
 
@@ -2138,18 +2931,18 @@ final class MacFormattingState: ObservableObject {
             }
             storage.beginEditing()
             storage.enumerateAttribute(.font, in: range, options: []) { value, subRange, _ in
-                let newFont: NSFont
-                if allTitle {
-                    let existing = (value as? NSFont) ?? NSFont.systemFont(ofSize: bodySize)
-                    let traits = NSFontManager.shared.traits(of: existing)
-                    var base = NSFont.systemFont(ofSize: bodySize)
-                    if traits.contains(.boldFontMask) { base = NSFontManager.shared.convert(base, toHaveTrait: .boldFontMask) }
-                    if traits.contains(.italicFontMask) { base = NSFontManager.shared.convert(base, toHaveTrait: .italicFontMask) }
-                    newFont = base
-                } else {
-                    newFont = NSFont.systemFont(ofSize: titleSize, weight: .bold)
-                }
-                storage.addAttribute(.font, value: newFont, range: subRange)
+                let existing = (value as? NSFont) ?? NSFont.systemFont(ofSize: bodySize)
+                let traits = NSFontManager.shared.traits(of: existing)
+                let targetSize = allTitle ? bodySize : titleSize
+                // Promote path seeds with bold (heading convention); demote
+                // path keeps whatever traits the run already had. Either way
+                // we re-apply italic at the end so it survives both paths.
+                var base = allTitle
+                    ? NSFont.systemFont(ofSize: targetSize)
+                    : NSFont.systemFont(ofSize: targetSize, weight: .bold)
+                if traits.contains(.boldFontMask) { base = NSFontManager.shared.convert(base, toHaveTrait: .boldFontMask) }
+                if traits.contains(.italicFontMask) { base = NSFontManager.shared.convert(base, toHaveTrait: .italicFontMask) }
+                storage.addAttribute(.font, value: base, range: subRange)
             }
             storage.endEditing()
         }
@@ -2157,7 +2950,14 @@ final class MacFormattingState: ObservableObject {
         var attrs = tv.typingAttributes
         let currentFont = (attrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: bodySize)
         let isTitle = currentFont.pointSize > bodySize + 2
-        attrs[.font] = isTitle ? NSFont.systemFont(ofSize: bodySize) : NSFont.systemFont(ofSize: titleSize, weight: .bold)
+        let traits = NSFontManager.shared.traits(of: currentFont)
+        let targetSize = isTitle ? bodySize : titleSize
+        var base = isTitle
+            ? NSFont.systemFont(ofSize: targetSize)
+            : NSFont.systemFont(ofSize: targetSize, weight: .bold)
+        if traits.contains(.boldFontMask) { base = NSFontManager.shared.convert(base, toHaveTrait: .boldFontMask) }
+        if traits.contains(.italicFontMask) { base = NSFontManager.shared.convert(base, toHaveTrait: .italicFontMask) }
+        attrs[.font] = base
         tv.typingAttributes = attrs
 
         finishFormatting(tv, range)
@@ -2165,9 +2965,18 @@ final class MacFormattingState: ObservableObject {
 
     private func finishFormatting(_ tv: NSTextView, _ range: NSRange) {
         tv.window?.makeFirstResponder(tv)
-        tv.setSelectedRange(range)
+        // Snapshot typingAttributes BEFORE setSelectedRange — AppKit rewrites
+        // typingAttributes to match the cursor's surrounding run on selection
+        // change, which would wipe the style we just armed for the next char.
+        let pendingTypingAttrs = tv.typingAttributes
+        let textLength = tv.textStorage?.length ?? 0
+        if range.location + range.length <= textLength {
+            tv.setSelectedRange(range)
+        }
+        // Re-arm typingAttributes so the next-typed char inherits the toggled
+        // style even when the cursor is collapsed (no selection was edited).
+        tv.typingAttributes = pendingTypingAttrs
         syncState(from: tv)
-        // Persist: serialize rich text and trigger the text view's delegate save path
         if let delegate = tv.delegate as? EditableTextView.Coordinator {
             let richText = RichTextHelper.serialize(tv.attributedString())
             delegate.parent.onContentChange(tv.string, richText)
@@ -2179,7 +2988,12 @@ final class MacFormattingState: ObservableObject {
         let bodySize = NSFont.systemFont(ofSize: 17).pointSize
         let attrs: [NSAttributedString.Key: Any]
         let range = tv.selectedRange()
-        if range.location < (tv.textStorage?.length ?? 0) {
+        // With a selection: read the first character's attributes (what the
+        // user is looking at). With a collapsed cursor: prefer typingAttributes
+        // so the toolbar reflects the "armed" style that the next-typed char
+        // will carry — otherwise pressing Bold at a body cursor leaves the
+        // button dark even though bold is now armed.
+        if range.length > 0, range.location < (tv.textStorage?.length ?? 0) {
             attrs = tv.textStorage?.attributes(at: range.location, effectiveRange: nil) ?? tv.typingAttributes
         } else {
             attrs = tv.typingAttributes
@@ -2424,14 +3238,16 @@ struct TemplateProtectedTextView: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
+            // Invalidate size FIRST so SwiftUI sees the correct height
+            // before we update the binding and trigger a re-layout.
+            textView.invalidateIntrinsicContentSize()
             let newText = textView.text ?? ""
-            let richText = RichTextHelper.serialize(textView.attributedText)
-
+            // Skip expensive RTF serialization during active typing — pass nil.
+            // Rich text is saved on focus loss (textViewDidEndEditing).
             if parent.text != newText {
                 parent.text = newText
             }
-            parent.onContentChange(newText, richText)
-            textView.invalidateIntrinsicContentSize()
+            parent.onContentChange(newText, nil)
         }
     }
 }
@@ -2463,7 +3279,7 @@ struct TemplateProtectedTextView: View {
                 }
             }
             .onChange(of: text) { _, newValue in
-                onContentChange(newValue, nil)
+                DispatchQueue.main.async { onContentChange(newValue, nil) }
             }
     }
 }

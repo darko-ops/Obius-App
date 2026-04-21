@@ -107,10 +107,33 @@ struct Section: Codable, Identifiable, Hashable {
         (contentBefore ?? "") + (templatePrefix ?? "") + content
     }
 
+    /// Plain text with markdown markers stripped — for display in previews, search, etc.
+    var plainContent: String {
+        Self.stripMarkdown(content)
+    }
+
+    /// Strip markdown markers from text for display purposes.
+    static func stripMarkdown(_ text: String) -> String {
+        var result = text
+        // Strip heading markers (must be ordered longest-first)
+        result = result.replacingOccurrences(of: "### ", with: "")
+        result = result.replacingOccurrences(of: "## ", with: "")
+        result = result.replacingOccurrences(of: "# ", with: "")
+        // Strip bold (before italic to avoid partial matches)
+        result = result.replacingOccurrences(of: "**", with: "")
+        // Strip italic (standalone single asterisks used as markers)
+        // Use regex to only strip *word* patterns, not stray asterisks
+        if let regex = try? NSRegularExpression(pattern: "(?<=\\s|^)\\*([^*\\n]+)\\*(?=\\s|$|[.,;:!?)])", options: []) {
+            result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "$1")
+        }
+        return result
+    }
+
     /// One-line preview for ghost summaries when collapsed
     var preview: String {
         let trimmed = fullContent.trimmingCharacters(in: .whitespacesAndNewlines)
-        let firstLine = trimmed.components(separatedBy: .newlines).first ?? trimmed
+        let stripped = Self.stripMarkdown(trimmed)
+        let firstLine = stripped.components(separatedBy: .newlines).first ?? stripped
         if firstLine.count <= 80 {
             return firstLine
         }
@@ -122,10 +145,9 @@ struct Section: Codable, Identifiable, Hashable {
         if let title = title, !title.isEmpty {
             return title
         }
-        // Auto-generate from first line of content (including template prefix)
-        let firstLine = fullContent.trimmingCharacters(in: .whitespacesAndNewlines)
-            .components(separatedBy: .newlines)
-            .first ?? ""
+        // Auto-generate from first line of content (including template prefix), strip markdown
+        let stripped = Self.stripMarkdown(fullContent.trimmingCharacters(in: .whitespacesAndNewlines))
+        let firstLine = stripped.components(separatedBy: .newlines).first ?? ""
         if firstLine.isEmpty {
             return "Untitled Section"
         }

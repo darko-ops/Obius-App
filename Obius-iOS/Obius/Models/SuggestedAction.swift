@@ -30,6 +30,7 @@ struct SuggestedAction: Identifiable {
         case moveSection(MoveSectionParams)
         case setSectionIntent(SetSectionIntentParams)
         case rewritePage(RewritePageParams)
+        case updateInterstitialContent(UpdateInterstitialContentParams)
     }
 
     struct ScheduleEchoParams {
@@ -103,6 +104,7 @@ struct SuggestedAction: Identifiable {
         let noteTitle: String
         let newBody: String
         let keepSections: [KeepSection]
+        let interstitialContent: [String: String]
         let summary: String
         /// Pre-built preview showing what the page will look like after the edit.
         let pagePreview: String
@@ -111,6 +113,13 @@ struct SuggestedAction: Identifiable {
     struct KeepSection {
         let sectionId: String
         let newContent: String? // nil = keep existing content
+    }
+
+    struct UpdateInterstitialContentParams {
+        let noteId: String
+        let noteTitle: String
+        let afterSectionId: String? // nil = text after all sections ("end")
+        let newContent: String
     }
 
     // MARK: - Display Properties
@@ -128,6 +137,7 @@ struct SuggestedAction: Identifiable {
         case .moveSection:          return "arrow.up.arrow.down"
         case .setSectionIntent:     return "paintbrush"
         case .rewritePage:          return "doc.text.fill"
+        case .updateInterstitialContent: return "text.insert"
         }
     }
 
@@ -159,6 +169,10 @@ struct SuggestedAction: Identifiable {
         case .rewritePage(let p):
             let display = p.noteTitle.isEmpty ? "Untitled" : p.noteTitle
             return "Rewrite \(display)"
+        case .updateInterstitialContent(let p):
+            let display = p.noteTitle.isEmpty ? "Untitled" : p.noteTitle
+            let location = p.afterSectionId != nil ? "after node" : "at end of page"
+            return "Update text \(location) on \(display)"
         }
     }
 
@@ -190,6 +204,8 @@ struct SuggestedAction: Identifiable {
         case .rewritePage(let p):
             let display = p.noteTitle.isEmpty ? "Untitled" : p.noteTitle
             return "Rewrite \(display)"
+        case .updateInterstitialContent(let p):
+            return String(p.newContent.prefix(80))
         }
     }
 
@@ -201,6 +217,7 @@ struct SuggestedAction: Identifiable {
         case .updateSectionContent(let p): return p.newContent
         case .addSection(let p):           return p.content
         case .rewritePage(let p):          return p.pagePreview
+        case .updateInterstitialContent(let p): return p.newContent
         default:                           return nil
         }
     }
@@ -218,6 +235,7 @@ struct SuggestedAction: Identifiable {
         case .moveSection:          return "move_section"
         case .setSectionIntent:     return "set_section_intent"
         case .rewritePage:          return "rewrite_page"
+        case .updateInterstitialContent: return "update_interstitial_content"
         }
     }
 
@@ -234,6 +252,7 @@ struct SuggestedAction: Identifiable {
         case .moveSection:          return .indigo
         case .setSectionIntent:     return .blue
         case .rewritePage:          return .cyan
+        case .updateInterstitialContent: return .cyan
         }
     }
 
@@ -380,6 +399,19 @@ struct SuggestedAction: Identifiable {
                 intent: intent
             ))
 
+        case "update_interstitial_content":
+            guard let noteId = input["note_id"] as? String,
+                  let noteTitle = input["note_title"] as? String,
+                  let newContent = input["new_content"] as? String else {
+                return nil
+            }
+            actionType = .updateInterstitialContent(UpdateInterstitialContentParams(
+                noteId: noteId,
+                noteTitle: noteTitle,
+                afterSectionId: input["after_section_id"] as? String,
+                newContent: newContent
+            ))
+
         case "rewrite_page":
             guard let noteId = input["note_id"] as? String,
                   let noteTitle = input["note_title"] as? String,
@@ -392,6 +424,7 @@ struct SuggestedAction: Identifiable {
                 guard let sId = dict["section_id"] as? String else { return nil }
                 return KeepSection(sectionId: sId, newContent: dict["new_content"] as? String)
             }
+            let interstitials = (input["interstitial_content"] as? [String: String]) ?? [:]
             // Build preview from body + any sections that have new_content
             var previewParts: [String] = []
             let trimmedBody = newBody.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -401,6 +434,15 @@ struct SuggestedAction: Identifiable {
                    !content.isEmpty {
                     previewParts.append("• \(content)")
                 }
+                // Show interstitial text after this section in preview
+                if let inter = interstitials["after_\(ks.sectionId)"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !inter.isEmpty {
+                    previewParts.append(inter)
+                }
+            }
+            if let endText = interstitials["end"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !endText.isEmpty {
+                previewParts.append(endText)
             }
             let preview = previewParts.isEmpty ? summary : previewParts.joined(separator: "\n\n")
             actionType = .rewritePage(RewritePageParams(
@@ -408,6 +450,7 @@ struct SuggestedAction: Identifiable {
                 noteTitle: noteTitle,
                 newBody: newBody,
                 keepSections: keepSections,
+                interstitialContent: interstitials,
                 summary: summary,
                 pagePreview: preview
             ))
@@ -476,12 +519,8 @@ struct SuggestedAction: Identifiable {
             } else {
                 richText = nil
             }
-            let plainBody = p.newBody
-                .replacingOccurrences(of: "### ", with: "")
-                .replacingOccurrences(of: "## ", with: "")
-                .replacingOccurrences(of: "# ", with: "")
-                .replacingOccurrences(of: "**", with: "")
-            try await appState.noteRepository.updateNoteBody(p.noteId, body: plainBody, richText: richText)
+            let plainBody = Section.stripMarkdown(p.newBody)
+            try await appState.noteRepository.updateNoteBody(p.noteId, body: plainBody, richText: richText, clearRichText: richText == nil)
 
         case .deleteSection(let p):
             try await appState.sectionRepository.deleteSection(p.sectionId)
@@ -495,12 +534,8 @@ struct SuggestedAction: Identifiable {
             } else {
                 richText = nil
             }
-            let plainContent = p.newContent
-                .replacingOccurrences(of: "### ", with: "")
-                .replacingOccurrences(of: "## ", with: "")
-                .replacingOccurrences(of: "# ", with: "")
-                .replacingOccurrences(of: "**", with: "")
-            try await appState.sectionRepository.updateContent(p.sectionId, content: plainContent, richText: richText)
+            let plainContent = Section.stripMarkdown(p.newContent)
+            try await appState.sectionRepository.updateContent(p.sectionId, content: plainContent, richText: richText, clearRichText: richText == nil)
 
         case .addSection(let p):
             let secType: SectionType = p.sectionType == "fold" ? .fold : .line
@@ -512,11 +547,7 @@ struct SuggestedAction: Identifiable {
             default:          conType = .text
             }
             let hasMarkdown = p.content.contains("# ") || p.content.contains("**") || p.content.contains("*")
-            let plainContent = p.content
-                .replacingOccurrences(of: "### ", with: "")
-                .replacingOccurrences(of: "## ", with: "")
-                .replacingOccurrences(of: "# ", with: "")
-                .replacingOccurrences(of: "**", with: "")
+            let plainContent = Section.stripMarkdown(p.content)
             let section = try await appState.sectionRepository.createSection(
                 noteId: p.noteId,
                 content: plainContent,
@@ -542,36 +573,41 @@ struct SuggestedAction: Identifiable {
             }
             try await appState.sectionRepository.setIntent(p.sectionId, intent: intent)
 
-        case .rewritePage(let p):
-            // 1. Update body
-            let hasMarkdown = p.newBody.contains("# ") || p.newBody.contains("**") || p.newBody.contains("*")
+        case .updateInterstitialContent(let p):
+            let hasMarkdown = p.newContent.contains("# ") || p.newContent.contains("**") || p.newContent.contains("*")
             let richText: String?
             if hasMarkdown {
-                let attributed = RichTextHelper.fromMarkdown(p.newBody)
+                let attributed = RichTextHelper.fromMarkdown(p.newContent)
                 richText = RichTextHelper.serialize(attributed)
             } else {
                 richText = nil
             }
-            let plainBody = p.newBody
-                .replacingOccurrences(of: "### ", with: "")
-                .replacingOccurrences(of: "## ", with: "")
-                .replacingOccurrences(of: "# ", with: "")
-                .replacingOccurrences(of: "**", with: "")
-            try await appState.noteRepository.updateNoteBody(p.noteId, body: plainBody, richText: richText)
+            let plainContent = Section.stripMarkdown(p.newContent)
+            try await appState.noteRepository.updateInterstitialContent(
+                p.noteId,
+                afterSectionId: p.afterSectionId,
+                content: plainContent,
+                richText: richText
+            )
 
-            // 2. Build set of section IDs to keep
+        case .rewritePage(let p):
+            // Build the full plan, then apply in a single DB transaction.
+            // This prevents the editor from observing a half-updated note
+            // (e.g. body rewritten but sections not yet pruned), which
+            // previously caused the "body populated, 0 sections" corrupt state.
+            let bodyHasMarkdown = p.newBody.contains("# ") || p.newBody.contains("**") || p.newBody.contains("*")
+            let bodyRichText: String?
+            if bodyHasMarkdown {
+                let attributed = RichTextHelper.fromMarkdown(p.newBody)
+                bodyRichText = RichTextHelper.serialize(attributed)
+            } else {
+                bodyRichText = nil
+            }
+            let plainBody = Section.stripMarkdown(p.newBody)
+
             let keepIds = Set(p.keepSections.map(\.sectionId))
 
-            // 3. Get all current sections for this note and delete ones not in keepIds
-            let allSections = try await appState.sectionRepository.getSections(noteId: p.noteId)
-            for section in allSections {
-                guard section.deletedAt == nil else { continue }
-                if !keepIds.contains(section.id) {
-                    try await appState.sectionRepository.deleteSection(section.id)
-                }
-            }
-
-            // 4. Update content for kept sections that have new_content
+            var sectionUpdates: [NoteRepository.RewritePagePlan.SectionUpdate] = []
             for keep in p.keepSections {
                 guard let newContent = keep.newContent else { continue }
                 let hasMd = newContent.contains("# ") || newContent.contains("**") || newContent.contains("*")
@@ -582,13 +618,47 @@ struct SuggestedAction: Identifiable {
                 } else {
                     rt = nil
                 }
-                let plain = newContent
-                    .replacingOccurrences(of: "### ", with: "")
-                    .replacingOccurrences(of: "## ", with: "")
-                    .replacingOccurrences(of: "# ", with: "")
-                    .replacingOccurrences(of: "**", with: "")
-                try await appState.sectionRepository.updateContent(keep.sectionId, content: plain, richText: rt)
+                let plain = Section.stripMarkdown(newContent)
+                sectionUpdates.append(.init(
+                    sectionId: keep.sectionId,
+                    content: plain,
+                    richText: rt,
+                    clearRichText: rt == nil
+                ))
             }
+
+            var interstitials: [NoteRepository.RewritePagePlan.Interstitial] = []
+            for (key, value) in p.interstitialContent {
+                let afterId: String?
+                if key == "end" {
+                    afterId = nil
+                } else if key.hasPrefix("after_") {
+                    afterId = String(key.dropFirst(6))
+                } else {
+                    continue
+                }
+                let hasMd = value.contains("# ") || value.contains("**") || value.contains("*")
+                let rt: String?
+                if hasMd {
+                    let attr = RichTextHelper.fromMarkdown(value)
+                    rt = RichTextHelper.serialize(attr)
+                } else {
+                    rt = nil
+                }
+                let plain = Section.stripMarkdown(value)
+                interstitials.append(.init(afterSectionId: afterId, content: plain, richText: rt))
+            }
+
+            let plan = NoteRepository.RewritePagePlan(
+                noteId: p.noteId,
+                body: plainBody,
+                bodyRichText: bodyRichText,
+                clearBodyRichText: bodyRichText == nil,
+                keepSectionIds: keepIds,
+                sectionUpdates: sectionUpdates,
+                interstitials: interstitials
+            )
+            try await appState.noteRepository.applyRewritePage(plan)
         }
     }
 

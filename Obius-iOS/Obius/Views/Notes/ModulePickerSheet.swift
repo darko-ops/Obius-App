@@ -53,7 +53,7 @@ struct ModulePickerSheet: View {
                 ) {
                     deleteConfirmationContent
                 } message: {
-                    Text("Notes in this project will be moved to Local.")
+                    Text("This will permanently delete all notes and blocks in this project.")
                 }
         }
         #if os(iOS)
@@ -130,8 +130,6 @@ struct ModulePickerSheet: View {
             Text(module.name)
                 .foregroundStyle(.primary)
 
-            StorageTypeBadge(storageType: module.storageType)
-
             Spacer()
 
             if selectedModuleId == module.id {
@@ -164,10 +162,7 @@ struct ModulePickerSheet: View {
     @ViewBuilder
     private var addModuleAlertContent: some View {
         TextField("Project name", text: $newModuleName)
-        Button("Local") {
-            createNewModule(storageType: .local)
-        }
-        Button("Cloud") {
+        Button("Create") {
             createNewModule(storageType: .cloud)
         }
         Button("Cancel", role: .cancel) {
@@ -191,15 +186,14 @@ struct ModulePickerSheet: View {
                     selectedModuleId = moduleRepository.getLocalModule()?.id
                 }
                 Task {
-                    let movedNoteIds = (try? await moduleRepository.deleteModule(id: module.id)) ?? []
-                    // Log sync updates for moved notes directly in the database
-                    // (can't use syncLogger.logNoteUpdate because it spawns async tasks)
-                    for noteId in movedNoteIds {
-                        if let note = try? await appState.noteRepository.getNote(id: noteId) {
-                            await appState.syncLogger.logNoteUpdateSync(note)
-                        }
+                    let deleted = (try? await moduleRepository.deleteModule(id: module.id)) ?? ([], [])
+                    // Log delete operations for sync
+                    for noteId in deleted.0 {
+                        appState.syncLogger.logNoteDelete(noteId)
                     }
-                    // Small delay to ensure DB writes complete, then sync
+                    for sectionId in deleted.1 {
+                        appState.syncLogger.logSectionDelete(sectionId)
+                    }
                     try? await Task.sleep(for: .milliseconds(200))
                     await appState.triggerSync()
                 }

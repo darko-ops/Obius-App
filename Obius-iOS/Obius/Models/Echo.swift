@@ -230,6 +230,46 @@ struct Echo: Codable, Identifiable, Hashable {
 
         return soonest
     }
+
+    /// All fire dates within the given range, for calendar display.
+    func fireDatesInRange(start: Date, end: Date) -> [Date] {
+        let startDate = fireDateAsDate
+
+        if !isRecurring {
+            return (startDate >= start && startDate <= end) ? [startDate] : []
+        }
+
+        let ints = intervals
+        if ints.isEmpty { return [] }
+
+        var dates: [Date] = []
+
+        for interval in ints {
+            var components = DateComponents()
+            switch interval.unit {
+            case .minutes: components.minute = interval.value
+            case .hours: components.hour = interval.value
+            case .days: components.day = interval.value
+            case .weeks: components.day = interval.value * 7
+            case .months: components.month = interval.value
+            }
+
+            var candidate = startDate
+            var count = 0
+            while candidate <= end && count < 200 {
+                if candidate >= start {
+                    dates.append(candidate)
+                    count += 1
+                }
+                guard let next = Calendar.current.date(byAdding: components, to: candidate) else { break }
+                candidate = next
+            }
+        }
+
+        return Array(Set(dates.map { $0.timeIntervalSince1970 }))
+            .sorted()
+            .map { Date(timeIntervalSince1970: $0) }
+    }
 }
 
 // MARK: - GRDB Conformance

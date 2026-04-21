@@ -90,11 +90,18 @@ final class InsightEngine {
         if hasFullInsights {
             newInsights.append(contentsOf: detectUpcomingEchoes(sectionsByNote: sectionsByNote))
             newInsights.append(contentsOf: detectLinks(notes: notes, sectionsByNote: sectionsByNote))
+            newInsights.append(contentsOf: detectScheduleDates(notes: notes, sectionsByNote: sectionsByNote))
+            newInsights.append(contentsOf: detectMomentum(notes: notes))
         }
         // Phase 2 stubs:
         // newInsights.append(contentsOf: await detectDrift(...))
         // newInsights.append(contentsOf: await generateWeeklyReport(...))
-        // newInsights.append(contentsOf: await assessProjectHealth(...))
+
+        // Invalidate insights that no longer match current content.
+        // Compare existing active insights against fresh scan results —
+        // any insight not reproduced by the detectors is stale.
+        let freshKeys = Set(newInsights.map(\.dedupKey))
+        try? await insightRepository.invalidateStaleInsights(freshKeys: freshKeys)
 
         // Batch dedup against all existing insights (surfaced, tracked, dismissed)
         let existingKeys = (try? await insightRepository.existingInsightKeys()) ?? []
@@ -163,7 +170,176 @@ final class InsightEngine {
         // -- Nonsense content --
         insights.append(contentsOf: detectNonsense(notes: notes, sectionsByNote: sectionsByNote))
 
+        // -- Stale pages (read-but-never-touched) --
+        insights.append(contentsOf: detectStalePages(notes: notes, sectionsByNote: sectionsByNote))
+
         return insights
+    }
+
+    /// Emits one `.cleanup` insight per page that has been viewed often but
+    /// not updated in 30+ days — "you keep opening this page but haven't
+    /// touched it in a month; revisit or archive?".
+    ///
+    /// Differs from dormant-loop detection (which targets @handle staleness)
+    /// and from inactive-loop detection (unreferenced loops). Scope is the
+    /// page itself as a unit of work.
+    private func detectStalePages(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let thirtyDaysMs: Int64 = 30 * 86_400_000
+        let minViewCount = 3
+        let maxInsights = 5
+        var insights: [Insight] = []
+
+        for note in notes {
+            guard note.viewCount > minViewCount else { continue }
+            guard note.updatedAt < now - thirtyDaysMs else { continue }
+
+            // Skip truly empty pages — the real issue there is "draft never
+            // started", not "stale content", and it would spam the user.
+            let sections = sectionsByNote[note.id] ?? []
+            let activeSections = sections.filter { $0.deletedAt == nil }
+            let bodyEmpty = note.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if bodyEmpty && activeSections.isEmpty { continue }
+
+            let daysSince = Int((now - note.updatedAt) / 86_400_000)
+            let pageTitle = note.displayTitle(sections: sections)
+            insights.append(Insight(
+                insightType: .cleanup,
+                title: "Revisit or archive '\(pageTitle)'?",
+                body: "You've opened it \(note.viewCount) times but haven't edited it in \(daysSince) days.",
+                sourceNoteId: note.id,
+                sourceSectionId: "stale_page"
+            ))
+
+            if insights.count >= maxInsights { break }
+        }
+        return insights
+    }
+
+    // MARK: - Writing Momentum Detector
+
+    /// Emits at most one `.progress` insight per ISO week summarizing the
+    /// user's writing activity: active days in the last 7, notes this week
+    /// vs last week. The dedup key incorporates the ISO week so a new week
+    /// supersedes last week's card automatically via the stale-invalidation
+    /// pass in `scan()`.
+    private func detectMomentum(notes: [Note]) -> [Insight] {
+        guard !notes.isEmpty else { return [] }
+
+        let calendar = Calendar(identifier: .iso8601)
+        let now = Date()
+        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
+        let sevenDaysMs: Int64 = 7 * 86_400_000
+
+        // Active days in the trailing 7-day window.
+        // A day counts as "active" if any note was created or updated on it.
+        var activeDays: Set<Date> = []
+        for note in notes {
+            for ts in [note.createdAt, note.updatedAt] {
+                let delta = nowMs - ts
+                guard delta >= 0, delta <= sevenDaysMs else { continue }
+                let date = Date(timeIntervalSince1970: TimeInterval(ts) / 1000)
+                let day = calendar.startOfDay(for: date)
+                activeDays.insert(day)
+            }
+        }
+        let activeCount = activeDays.count
+
+        // Current consecutive-day streak ending today (or yesterday, to avoid
+        // penalizing a user who hasn't written yet today).
+        var streak = 0
+        let today = calendar.startOfDay(for: now)
+        var cursor = today
+        while activeDays.contains(cursor) {
+            streak += 1
+            guard let prev = calendar.date(byAdding: .day, value: -1, to: cursor) else { break }
+            cursor = prev
+        }
+        if streak == 0 {
+            // Allow a 1-day grace: if yesterday was active, treat that as the
+            // live streak so the user sees progress before their first write today.
+            if let yesterday = calendar.date(byAdding: .day, value: -1, to: today),
+               activeDays.contains(yesterday) {
+                var back = yesterday
+                while activeDays.contains(back) {
+                    streak += 1
+                    guard let prev = calendar.date(byAdding: .day, value: -1, to: back) else { break }
+                    back = prev
+                }
+            }
+        }
+
+        // Notes created this ISO week vs last ISO week.
+        // Also collect every note that was *touched* (created or updated) this
+        // week so the insight detail sheet can show them as reference pills —
+        // same affordance as link/schedule insights.
+        let thisWeekRange = calendar.dateInterval(of: .weekOfYear, for: now)
+        let lastWeekStart = calendar.date(byAdding: .weekOfYear, value: -1, to: now)
+        let lastWeekRange = lastWeekStart.flatMap { calendar.dateInterval(of: .weekOfYear, for: $0) }
+
+        var thisWeekCount = 0
+        var lastWeekCount = 0
+        var touchedThisWeek: [(id: String, ts: Int64)] = []
+        for note in notes {
+            let created = Date(timeIntervalSince1970: TimeInterval(note.createdAt) / 1000)
+            let updated = Date(timeIntervalSince1970: TimeInterval(note.updatedAt) / 1000)
+            if let r = thisWeekRange, r.contains(created) { thisWeekCount += 1 }
+            if let r = lastWeekRange, r.contains(created) { lastWeekCount += 1 }
+            if let r = thisWeekRange, r.contains(created) || r.contains(updated) {
+                touchedThisWeek.append((note.id, max(note.createdAt, note.updatedAt)))
+            }
+        }
+        // Most recently touched first, capped so the detail sheet stays tidy.
+        let referencedIds = touchedThisWeek
+            .sorted { $0.ts > $1.ts }
+            .prefix(8)
+            .map(\.id)
+
+        // Dedup key: one insight per ISO week. Next week → key changes, the
+        // scan's stale-invalidator removes the old one.
+        let isoYear = calendar.component(.yearForWeekOfYear, from: now)
+        let isoWeek = calendar.component(.weekOfYear, from: now)
+        let weekKey = String(format: "momentum_%04d-W%02d", isoYear, isoWeek)
+
+        // Title: lead with the strongest signal (streak) when present.
+        let title: String
+        if streak >= 3 {
+            title = "🔥 \(streak)-day writing streak"
+        } else if activeCount >= 5 {
+            title = "Active \(activeCount) of the last 7 days"
+        } else if activeCount >= 1 {
+            title = "Active \(activeCount) of the last 7 days"
+        } else {
+            // No activity in a week — skip the card entirely rather than
+            // shaming the user. Nothing to surface.
+            return []
+        }
+
+        // Body: this week vs last week comparison.
+        let body: String
+        if thisWeekCount == 0 && lastWeekCount == 0 {
+            body = "No new notes yet — open a page and capture something quick."
+        } else if lastWeekCount == 0 {
+            body = "\(thisWeekCount) note\(thisWeekCount == 1 ? "" : "s") this week. Great start."
+        } else if thisWeekCount >= lastWeekCount {
+            body = "\(thisWeekCount) note\(thisWeekCount == 1 ? "" : "s") this week vs \(lastWeekCount) last week. Keep going."
+        } else {
+            body = "\(thisWeekCount) note\(thisWeekCount == 1 ? "" : "s") this week vs \(lastWeekCount) last week — slowing down?"
+        }
+
+        // Pack the week's touched note IDs into relatedNoteId (comma-
+        // separated). `resolveReferences` already understands this format
+        // for multi-reference insights and renders them as pills.
+        let relatedField: String? = referencedIds.isEmpty ? nil : referencedIds.joined(separator: ",")
+
+        return [Insight(
+            insightType: .progress,
+            title: title,
+            body: body,
+            sourceNoteId: nil,
+            sourceSectionId: weekKey,
+            relatedNoteId: relatedField
+        )]
     }
 
     private func detectDormantLoops(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
@@ -346,61 +522,54 @@ final class InsightEngine {
             "thing", "things", "way", "one", "two", "first", "last", "new"
         ]
 
-        // Max word count for a line to qualify as a plain-text list item.
-        // Real list items are terse; full sentences are not list items.
-        let plainItemMaxWords = 8
-
         var insights: [Insight] = []
 
         for note in notes {
             let sections = sectionsByNote[note.id] ?? []
             let pageTitle = note.displayTitle(sections: sections)
 
-            /// Scans text for consecutive list runs and appends an insight per list.
+            /// Scans text for consecutive prefixed list runs (bullets, numbers, checklists)
+            /// and appends an insight per list. Only detects explicitly prefixed items —
+            /// plain short lines are NOT treated as list items to avoid false positives.
             func scanForLists(_ text: String, sectionId: String? = nil) {
                 let lines = text.components(separatedBy: .newlines)
-                var prefixedList: [String] = []
-                var plainList: [String] = []
+                var currentList: [String] = []
+                // Track whether we've seen a non-list line before the first list item.
+                // If the line immediately before a list run is short and unprefixed,
+                // it's likely a title/header — don't include it.
+                var previousNonListLine: String?
 
-                func flushPrefixed() {
-                    guard prefixedList.count >= 3 else {
-                        prefixedList.removeAll()
+                func flushList() {
+                    // Drop a leading "header" item that was written with a
+                    // list prefix (e.g. "- Shopping:" or "1. Tasks") — its
+                    // prefix style or trailing colon gives it away, and
+                    // counting it inflates the total and confuses the body.
+                    Self.trimLeadingHeaderItem(&currentList)
+                    guard currentList.count >= 3 else {
+                        currentList.removeAll()
                         return
                     }
-                    appendListInsight(items: prefixedList, sectionId: sectionId)
-                    prefixedList.removeAll()
-                }
-
-                func flushPlain() {
-                    guard plainList.count >= 3 else {
-                        plainList.removeAll()
-                        return
-                    }
-                    appendListInsight(items: plainList, sectionId: sectionId)
-                    plainList.removeAll()
-                }
-
-                func appendListInsight(items: [String], sectionId: String?) {
                     let miniTitle = Self.listMiniTitle(
-                        items: items,
+                        items: currentList,
                         prefixStrip: prefixStrip,
                         stopWords: listStopWords
                     )
-                    let body = items.joined(separator: "\n")
+                    let body = currentList.joined(separator: "\n")
                     insights.append(Insight(
                         insightType: .list,
-                        title: "\(items.count) items in '\(pageTitle)' — \(miniTitle)",
+                        title: "\(currentList.count) items in '\(pageTitle)' — \(miniTitle)",
                         body: body,
                         sourceNoteId: note.id,
                         sourceSectionId: sectionId ?? "list"
                     ))
+                    currentList.removeAll()
                 }
 
                 for line in lines {
                     let trimmed = line.trimmingCharacters(in: .whitespaces)
                     guard !trimmed.isEmpty else {
-                        flushPrefixed()
-                        flushPlain()
+                        flushList()
+                        previousNonListLine = nil
                         continue
                     }
 
@@ -411,30 +580,15 @@ final class InsightEngine {
                     let isChecklist = trimmed.hasPrefix("[ ]") || trimmed.hasPrefix("[x]") || trimmed.hasPrefix("[X]")
 
                     if isBullet || isNumbered || isLettered || isChecklist {
-                        // Prefixed item — flush any ongoing plain run
-                        flushPlain()
-                        prefixedList.append(String(trimmed.prefix(120)))
+                        currentList.append(String(trimmed.prefix(120)))
+                        previousNonListLine = nil
                     } else {
-                        // Flush any ongoing prefixed run
-                        flushPrefixed()
-
-                        // Check if this line looks like a plain-text list item:
-                        // short (≤ N words), no ending punctuation that signals a sentence
-                        let wordCount = trimmed.split(separator: " ").count
-                        let endsLikeSentence = trimmed.hasSuffix(".")
-                            || trimmed.hasSuffix("!")
-                            || trimmed.hasSuffix("?")
-                        let isShortItem = wordCount <= plainItemMaxWords && !endsLikeSentence
-
-                        if isShortItem {
-                            plainList.append(String(trimmed.prefix(120)))
-                        } else {
-                            flushPlain()
-                        }
+                        // Non-list line — flush any ongoing list
+                        flushList()
+                        previousNonListLine = trimmed
                     }
                 }
-                flushPrefixed()
-                flushPlain()
+                flushList()
             }
 
             // Check note body
@@ -443,14 +597,8 @@ final class InsightEngine {
                 scanForLists(bodyText)
             }
 
-            // Check sections — scan titles and content (skip checklist content, already structured)
+            // Check section content only (not titles — they aren't list items)
             for section in sections {
-                if let sectionTitle = section.title {
-                    let trimmedTitle = sectionTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmedTitle.isEmpty {
-                        scanForLists(trimmedTitle, sectionId: section.id)
-                    }
-                }
                 guard section.contentType == .text else { continue }
                 let content = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !content.isEmpty else { continue }
@@ -467,6 +615,84 @@ final class InsightEngine {
 
         return insights
     }
+
+    /// If the first element of `list` looks like a header that the user
+    /// accidentally gave a list prefix to (or a heading written with a
+    /// lettered/numbered pattern that is then followed by a bulleted list),
+    /// drop it in place.
+    ///
+    /// Two tells:
+    /// 1. Its stripped text ends with ":" and none of the remaining items do.
+    /// 2. Its prefix family differs from the prefix family that dominates the
+    ///    rest of the list (e.g. "1. Tasks" followed by "- milk / - eggs").
+    private static func trimLeadingHeaderItem(_ list: inout [String]) {
+        // Always allow trimming when there is at least a first + two peers to
+        // compare against. If trimming drops below `flushList`'s 3-item
+        // threshold, the insight simply won't be emitted — the right outcome
+        // when the "list" was really just a header + one or two items.
+        guard list.count >= 3 else { return }
+
+        let first = list[0]
+        let rest = Array(list.dropFirst())
+
+        let firstStripped = listPrefixStripPattern.stringByReplacingMatches(
+            in: first,
+            range: NSRange(first.startIndex..., in: first),
+            withTemplate: ""
+        ).trimmingCharacters(in: .whitespaces)
+
+        let restStripped = rest.map { item -> String in
+            let r = NSRange(item.startIndex..., in: item)
+            return listPrefixStripPattern
+                .stringByReplacingMatches(in: item, range: r, withTemplate: "")
+                .trimmingCharacters(in: .whitespaces)
+        }
+
+        let firstEndsWithColon = firstStripped.hasSuffix(":")
+        let restEndsWithColon = restStripped.filter { $0.hasSuffix(":") }.count
+        let colonHeader = firstEndsWithColon && restEndsWithColon == 0
+
+        let firstFamily = listPrefixFamily(of: first)
+        let restFamilies = rest.map { listPrefixFamily(of: $0) }
+        // Dominant family among remaining items
+        var familyCounts: [String: Int] = [:]
+        for f in restFamilies { familyCounts[f, default: 0] += 1 }
+        let dominant = familyCounts.max(by: { $0.value < $1.value })?.key
+        let mismatchedFamily = dominant != nil && firstFamily != dominant
+
+        if colonHeader || mismatchedFamily {
+            list.removeFirst()
+        }
+    }
+
+    /// Classify a list-item's leading prefix so we can tell whether two items
+    /// share structural style.
+    private static func listPrefixFamily(of item: String) -> String {
+        if item.hasPrefix("- ") || item.hasPrefix("• ") || item.hasPrefix("· ")
+            || item.hasPrefix("* ") || item.hasPrefix("→ ") || item.hasPrefix("‣ ") {
+            return "bullet"
+        }
+        if item.hasPrefix("[ ]") || item.hasPrefix("[x]") || item.hasPrefix("[X]") {
+            return "checklist"
+        }
+        let range = NSRange(item.startIndex..., in: item)
+        if listNumberedPatternStatic.firstMatch(in: item, range: range) != nil {
+            return "numbered"
+        }
+        if listLetteredPatternStatic.firstMatch(in: item, range: range) != nil {
+            return "lettered"
+        }
+        return "unknown"
+    }
+
+    // Static copies so the trim helper can run without being passed the
+    // regexes that live in the outer detector closure.
+    private static let listPrefixStripPattern =
+        try! NSRegularExpression(pattern: #"^(?:[-•·*→‣]\s|\d{1,3}[.\)]\s|[a-zA-Z][.\)]\s|\[[ xX]\]\s?)"#)
+    private static let listNumberedPatternStatic =
+        try! NSRegularExpression(pattern: #"^\d{1,3}[\.\)]\s"#)
+    private static let listLetteredPatternStatic =
+        try! NSRegularExpression(pattern: #"^[a-zA-Z][\.\)]\s"#)
 
     /// Derives a short descriptive label from the content of list items.
     /// Picks the top 1-2 most frequent meaningful words across all items.
@@ -1101,5 +1327,80 @@ final class InsightEngine {
                 print("[InsightEngine] Notification scheduling failed: \(error)")
             }
         }
+    }
+
+    // MARK: - Schedule Detector
+
+    /// Detects dates/times in note content and creates schedule insights
+    /// so the user can quickly create an echo from a detected date.
+    private func detectScheduleDates(notes: [Note], sectionsByNote: [String: [Section]]) -> [Insight] {
+        var insights: [Insight] = []
+        let now = Date()
+        let detector: NSDataDetector
+        do {
+            detector = try NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue)
+        } catch {
+            print("[InsightEngine] Failed to create date detector: \(error)")
+            return []
+        }
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .medium
+        dateFormatter.timeStyle = .short
+
+        let dateOnlyFormatter = DateFormatter()
+        dateOnlyFormatter.dateStyle = .medium
+        dateOnlyFormatter.timeStyle = .none
+
+        for note in notes {
+            let sections = sectionsByNote[note.id] ?? []
+            let text = Self.allText(for: note, sections: sections)
+            guard !text.isEmpty else { continue }
+
+            let range = NSRange(text.startIndex..., in: text)
+            let matches = detector.matches(in: text, options: [], range: range)
+            var noteCount = 0
+
+            for match in matches {
+                // Cap at 3 schedule insights per note to avoid noise
+                guard noteCount < 3 else { break }
+
+                guard let matchDate = match.date else { continue }
+
+                // Only surface dates that are in the future (at least 1 hour from now)
+                guard matchDate > now.addingTimeInterval(3600) else { continue }
+
+                // Don't surface dates more than 1 year out — likely false positives
+                guard matchDate < now.addingTimeInterval(365 * 24 * 3600) else { continue }
+
+                // Extract the matched text for context
+                guard let matchRange = Range(match.range, in: text) else { continue }
+
+                // Get surrounding context (up to 60 chars on each side)
+                let contextStart = text.index(matchRange.lowerBound, offsetBy: -60, limitedBy: text.startIndex) ?? text.startIndex
+                let contextEnd = text.index(matchRange.upperBound, offsetBy: 60, limitedBy: text.endIndex) ?? text.endIndex
+                let context = String(text[contextStart..<contextEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+                // Determine if the match includes a time component
+                let hasTime = match.duration == 0 && Calendar.current.component(.hour, from: matchDate) != 0
+                let formattedDate = hasTime ? dateFormatter.string(from: matchDate) : dateOnlyFormatter.string(from: matchDate)
+
+                let fireMs = Int64(matchDate.timeIntervalSince1970 * 1000)
+                let noteTitle = note.displayTitle
+
+                insights.append(Insight(
+                    insightType: .schedule,
+                    title: "Date found in \(noteTitle)",
+                    body: "\(formattedDate) — \"\(context)\"",
+                    sourceNoteId: note.id,
+                    sourceSectionId: "schedule",
+                    relatedNoteId: String(fireMs)
+                ))
+                noteCount += 1
+            }
+        }
+
+        print("[InsightEngine] detectScheduleDates found \(insights.count) date(s)")
+        return insights
     }
 }

@@ -329,9 +329,9 @@ struct PaywallSheet: View {
             }
 
             HStack(spacing: 16) {
-                Link("Terms", destination: URL(string: "https://obius.io/terms")!)
+                Link("Terms", destination: URL(string: "https://docs.google.com/document/d/e/2PACX-1vRq_bt_Z_V7ci7lS3hHLzq4QjRrDFJsJu6Ab-oedeeSakGPGcx_dJlG3EDAzdetptd21GPyEtzTxKbg/pub")!)
                     .font(.caption2).foregroundStyle(.tertiary)
-                Link("Privacy", destination: URL(string: "https://obius.io/privacy")!)
+                Link("Privacy", destination: URL(string: "https://docs.google.com/document/d/e/2PACX-1vRbJ9cYTWnyQSYeL8JrTOizC0eC-f8rhoicqh3GttTDIrbNlesR-_auwkFz2OLsTTzguDG3YLtzwnEY/pub")!)
                     .font(.caption2).foregroundStyle(.tertiary)
             }
         }

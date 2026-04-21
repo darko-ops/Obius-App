@@ -5,6 +5,7 @@ import Combine
 @MainActor
 final class ModuleRepository: ObservableObject {
     private let database: DatabaseManager
+    var syncLogger: SyncOperationLogger?
     private var cancellables = Set<AnyCancellable>()
 
     @Published private(set) var modules: [Module] = []
@@ -112,6 +113,21 @@ final class ModuleRepository: ObservableObject {
             module.touch()
             try module.update(db)
         }
+
+        // Re-sync all notes in this module so the updated name propagates to other devices
+        if let syncLogger = syncLogger {
+            let notes = try await database.read { db in
+                try Note.filter(Note.Columns.moduleId == id)
+                    .filter(Note.Columns.deletedAt == nil)
+                    .fetchAll(db)
+            }
+            for note in notes {
+                syncLogger.logNoteUpdate(note)
+            }
+            if !notes.isEmpty {
+                print("[ModuleRepository] Queued \(notes.count) note sync ops for module rename '\(trimmed)'")
+            }
+        }
     }
 
     // MARK: - Reorder
@@ -129,40 +145,55 @@ final class ModuleRepository: ObservableObject {
 
     // MARK: - Delete
 
-    /// Deletes a module, reassigning its notes to another module.
-    /// Returns the IDs of notes that were reassigned (for sync logging).
+    /// Deletes a module and all its contents (notes, sections, handles, echoes).
+    /// Returns a tuple of deleted note IDs and section IDs for sync logging.
     @discardableResult
-    func deleteModule(id: String) async throws -> [String] {
+    func deleteModule(id: String) async throws -> (noteIds: [String], sectionIds: [String]) {
         try await database.write { db in
-            guard var module = try Module.fetchOne(db, key: id) else { return [] }
+            guard var module = try Module.fetchOne(db, key: id) else { return ([], []) }
 
-            // Find another module to reassign notes to
-            guard let fallbackModule = try Module
+            // Must have at least one other module
+            let otherCount = try Module
                 .filter(Module.Columns.id != id)
                 .filter(Module.Columns.deletedAt == nil)
-                .order(Module.Columns.orderIndex)
-                .fetchOne(db)
-            else {
+                .fetchCount(db)
+            guard otherCount > 0 else {
                 throw ModuleError.cannotDeleteLast
             }
 
-            // Get IDs of notes being reassigned
-            let affectedNoteIds = try String.fetchAll(db, sql: """
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+
+            // Get IDs of notes in this module
+            let noteIds = try String.fetchAll(db, sql: """
                 SELECT id FROM notes WHERE moduleId = ? AND deletedAt IS NULL
             """, arguments: [id])
 
-            // Move all notes from this module to the fallback
-            let now = Int64(Date().timeIntervalSince1970 * 1000)
-            try db.execute(sql: """
-                UPDATE notes SET moduleId = ?, updatedAt = ?, localVersion = localVersion + 1, syncStatus = 'pending'
-                WHERE moduleId = ?
-            """, arguments: [fallbackModule.id, now, id])
+            // Get IDs of sections belonging to those notes
+            var sectionIds: [String] = []
+            if !noteIds.isEmpty {
+                let placeholders = noteIds.map { _ in "?" }.joined(separator: ",")
+                sectionIds = try String.fetchAll(db, sql: """
+                    SELECT id FROM sections WHERE noteId IN (\(placeholders)) AND deletedAt IS NULL
+                """, arguments: StatementArguments(noteIds))
+
+                // Soft-delete all sections
+                try db.execute(sql: """
+                    UPDATE sections SET deletedAt = ?, syncStatus = 'pending', localVersion = localVersion + 1
+                    WHERE noteId IN (\(placeholders)) AND deletedAt IS NULL
+                """, arguments: StatementArguments([now] + noteIds))
+
+                // Soft-delete all notes
+                try db.execute(sql: """
+                    UPDATE notes SET deletedAt = ?, syncStatus = 'pending', localVersion = localVersion + 1
+                    WHERE moduleId = ? AND deletedAt IS NULL
+                """, arguments: [now, id])
+            }
 
             // Soft-delete the module
             module.softDelete()
             try module.update(db)
 
-            return affectedNoteIds
+            return (noteIds, sectionIds)
         }
     }
 }

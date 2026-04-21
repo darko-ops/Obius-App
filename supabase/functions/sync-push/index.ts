@@ -19,6 +19,7 @@ import type {
   Section,
   Handle,
   Echo,
+  CalendarMemo,
 } from '../_shared/types.ts';
 import { requireFeature, requireEntityCreate } from '../_shared/entitlements.ts';
 
@@ -112,6 +113,7 @@ serve(async (req: Request) => {
 interface ProcessResult {
   success: boolean;
   conflict?: ConflictInfo;
+  new_version?: number;
 }
 
 async function processOperation(
@@ -120,7 +122,7 @@ async function processOperation(
   deviceId: string,
   op: SyncOperation
 ): Promise<ProcessResult> {
-  const tableMap: Record<string, string> = { note: 'notes', section: 'sections', echo: 'echoes', handle: 'handles' };
+  const tableMap: Record<string, string> = { note: 'notes', section: 'sections', echo: 'echoes', handle: 'handles', calendar_memo: 'calendar_memos' };
   const table = tableMap[op.entity_type] || 'sections';
 
   // Sanitize boolean fields that may arrive as strings from older clients
@@ -144,7 +146,8 @@ async function processOperation(
   const sectionFields = new Set(['note_id', 'content', 'content_type', 'parent_section_id', 'order_key', 'indent_level', 'is_collapsed', 'color_intent', 'handle_id', 'created_at', 'updated_at', 'deleted_at']);
   const handleFields = new Set(['name', 'display_name', 'content', 'intent', 'created_at', 'updated_at', 'deleted_at']);
   const echoFields = new Set(['handle_id', 'is_recurring', 'intervals_json', 'fire_date', 'is_active', 'next_fire_date', 'is_alerted', 'last_acknowledged_at', 'created_at', 'updated_at', 'deleted_at']);
-  const fieldMap: Record<string, Set<string>> = { note: noteFields, section: sectionFields, handle: handleFields, echo: echoFields };
+  const calendarMemoFields = new Set(['date_key', 'content', 'created_at', 'updated_at', 'deleted_at']);
+  const fieldMap: Record<string, Set<string>> = { note: noteFields, section: sectionFields, handle: handleFields, echo: echoFields, calendar_memo: calendarMemoFields };
   const allowedFields = fieldMap[op.entity_type] || sectionFields;
   for (const key of Object.keys(op.payload)) {
     if (!allowedFields.has(key)) {
@@ -154,12 +157,14 @@ async function processOperation(
 
   // CREATE operation
   if (op.operation === 'create') {
-    // Enforce entity limits for free-tier users
-    const noteId = op.entity_type === 'section' ? (op.payload.note_id as string) : undefined;
-    const limitCheck = await requireEntityCreate(supabase, userId, op.entity_type, noteId);
-    if (limitCheck) {
-      // Return as a conflict with the limit error
-      return { success: false };
+    // Enforce entity limits for free-tier users (only notes and sections have limits)
+    if (op.entity_type === 'note' || op.entity_type === 'section') {
+      const noteId = op.entity_type === 'section' ? (op.payload.note_id as string) : undefined;
+      const limitCheck = await requireEntityCreate(supabase, userId, op.entity_type, noteId);
+      if (limitCheck) {
+        // Return as a conflict with the limit error
+        return { success: false };
+      }
     }
 
     const insertData = {
@@ -177,20 +182,58 @@ async function processOperation(
     if (error) {
       // Check if it's a duplicate key error (entity already exists)
       if (error.code === '23505') {
-        // Entity already exists, treat as update
+        // For calendar_memos, the unique constraint is on (user_id, date_key), not just id.
+        // A different id can conflict — update the existing row by matching on date_key.
+        if (op.entity_type === 'calendar_memo' && op.payload.date_key) {
+          const { data: existing } = await supabase
+            .from(table)
+            .select('id, version')
+            .eq('user_id', userId)
+            .eq('date_key', op.payload.date_key)
+            .is('deleted_at', null)
+            .single();
+
+          if (existing) {
+            const { error: updateError } = await supabase
+              .from(table)
+              .update({
+                content: op.payload.content,
+                version: existing.version + 1,
+                last_modified_by: deviceId,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', existing.id);
+
+            if (updateError) {
+              console.error(`[sync-push] Calendar memo update failed:`, updateError.message);
+              return { success: false };
+            }
+            await logOperation(supabase, userId, deviceId, op, existing.version, existing.version + 1);
+            return { success: true, new_version: existing.version + 1 };
+          }
+        }
+
+        // For other entities, the PK is the same — safe to fall back to update by id
         return processOperation(supabase, userId, deviceId, {
           ...op,
           operation: 'update',
         });
       }
-      // Foreign key violation = parent note was deleted; treat as success so the operation doesn't retry forever
+      // Foreign key violation = parent entity missing (e.g. section's note was deleted)
       if (error.code === '23503') {
-        console.warn(`Skipping orphaned ${op.entity_type} ${op.entity_id}: parent entity missing`);
-        return { success: true, new_version: 1 };
+        console.warn(`[sync-push] FK violation for ${op.entity_type} ${op.entity_id}: ${error.message}`);
+        // For sections, the parent note may be legitimately deleted — mark as success to stop retries.
+        // For echoes/handles, FK violations are unexpected (no FK constraints) — log and fail so they retry.
+        if (op.entity_type === 'section') {
+          return { success: true, new_version: 1 };
+        }
+        return { success: false };
       }
-      console.error(`Create error for ${op.entity_id} (${op.entity_type}):`, error, 'payload keys:', Object.keys(insertData));
+      console.error(`[sync-push] Create FAILED for ${op.entity_type} ${op.entity_id}:`, error.code, error.message, 'payload keys:', Object.keys(insertData));
       return { success: false };
     }
+
+    console.log(`[sync-push] Created ${op.entity_type} ${op.entity_id} successfully`);
 
     // Log to changelog
     await logOperation(supabase, userId, deviceId, op, null, 1);

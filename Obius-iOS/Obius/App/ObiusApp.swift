@@ -150,6 +150,9 @@ class AppState: ObservableObject {
     let commitModule: CommitModule
     let autoCommitManager: AutoCommitManager
     let insightRepository: InsightRepository
+    let calendarMemoRepository: CalendarMemoRepository
+    let noteIndexRepository: NoteIndexRepository
+    let contextAssembler: ContextAssembler
 
     @Published var isInitialized = false
     /// Set to true if the database had to be recreated from scratch due to corruption.
@@ -176,6 +179,7 @@ class AppState: ObservableObject {
             self.syncLogger = SyncOperationLogger(database: database)
             self.handleRepository.syncLogger = syncLogger  // Wire up handle cloud sync
             self.echoRepository.syncLogger = syncLogger  // Wire up echo cloud sync
+            self.moduleRepository.syncLogger = syncLogger  // Wire up module rename sync
 
             // Initialize Split-Storage Engine
             self.coldStore = ColdStore.shared
@@ -195,6 +199,19 @@ class AppState: ObservableObject {
                 coldStore: coldStore
             )
             self.insightRepository = InsightRepository(database: database)
+            self.calendarMemoRepository = CalendarMemoRepository(database: database)
+            self.calendarMemoRepository.syncLogger = syncLogger
+
+            // Smart context assembly for AI Workspace
+            self.noteIndexRepository = NoteIndexRepository(database: database)
+            self.contextAssembler = ContextAssembler(
+                noteIndexRepo: noteIndexRepository,
+                sectionRepository: sectionRepository,
+                noteRepository: noteRepository,
+                handleRepository: handleRepository,
+                database: database,
+                syncEngine: syncEngine
+            )
 
             // Initialize HandleManager singleton with repository
             HandleManager.shared.initialize(handleRepository: handleRepository)
@@ -274,6 +291,9 @@ class AppState: ObservableObject {
         // Auto-commit check (creates commits for notes modified before today)
         await autoCommitManager.checkAndAutoCommit()
 
+        // Clean up expired versions based on retention settings
+        _ = await VersionRetentionManager.runCleanup(commitRepository: commitRepository, coldStore: coldStore)
+
         // Auto-sync if authenticated and tier allows it
         let isAuthed = AuthManager.shared.isAuthenticated
         let canSync = TierManager.shared.limits.cloudSync
@@ -286,6 +306,11 @@ class AppState: ObservableObject {
         // Sync profile images from cloud (downloads if they exist remotely but not locally)
         if AuthManager.shared.isAuthenticated {
             await ProfileImageManager.shared.syncFromCloud()
+        }
+
+        // Upload existing local media to cloud for cross-device sync (one-time)
+        if AuthManager.shared.isAuthenticated && TierManager.shared.limits.cloudSync {
+            Task { await mediaRepository.syncExistingMediaToCloud() }
         }
 
         // Seed first-run demo note

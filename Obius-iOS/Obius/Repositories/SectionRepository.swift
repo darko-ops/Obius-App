@@ -43,6 +43,7 @@ final class SectionRepository: ObservableObject {
                 intent: IntentType.fromLegacy(intent)
             )
             try section.insert(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -96,6 +97,7 @@ final class SectionRepository: ObservableObject {
                 note.touch()
                 try note.update(db)
             }
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
 
             return section
         }
@@ -121,15 +123,17 @@ final class SectionRepository: ObservableObject {
 
     // MARK: - Update
 
-    func updateContent(_ sectionId: String, content: String, richText: String? = nil) async throws {
+    func updateContent(_ sectionId: String, content: String, richText: String? = nil, clearRichText: Bool = false) async throws {
         try await database.write { db in
             guard var section = try Section.fetchOne(db, key: sectionId) else { return }
             // Only touch if text content or rich text actually changed.
-            let richChanged = richText != nil && section.richContent != richText
+            let richChanged = (richText != nil && section.richContent != richText) || (clearRichText && section.richContent != nil)
             guard section.content != content || richChanged else { return }
             section.content = content
             if let richText = richText {
                 section.richContent = richText
+            } else if clearRichText {
+                section.richContent = nil
             }
             section.touch()
             try section.update(db)
@@ -377,14 +381,16 @@ final class SectionRepository: ObservableObject {
     func deleteSection(_ sectionId: String) async throws {
         try await database.write { db in
             guard var section = try Section.fetchOne(db, key: sectionId) else { return }
+            let noteId = section.noteId
             section.softDelete()
             try section.update(db)
 
             // Touch the parent note
-            if var note = try Note.fetchOne(db, key: section.noteId) {
+            if var note = try Note.fetchOne(db, key: noteId) {
                 note.touch()
                 try note.update(db)
             }
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -559,6 +565,7 @@ final class SectionRepository: ObservableObject {
                 note.touch()
                 try note.update(db)
             }
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 }

@@ -65,14 +65,22 @@ final class InsightRepository: ObservableObject {
 
         try await database.write { db in
             try insight.insert(db)
+            if let noteId = sourceNoteId {
+                try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
+            }
         }
     }
 
     func createInsights(_ insights: [Insight]) async throws {
         guard !insights.isEmpty else { return }
         try await database.write { db in
+            var affectedNoteIds = Set<String>()
             for insight in insights {
                 try insight.insert(db)
+                if let noteId = insight.sourceNoteId { affectedNoteIds.insert(noteId) }
+            }
+            for noteId in affectedNoteIds {
+                try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
             }
         }
     }
@@ -84,6 +92,9 @@ final class InsightRepository: ObservableObject {
             guard var insight = try Insight.fetchOne(db, key: id) else { return }
             insight.track()
             try insight.update(db)
+            if let noteId = insight.sourceNoteId {
+                try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
+            }
         }
     }
 
@@ -92,6 +103,9 @@ final class InsightRepository: ObservableObject {
             guard var insight = try Insight.fetchOne(db, key: id) else { return }
             insight.dismiss()
             try insight.update(db)
+            if let noteId = insight.sourceNoteId {
+                try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
+            }
         }
     }
 
@@ -101,6 +115,9 @@ final class InsightRepository: ObservableObject {
             insight.status = .surfaced
             insight.touch()
             try insight.update(db)
+            if let noteId = insight.sourceNoteId {
+                try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
+            }
         }
     }
 
@@ -122,6 +139,12 @@ final class InsightRepository: ObservableObject {
         }
     }
 
+    // MARK: - Per-Note Query
+
+    func insightsForNote(_ noteId: String) async throws -> [Insight] {
+        try database.fetchInsightsForNote(noteId)
+    }
+
     // MARK: - Batch Dedup
 
     /// Returns dedup keys for all existing insights (any status) in one query.
@@ -129,6 +152,35 @@ final class InsightRepository: ObservableObject {
         try await database.read { db in
             let insights = try Insight.fetchAll(db)
             return Set(insights.map(\.dedupKey))
+        }
+    }
+
+    // MARK: - Content Invalidation
+
+    /// Removes surfaced insights whose dedup keys are no longer produced by a fresh scan.
+    /// Tracked insights are dismissed (not deleted) so the user sees they were resolved.
+    func invalidateStaleInsights(freshKeys: Set<String>) async throws {
+        try await database.write { db in
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            let active = try Insight
+                .filter(Insight.Columns.status != InsightStatus.dismissed.rawValue)
+                .fetchAll(db)
+
+            for var insight in active {
+                // Skip echo insights — they have their own lifecycle
+                if insight.insightType == .upcomingEcho { continue }
+
+                guard !freshKeys.contains(insight.dedupKey) else { continue }
+
+                if insight.status == .surfaced {
+                    try Insight.deleteOne(db, key: insight.id)
+                } else {
+                    // Tracked → dismiss so user sees it resolved
+                    insight.status = .dismissed
+                    insight.updatedAt = now
+                    try insight.update(db)
+                }
+            }
         }
     }
 
@@ -190,6 +242,10 @@ final class InsightRepository: ObservableObject {
                     }
                 } else if relatedCleaned {
                     insight.updatedAt = now
+                    // If all related references are gone, dismiss the insight
+                    if insight.relatedNoteId == nil && insight.status != .dismissed {
+                        insight.status = .dismissed
+                    }
                     try insight.update(db)
                 }
             }

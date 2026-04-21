@@ -170,6 +170,31 @@ final class AuthManager: ObservableObject {
         }
     }
 
+    // MARK: - Change Password
+
+    /// Re-authenticates with the current password, then updates to the new password.
+    func changePassword(currentPassword: String, newPassword: String) async throws {
+        guard let email = currentUser?.email else {
+            throw AuthError.noEmail
+        }
+
+        // Re-authenticate with current password to verify identity
+        _ = try await supabase.signIn(email: email, password: currentPassword)
+
+        // Update to new password
+        _ = try await supabase.client.auth.update(user: .init(password: newPassword))
+    }
+
+    enum AuthError: LocalizedError {
+        case noEmail
+
+        var errorDescription: String? {
+            switch self {
+            case .noEmail: return "No email associated with this account."
+            }
+        }
+    }
+
     // MARK: - Password Reset
 
     func sendPasswordReset(email: String) async {

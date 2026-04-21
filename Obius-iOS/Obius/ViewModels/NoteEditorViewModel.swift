@@ -66,6 +66,7 @@ final class NoteEditorViewModel: ObservableObject {
                 return Just(nil)
             }
             .sink { [weak self] noteWithSections in
+                print("[DEBUG] VM observation fired: note=\(noteWithSections?.note.id.prefix(8) ?? "nil") sections=\(noteWithSections?.sections.count ?? 0)")
                 self?.isLoading = false
                 self?.note = noteWithSections?.note
                 self?.sections = noteWithSections?.sections ?? []
@@ -294,13 +295,58 @@ final class NoteEditorViewModel: ObservableObject {
     }
 
     func deleteSection(_ sectionId: String) async throws {
-        // Also delete all child sections
-        let children = getDescendants(of: sectionId)
-        for child in children {
-            try await sectionRepository.deleteSection(child.id)
-        }
+        if let index = sections.firstIndex(where: { $0.id == sectionId }) {
+            let section = sections[index]
 
-        try await sectionRepository.deleteSection(sectionId)
+            // 1. Reparent direct children to the deleted section's parent
+            //    so they move up instead of being deleted with the node.
+            let directChildren = getChildren(of: sectionId)
+            for child in directChildren {
+                try? await sectionRepository.reparentSection(child.id, newParentId: section.parentSectionId)
+            }
+
+            // 2. Preserve interstitial content after the deleted section.
+            let deletedKey = "after_\(sectionId)"
+            let orphanedText = note?.interstitialContent[deletedKey] ?? ""
+            let orphanedRich = note?.interstitialRichContent[deletedKey]
+
+            if !orphanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if index > 0 {
+                    let prevId = sections[index - 1].id
+                    let prevKey = "after_\(prevId)"
+                    let existingText = note?.interstitialContent[prevKey] ?? ""
+                    let merged = existingText.isEmpty ? orphanedText : existingText + "\n" + orphanedText
+                    let mergedRich = existingText.isEmpty ? orphanedRich : nil
+                    try? await noteRepository.updateInterstitialContent(noteId, afterSectionId: prevId, content: merged, richText: mergedRich)
+                } else {
+                    let existingBody = note?.body ?? ""
+                    let merged = existingBody.isEmpty ? orphanedText : existingBody + "\n" + orphanedText
+                    // Preserve body rich text by concatenating attributed strings
+                    // instead of wiping bodyRichText — otherwise the editor falls
+                    // back to plain text and all formatting is lost.
+                    let mergedRich = Self.appendPlainToRichText(
+                        base: note?.bodyRichText,
+                        basePlain: existingBody,
+                        appendedPlain: orphanedText,
+                        appendedRich: orphanedRich
+                    )
+                    try? await noteRepository.updateNoteBody(
+                        noteId,
+                        body: merged,
+                        richText: mergedRich,
+                        clearRichText: mergedRich == nil
+                    )
+                }
+            }
+
+            // 3. Clean up the orphaned interstitial key
+            try? await noteRepository.updateInterstitialContent(noteId, afterSectionId: sectionId, content: "")
+
+            // 4. Delete only this section (children have been reparented)
+            try await sectionRepository.deleteSection(sectionId)
+        } else {
+            try await sectionRepository.deleteSection(sectionId)
+        }
     }
     
     /// Check whether a section is "dangling" — empty with no content anywhere after it.
@@ -760,32 +806,12 @@ final class NoteEditorViewModel: ObservableObject {
 
     func handleBackspace(sectionId: String, isEmpty: Bool) async throws {
         if isEmpty && sections.count > 1 {
-            // Preserve interstitial content after the deleted section by merging it
-            // into the previous section's interstitial (or the previous section's content)
-            if let index = sections.firstIndex(where: { $0.id == sectionId }) {
-                let deletedKey = "after_\(sectionId)"
-                let orphanedText = note?.interstitialContent[deletedKey] ?? ""
-                let orphanedRich = note?.interstitialRichContent[deletedKey]
-
-                if !orphanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    if index > 0 {
-                        // Merge into the previous section's interstitial
-                        let prevId = sections[index - 1].id
-                        let prevKey = "after_\(prevId)"
-                        let existingText = note?.interstitialContent[prevKey] ?? ""
-                        let merged = existingText.isEmpty ? orphanedText : existingText + "\n" + orphanedText
-                        // Use the orphaned rich text if there's no existing content, otherwise drop rich (plain merge)
-                        let mergedRich = existingText.isEmpty ? orphanedRich : nil
-                        try? await noteRepository.updateInterstitialContent(noteId, afterSectionId: prevId, content: merged, richText: mergedRich)
-                    }
-                }
-                // Clean up the orphaned interstitial key
-                try? await noteRepository.updateInterstitialContent(noteId, afterSectionId: sectionId, content: "")
-
-                if index > 0 {
-                    focusedSectionId = sections[index - 1].id
-                }
+            // Focus the previous section before deleting
+            if let index = sections.firstIndex(where: { $0.id == sectionId }),
+               index > 0 {
+                focusedSectionId = sections[index - 1].id
             }
+            // deleteSection handles reparenting children and preserving interstitial content
             try await deleteSection(sectionId)
         }
     }
@@ -933,6 +959,39 @@ final class NoteEditorViewModel: ObservableObject {
 
     func dismissEntity(_ entity: ExtractedEntity) {
         suggestedEntities.removeAll { $0.name == entity.name }
+    }
+
+    /// Concatenate an orphaned interstitial onto the body's rich text without
+    /// losing the body's existing per-character formatting. Used during section
+    /// deletion where the orphan's content is being merged into the body.
+    ///
+    /// Returns nil when the base has no rich text AND the appended chunk has no
+    /// rich text — callers interpret nil as "no rich text; store plain text only".
+    private static func appendPlainToRichText(
+        base: String?,
+        basePlain: String,
+        appendedPlain: String,
+        appendedRich: String?
+    ) -> String? {
+        // No existing rich text and nothing rich to append → skip rich entirely.
+        if base == nil && appendedRich == nil { return nil }
+
+        let result = NSMutableAttributedString()
+        if let base = base, let baseAttr = RichTextHelper.deserialize(base) {
+            result.append(baseAttr)
+        } else if !basePlain.isEmpty {
+            result.append(NSAttributedString(string: basePlain))
+        }
+        if result.length > 0 {
+            result.append(NSAttributedString(string: "\n"))
+        }
+        if let appendedRich = appendedRich,
+           let appendedAttr = RichTextHelper.deserialize(appendedRich) {
+            result.append(appendedAttr)
+        } else {
+            result.append(NSAttributedString(string: appendedPlain))
+        }
+        return RichTextHelper.serialize(result)
     }
 
     /// Create a new section linked to an existing handle

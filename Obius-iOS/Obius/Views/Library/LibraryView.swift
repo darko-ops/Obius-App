@@ -9,7 +9,7 @@ struct LibraryView: View {
     @State private var searchQuery = ""
     @State private var showingEditProfile = false
     @State private var selectedEcho: Echo?
-    @StateObject private var profileImages = ProfileImageManager.shared
+    @ObservedObject private var profileImages = ProfileImageManager.shared
     var pendingEchoId: Binding<String?> = .constant(nil)
 
     enum LibrarySection: String, CaseIterable {
@@ -722,9 +722,22 @@ struct CommitsListView: View {
         .task {
             await loadCommits()
         }
-        .sheet(item: $selectedCommit) { commit in
-            CommitDetailSheet(commit: commit, noteName: noteNames[commit.noteId])
+        #if os(macOS)
+        .navigationDestination(item: $selectedCommit) { commit in
+            CommitDetailSheet(
+                commit: commit,
+                noteName: noteNames[commit.noteId],
+                onDelete: { commits.removeAll { $0.id == commit.id } },
+                presentedAsSheet: false
+            )
         }
+        #else
+        .sheet(item: $selectedCommit) { commit in
+            CommitDetailSheet(commit: commit, noteName: noteNames[commit.noteId]) {
+                commits.removeAll { $0.id == commit.id }
+            }
+        }
+        #endif
         .sheet(item: $shareSheetLink) { link in
             NodeShareSheet(
                 url: URL(string: link.url)!,
@@ -1020,6 +1033,10 @@ struct CommitDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     let commit: Commit
     let noteName: String?
+    var onDelete: (() -> Void)?
+    /// When true, the view wraps itself in a NavigationStack and shows a Done button (sheet presentation).
+    /// When false, the caller has already placed the view inside a NavigationStack via `navigationDestination`.
+    var presentedAsSheet: Bool = true
 
     @State private var content: CommitContent?
     @State private var isLoading = true
@@ -1030,6 +1047,7 @@ struct CommitDetailSheet: View {
     @State private var shareURL: URL?
     @State private var shareTitle: String = ""
     @State private var sharePreview: String = ""
+    @State private var showingDeleteConfirmation = false
     @FocusState private var isCommentFocused: Bool
 
     private var creatorName: String {
@@ -1045,51 +1063,83 @@ struct CommitDetailSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if isLoading {
-                    ProgressView()
-                } else if let content = content {
-                    commitContentView(content)
-                } else {
-                    Text("Failed to load version")
-                        .foregroundStyle(.secondary)
-                }
+        if presentedAsSheet {
+            NavigationStack {
+                detailContent
             }
-            .background(Color.systemBackground)
-            .navigationTitle("")
-            .inlineNavigationTitle()
-            .toolbar {
+        } else {
+            detailContent
+        }
+    }
+
+    @ViewBuilder
+    private var detailContent: some View {
+        Group {
+            if isLoading {
+                ProgressView()
+            } else if let content = content {
+                commitContentView(content)
+            } else {
+                Text("Failed to load version")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .background(Color.systemBackground)
+        .navigationTitle("")
+        .inlineNavigationTitle()
+        .toolbar {
+            if presentedAsSheet {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
                         dismiss()
                     }
                 }
-                ToolbarItem(placement: .principal) {
-                    Image("ObiusLogo")
-                        .renderingMode(.original)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        Task { await shareFromDetail() }
-                    } label: {
-                        Image(systemName: "square.and.arrow.up")
-                    }
-                }
             }
-            .task {
-                await loadContent()
-                await loadComments()
+            ToolbarItem(placement: .principal) {
+                Image("ObiusLogo")
+                    .renderingMode(.original)
             }
-            .platformFullScreenCover(isPresented: $showingShareSheet) {
-                if let url = shareURL {
-                    NodeShareSheet(
-                        url: url,
-                        title: shareTitle,
-                        preview: sharePreview
-                    )
+            ToolbarItem(placement: .confirmationAction) {
+                Button {
+                    Task { await shareFromDetail() }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
                 }
             }
+        }
+        .task {
+            await loadContent()
+            await loadComments()
+        }
+        .alert("Delete Version", isPresented: $showingDeleteConfirmation) {
+            Button("Delete", role: .destructive) {
+                Task { await deleteCommit() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This version will be permanently removed from this device. This cannot be undone.")
+        }
+        .platformFullScreenCover(isPresented: $showingShareSheet) {
+            if let url = shareURL {
+                NodeShareSheet(
+                    url: url,
+                    title: shareTitle,
+                    preview: sharePreview
+                )
+            }
+        }
+    }
+
+    private func deleteCommit() async {
+        do {
+            // Delete from cold store (.obx file)
+            try appState.coldStore.deleteCommit(hash: commit.hash)
+            // Delete from hot store (database index)
+            try await appState.commitRepository.deleteCommit(id: commit.id)
+            onDelete?()
+            dismiss()
+        } catch {
+            print("Failed to delete commit: \(error)")
         }
     }
 
@@ -1145,6 +1195,7 @@ struct CommitDetailSheet: View {
                             .padding(.vertical, 6)
                             .background(Color.gray.opacity(0.2), in: Capsule())
                     }
+                    .buttonStyle(.plain)
                 }
 
                 // Metadata card
@@ -1276,6 +1327,27 @@ struct CommitDetailSheet: View {
                         await addComment(body: body)
                     }
                 )
+
+                Divider()
+                    .padding(.vertical, 8)
+
+                // Delete version
+                Button(role: .destructive) {
+                    showingDeleteConfirmation = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "trash")
+                            .font(.caption)
+                        Text("Delete Version from Device")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.red.opacity(0.1))
+                    .foregroundStyle(.red)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
 
                 Spacer(minLength: 40)
             }

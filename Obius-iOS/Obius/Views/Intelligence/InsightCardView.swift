@@ -294,6 +294,7 @@ struct InsightDetailSheet: View {
     var onDeleteNote: (() -> Void)? = nil
     var onDeleteLoop: (() -> Void)? = nil
     var onCreateBlock: ((String) -> Void)? = nil
+    var onCreateEcho: (() -> Void)? = nil
     var references: [InsightReference] = []
     var onNavigate: ((InsightReference) -> Void)? = nil
 
@@ -376,6 +377,21 @@ struct InsightDetailSheet: View {
                                 .buttonStyle(.plain)
                             }
                         }
+                    } else if insight.sourceNoteId != nil || insight.relatedNoteId != nil {
+                        // References existed but the pages have since been deleted
+                        HStack(spacing: 8) {
+                            Image(systemName: "trash")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Text("The referenced content has been deleted")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.secondary.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
 
                     Divider()
@@ -546,6 +562,32 @@ struct InsightDetailSheet: View {
                             .overlay(
                                 RoundedRectangle(cornerRadius: 10)
                                     .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    // Schedule Echo button for schedule insights
+                    if insight.insightType == .schedule,
+                       let onCreateEcho {
+                        Button {
+                            onCreateEcho()
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "bell.badge.fill")
+                                Text("Schedule Echo")
+                            }
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.orange)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.orange.opacity(0.1))
+                            .background(.ultraThinMaterial)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.orange.opacity(0.3), lineWidth: 1)
                             )
                         }
                         .buttonStyle(.plain)

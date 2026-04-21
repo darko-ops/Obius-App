@@ -72,10 +72,8 @@ final class NoteRepository: ObservableObject {
 
         try await database.write { db in
             try note.insert(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: note.id, in: db)
         }
-
-        // No longer create initial section - user can type directly on the note
-        // and add sections manually via "Add section" button
 
         return note
     }
@@ -87,21 +85,25 @@ final class NoteRepository: ObservableObject {
             note.syncStatus = .pending
             note.updatedAt = Int64(Date().timeIntervalSince1970 * 1000)
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
-    func updateNoteBody(_ noteId: String, body: String, richText: String? = nil) async throws {
+    func updateNoteBody(_ noteId: String, body: String, richText: String? = nil, clearRichText: Bool = false) async throws {
         try await database.write { db in
             guard var note = try Note.fetchOne(db, key: noteId) else { return }
             // Only touch if body text or rich text actually changed.
             let richChanged = richText != nil && note.bodyRichText != richText
-            guard note.body != body || richChanged else { return }
+            guard note.body != body || richChanged || clearRichText else { return }
             note.body = body
             if let richText = richText {
                 note.bodyRichText = richText
+            } else if clearRichText {
+                note.bodyRichText = nil
             }
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -126,6 +128,111 @@ final class NoteRepository: ObservableObject {
             }
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
+        }
+    }
+
+    // MARK: - Atomic Rewrite
+
+    /// Parameters for an atomic page rewrite. All mutations commit in a single
+    /// transaction so `observeNoteWithSections` emits exactly once and the editor
+    /// never sees an intermediate "body populated, 0 sections" state.
+    struct RewritePagePlan {
+        struct SectionUpdate {
+            let sectionId: String
+            let content: String
+            let richText: String?
+            let clearRichText: Bool
+        }
+        struct Interstitial {
+            let afterSectionId: String?
+            let content: String
+            let richText: String?
+        }
+        let noteId: String
+        let body: String
+        let bodyRichText: String?
+        let clearBodyRichText: Bool
+        let keepSectionIds: Set<String>
+        let sectionUpdates: [SectionUpdate]
+        let interstitials: [Interstitial]
+    }
+
+    /// Apply a full page rewrite in one DB transaction. Ensures callers can't
+    /// observe the note in a half-updated state (e.g., body rewritten but
+    /// sections not yet pruned).
+    func applyRewritePage(_ plan: RewritePagePlan) async throws {
+        try await database.write { db in
+            guard var note = try Note.fetchOne(db, key: plan.noteId) else { return }
+            var noteDirty = false
+
+            // 1. Body
+            let bodyRichChanged = plan.bodyRichText != nil && note.bodyRichText != plan.bodyRichText
+            if note.body != plan.body || bodyRichChanged || plan.clearBodyRichText {
+                note.body = plan.body
+                if let rich = plan.bodyRichText {
+                    note.bodyRichText = rich
+                } else if plan.clearBodyRichText {
+                    note.bodyRichText = nil
+                }
+                noteDirty = true
+            }
+
+            // 2. Soft-delete sections not in keep set
+            let allSections = try Section
+                .filter(Section.Columns.noteId == plan.noteId)
+                .filter(Section.Columns.deletedAt == nil)
+                .fetchAll(db)
+            for var section in allSections {
+                if !plan.keepSectionIds.contains(section.id) {
+                    section.softDelete()
+                    try section.update(db)
+                }
+            }
+
+            // 3. Update kept sections
+            for upd in plan.sectionUpdates {
+                guard var section = try Section.fetchOne(db, key: upd.sectionId) else { continue }
+                let richChanged = (upd.richText != nil && section.richContent != upd.richText) ||
+                                  (upd.clearRichText && section.richContent != nil)
+                guard section.content != upd.content || richChanged else { continue }
+                section.content = upd.content
+                if let rich = upd.richText {
+                    section.richContent = rich
+                } else if upd.clearRichText {
+                    section.richContent = nil
+                }
+                section.touch()
+                try section.update(db)
+            }
+
+            // 4. Interstitials — apply to the same in-memory note so body and
+            // interstitial changes commit together.
+            for inter in plan.interstitials {
+                let key = inter.afterSectionId.map { "after_\($0)" } ?? "end"
+                let oldContent = note.interstitialContent[key] ?? ""
+                let oldRich = note.interstitialRichContent[key]
+                guard oldContent != inter.content || oldRich != inter.richText else { continue }
+                if inter.content.isEmpty {
+                    note.interstitialContent.removeValue(forKey: key)
+                    note.interstitialRichContent.removeValue(forKey: key)
+                } else {
+                    note.interstitialContent[key] = inter.content
+                    if let rich = inter.richText {
+                        note.interstitialRichContent[key] = rich
+                    } else {
+                        note.interstitialRichContent.removeValue(forKey: key)
+                    }
+                }
+                noteDirty = true
+            }
+
+            if noteDirty {
+                note.touch()
+                try note.update(db)
+            }
+
+            try DatabaseManager.recomputeEngagementScore(noteId: plan.noteId, in: db)
         }
     }
 
@@ -159,6 +266,7 @@ final class NoteRepository: ObservableObject {
 
         try await database.write { db in
             try updated.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: note.id, in: db)
         }
     }
 
@@ -175,6 +283,7 @@ final class NoteRepository: ObservableObject {
             note.title = title
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -184,6 +293,7 @@ final class NoteRepository: ObservableObject {
             note.aiTitle = aiTitle
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -193,6 +303,7 @@ final class NoteRepository: ObservableObject {
             note.aiTags = aiTags
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -202,6 +313,7 @@ final class NoteRepository: ObservableObject {
                 sql: "UPDATE notes SET viewCount = viewCount + 1 WHERE id = ?",
                 arguments: [noteId]
             )
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -211,6 +323,7 @@ final class NoteRepository: ObservableObject {
             note.isPinned.toggle()
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -220,6 +333,7 @@ final class NoteRepository: ObservableObject {
             note.intent = intent
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -229,6 +343,7 @@ final class NoteRepository: ObservableObject {
             note.tags = tags
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -239,6 +354,7 @@ final class NoteRepository: ObservableObject {
             note.isPinned = groupName != nil  // Grouped notes are always pinned
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -248,6 +364,7 @@ final class NoteRepository: ObservableObject {
             note.moduleId = moduleId
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
         }
     }
 
@@ -288,6 +405,10 @@ final class NoteRepository: ObservableObject {
                 if newValue != related {
                     insight.relatedNoteId = newValue
                     insight.updatedAt = now
+                    // If all related references are gone, dismiss the insight
+                    if newValue == nil && insight.status != .dismissed {
+                        insight.status = .dismissed
+                    }
                     try insight.update(db)
                 }
             }
@@ -320,6 +441,10 @@ final class NoteRepository: ObservableObject {
                 if newValue != related {
                     insight.relatedNoteId = newValue
                     insight.updatedAt = now
+                    // If all related references are gone, dismiss the insight
+                    if newValue == nil && insight.status != .dismissed {
+                        insight.status = .dismissed
+                    }
                     try insight.update(db)
                 }
             }
@@ -373,6 +498,7 @@ final class NoteRepository: ObservableObject {
             note.isPinned = isPinned
             note.touch()
             try note.update(db)
+            try DatabaseManager.recomputeEngagementScore(noteId: id, in: db)
         }
     }
 }

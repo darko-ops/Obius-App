@@ -136,6 +136,17 @@ struct AudioNodeView: View {
     private func loadAudio() {
         if let data = try? mediaRepository.getMediaData(hash: audioHash) {
             audioData = data
+        } else {
+            // Try cloud download
+            let repo = mediaRepository
+            let hash = audioHash
+            Task {
+                if let data = await repo.getMediaDataWithCloudFallback(hash: hash) {
+                    await MainActor.run {
+                        audioData = data
+                    }
+                }
+            }
         }
     }
 
@@ -165,7 +176,10 @@ struct WaveformBarsView: View {
 
     var body: some View {
         GeometryReader { geo in
-            HStack(spacing: 2) {
+            let spacing: CGFloat = 2
+            let barWidth = max(2, (geo.size.width - spacing * CGFloat(barCount - 1)) / CGFloat(barCount))
+
+            HStack(spacing: spacing) {
                 ForEach(0..<barCount, id: \.self) { index in
                     let height = barHeights[index]
                     let barProgress = CGFloat(index) / CGFloat(barCount)
@@ -173,7 +187,7 @@ struct WaveformBarsView: View {
 
                     RoundedRectangle(cornerRadius: 1)
                         .fill(isFilled ? Color.orange : Color.orange.opacity(0.3))
-                        .frame(width: 3, height: max(3, height * geo.size.height))
+                        .frame(width: barWidth, height: max(3, height * geo.size.height))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
