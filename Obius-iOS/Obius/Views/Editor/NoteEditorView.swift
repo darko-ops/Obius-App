@@ -2307,12 +2307,6 @@ private struct NoteEditorContent: View {
                     .allowsHitTesting(false)
             }
         }
-        // Catches focus-taps that fall through an unfocused BodyTextView
-        // (SelfSizingTextView.point(inside:) returns false until first-responder
-        // so parent ScrollView pans can pass through for scrolling). Uses a
-        // UIKit UITapGestureRecognizer with cancelsTouchesInView = false so it
-        // never interferes with UITextView's native cursor-placement tap.
-        .background(TapToFocusCatcher { bodyFocused = true })
         .onAppear {
             bodyText = viewModel.note?.body ?? ""
         }

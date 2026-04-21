@@ -789,7 +789,6 @@ struct SectionView: View {
                     onStatusChange: onIntentChange
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
-                .background(TapToFocusCatcher { textFieldFocused = true })
             } else {
                 // Regular text editor using UITextView for proper edit menu support
                 EditableTextView(
@@ -809,7 +808,6 @@ struct SectionView: View {
                     onStatusChange: onIntentChange
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
-                .background(TapToFocusCatcher { textFieldFocused = true })
             }
             #else
             // macOS: use NSTextView for rich text support
@@ -1065,7 +1063,6 @@ struct SectionView: View {
                     onStatusChange: onIntentChange
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
-                .background(TapToFocusCatcher { textFieldFocused = true })
             } else {
                 // Regular text editor using UITextView for proper edit menu support
                 EditableTextView(
@@ -1085,7 +1082,6 @@ struct SectionView: View {
                     onStatusChange: onIntentChange
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
-                .background(TapToFocusCatcher { textFieldFocused = true })
             }
             #else
             // macOS: use NSTextView for rich text support
@@ -1401,6 +1397,14 @@ struct SingleLineTextField: View {
 class SelfSizingTextView: UITextView {
     private var lastWidth: CGFloat = 0
 
+    // Peer pan for driving the enclosing ScrollView's contentOffset while
+    // focused. Attached directly to self. Disabled when not first-responder
+    // so it never fires during normal scroll-to-here-to-focus flow. See
+    // `handleScrollAssistPan(_:)` for details.
+    private let scrollAssistDelegate = ScrollAssistAllowingDelegate()
+    private var scrollAssistPan: VerticalOnlyPan?
+    private var scrollAssistOffsetAtBegin: CGPoint = .zero
+
     override var canBecomeFirstResponder: Bool { true }
 
     override init(frame: CGRect, textContainer: NSTextContainer?) {
@@ -1440,31 +1444,95 @@ class SelfSizingTextView: UITextView {
         // - single tap = position cursor
         // - double tap = select word + menu
         // - long press = selection handles
+
+        // Peer scroll-assist pan, attached to self. Only runs while the text
+        // view is first-responder — and only then on a clear vertical drag
+        // (VerticalOnlyPan). `cancelsTouchesInView = true` means: when it
+        // transitions from .possible → .began (after enough vertical motion),
+        // UIKit cancels the in-flight touches on this text view, so
+        // UITextView's own selection/loupe recognizers abort and our pan
+        // alone drives scroll. Taps don't trigger the transition (no motion),
+        // so native tap-to-position fires unperturbed.
+        let pan = VerticalOnlyPan(
+            target: self,
+            action: #selector(handleScrollAssistPan(_:))
+        )
+        pan.cancelsTouchesInView = true
+        pan.delaysTouchesBegan = false
+        pan.delaysTouchesEnded = false
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = scrollAssistDelegate
+        pan.isEnabled = false  // Only active while focused
+        addGestureRecognizer(pan)
+        scrollAssistPan = pan
     }
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        // Block any UIPanGestureRecognizer on this view when scrolling is disabled.
-        // UITextView (a UIScrollView subclass) has internal pan gestures beyond just
-        // panGestureRecognizer that can intercept vertical swipes meant for the
-        // parent scroll view. Text selection uses separate gesture types (not pan).
+        // Always allow our own scroll-assist pan to begin. Without this
+        // exception, the blanket pan-block below would refuse it along with
+        // UITextView's own scroll pan.
+        if gestureRecognizer === scrollAssistPan {
+            return true
+        }
+        // Block any UIPanGestureRecognizer on this view when scrolling is
+        // disabled. UITextView (a UIScrollView subclass) has internal pan
+        // gestures beyond just `panGestureRecognizer` that can intercept
+        // vertical swipes meant for the parent scroll view. Text selection
+        // uses separate (non-pan) gesture types, so this doesn't affect
+        // tap-to-position or text selection.
         if !isScrollEnabled && gestureRecognizer is UIPanGestureRecognizer {
             return false
         }
         return super.gestureRecognizerShouldBegin(gestureRecognizer)
     }
 
-    // When the text view isn't first-responder, report that no point is
-    // inside it. UIKit skips routing touches to us entirely, so vertical
-    // swipes starting on unfocused text pass straight through to the parent
-    // SwiftUI ScrollView's pan gesture. A UIKit tap catcher (see
-    // `TapToFocusCatcher` at the call site) sits behind the text view and
-    // handles tap-to-focus. Once focused, super's result is returned so
-    // UITextView handles taps natively for cursor placement.
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        if !isFirstResponder {
-            return false
+    override func becomeFirstResponder() -> Bool {
+        let result = super.becomeFirstResponder()
+        if result { scrollAssistPan?.isEnabled = true }
+        return result
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let result = super.resignFirstResponder()
+        if result { scrollAssistPan?.isEnabled = false }
+        return result
+    }
+
+    @objc private func handleScrollAssistPan(_ recognizer: UIPanGestureRecognizer) {
+        guard isFirstResponder,
+              let scrollView = enclosingScrollView else { return }
+        switch recognizer.state {
+        case .began:
+            scrollAssistOffsetAtBegin = scrollView.contentOffset
+        case .changed:
+            let translation = recognizer.translation(in: scrollView)
+            let minY = -scrollView.adjustedContentInset.top
+            let maxY = max(
+                minY,
+                scrollView.contentSize.height
+                    - scrollView.bounds.height
+                    + scrollView.adjustedContentInset.bottom
+            )
+            let proposedY = scrollAssistOffsetAtBegin.y - translation.y
+            let clampedY = min(max(proposedY, minY), maxY)
+            scrollView.contentOffset = CGPoint(
+                x: scrollAssistOffsetAtBegin.x,
+                y: clampedY
+            )
+        default:
+            break
         }
-        return super.point(inside: point, with: event)
+    }
+
+    private var enclosingScrollView: UIScrollView? {
+        var view: UIView? = superview
+        while let current = view {
+            if let scroll = current as? UIScrollView, scroll !== self {
+                return scroll
+            }
+            view = current.superview
+        }
+        return nil
     }
 
     override var intrinsicContentSize: CGSize {
@@ -1595,50 +1663,87 @@ class SelfSizingTextView: UITextView {
     }
 }
 
-// MARK: - Tap-to-Focus Catcher
+// MARK: - Scroll-Assist Pan Delegate
 
-/// Transparent UIKit view with a single `UITapGestureRecognizer`, placed
-/// behind `SelfSizingTextView` to catch taps that fall through while the
-/// text view isn't first-responder (its `point(inside:)` returns false in
-/// that state so parent ScrollView pans can pass through for scrolling).
+/// Delegate for `SelfSizingTextView`'s peer scroll-assist pan. Votes `true`
+/// for every arbitration question so the pan coexists with UITextView's
+/// own recognizers (tap/caret placement, selection drag, loupe) and with
+/// the enclosing scroll view's built-in pan. Apple's docs guarantee that
+/// one side returning `true` is enough to allow simultaneous recognition,
+/// so the internal UIKit delegates voting `false` (default) don't block us.
+final class ScrollAssistAllowingDelegate: NSObject, UIGestureRecognizerDelegate {
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+    ) -> Bool {
+        return true
+    }
+}
+
+// MARK: - Vertical-Only Pan
+
+/// `UIPanGestureRecognizer` subclass that only enters `.began` on a clear
+/// vertical drag. Horizontal swipes and small jitter cause immediate
+/// `.failed` so taps, caret placement, and other touch pipelines aren't
+/// perturbed by the recognizer's presence in arbitration.
 ///
-/// Uses a UIKit recognizer rather than SwiftUI's `.onTapGesture` because
-/// SwiftUI's tap installs a recognizer with `cancelsTouchesInView = true`,
-/// which arbitrates against UITextView's native cursor-placement tap once
-/// the text view is focused. A UIKit recognizer with
-/// `cancelsTouchesInView = false` is invisible to gesture arbitration — it
-/// only fires when the text view declines the hit, and never competes for
-/// taps that reach UITextView directly.
-struct TapToFocusCatcher: UIViewRepresentable {
-    let onTap: () -> Void
+/// Rationale: a vanilla pan will eventually fail on a pure tap (no
+/// movement), but during the arbitration window UIKit may still wait on
+/// it — which on UITextView has been observed to block tap-to-position.
+/// This subclass fails fast on every touch that isn't a vertical drag, so
+/// the pan is essentially invisible to taps and horizontal gestures.
+final class VerticalOnlyPan: UIPanGestureRecognizer {
+    private var startLocation: CGPoint?
+    private static let activationDistance: CGFloat = 8
 
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.backgroundColor = .clear
-        view.isUserInteractionEnabled = true
-        let tap = UITapGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleTap)
-        )
-        tap.cancelsTouchesInView = false
-        tap.delaysTouchesBegan = false
-        tap.delaysTouchesEnded = false
-        view.addGestureRecognizer(tap)
-        return view
+    override func reset() {
+        super.reset()
+        startLocation = nil
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.onTap = onTap
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesBegan(touches, with: event)
+        if let window = view?.window {
+            startLocation = touches.first?.location(in: window)
+        } else {
+            startLocation = touches.first?.location(in: view)
+        }
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onTap: onTap)
-    }
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        // Once we've entered .began, defer entirely to the default
+        // UIPanGestureRecognizer behavior — it tracks translation correctly.
+        if state != .possible {
+            super.touchesMoved(touches, with: event)
+            return
+        }
 
-    final class Coordinator {
-        var onTap: () -> Void
-        init(onTap: @escaping () -> Void) { self.onTap = onTap }
-        @objc func handleTap() { onTap() }
+        guard let touch = touches.first, let start = startLocation else {
+            super.touchesMoved(touches, with: event)
+            return
+        }
+        let current = (view?.window).map { touch.location(in: $0) } ?? touch.location(in: view)
+        let dx = current.x - start.x
+        let dy = current.y - start.y
+        let absDx = abs(dx)
+        let absDy = abs(dy)
+
+        // Clearly horizontal → fail so this recognizer exits the arbitration
+        // graph immediately and the next one (e.g. a horizontal swipe) can win.
+        if absDx >= Self.activationDistance && absDx > absDy * 1.5 {
+            state = .failed
+            return
+        }
+
+        // Not yet enough vertical movement to count as a drag → stay
+        // `.possible` without feeding super, so the recognizer doesn't
+        // transition prematurely.
+        if absDy < Self.activationDistance {
+            return
+        }
+
+        // Clear vertical drag → let super begin tracking as usual.
+        super.touchesMoved(touches, with: event)
     }
 }
 #endif
