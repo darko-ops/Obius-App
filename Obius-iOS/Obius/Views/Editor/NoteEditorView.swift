@@ -95,13 +95,6 @@ private struct NoteEditorContent: View {
     @FocusState private var focusedSectionId: String?
     @FocusState private var bodyFocused: Bool
     @FocusState private var titleFocused: Bool
-    // Trigger for body focus requests coming from UIKit gesture closures.
-    // @FocusState writes are silently dropped when performed from an escaping
-    // closure held by a gesture recognizer coordinator — only @State writes
-    // propagate from that context. So the TapToFocusCatcher closure bumps
-    // this @State integer, and an `.onChange` handler running inside SwiftUI's
-    // view-update context performs the actual @FocusState write, which works.
-    @State private var bodyFocusRequest: Int = 0
     @State private var emptyPlaceholder: String = PlaceholderProvider.next()
     @State private var titleVisible = true
     @State private var showingHistory = false
@@ -205,11 +198,6 @@ private struct NoteEditorContent: View {
                     focusedSectionId = nil
                     viewModel.focusedSectionId = nil
                 }
-            }
-            .onChange(of: bodyFocusRequest) { _, _ in
-                // Running in SwiftUI view-update context → @FocusState write
-                // propagates here (unlike the gesture-closure path).
-                bodyFocused = true
             }
             .onChange(of: viewModel.isLoading) { _, isLoading in
                 if !isLoading, let body = viewModel.note?.body, body != bodyText {
@@ -2319,17 +2307,6 @@ private struct NoteEditorContent: View {
                     .allowsHitTesting(false)
             }
         }
-        // Catches focus-taps that fall through an unfocused BodyTextView
-        // (SelfSizingTextView.point(inside:) returns false until first-responder
-        // so parent ScrollView pans can pass through for scrolling). Uses a
-        // UIKit UITapGestureRecognizer with cancelsTouchesInView = false so it
-        // never interferes with UITextView's native cursor-placement tap.
-        .background(TapToFocusCatcher {
-            // @FocusState writes from this closure are silently dropped; bump
-            // a @State trigger instead and let `.onChange` perform the real
-            // focus transition from SwiftUI's view-update context.
-            bodyFocusRequest += 1
-        })
         .onAppear {
             bodyText = viewModel.note?.body ?? ""
         }
@@ -2931,7 +2908,6 @@ struct BodyTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: SelfSizingTextView, context: Context) {
-        print("[BodyTextView] updateUIView isFocused=\(isFocused.wrappedValue) isFR=\(textView.isFirstResponder)")
         let textChanged = textView.text != text
         let richTextChanged = richText != context.coordinator.lastAppliedRichText
 
@@ -2982,7 +2958,6 @@ struct BodyTextView: UIViewRepresentable {
         applyInsightHighlights(to: textView)
 
         if isFocused.wrappedValue && !textView.isFirstResponder {
-            print("[BodyTextView] updateUIView → calling textView.becomeFirstResponder()")
             textView.becomeFirstResponder()
         }
     }
@@ -3026,7 +3001,6 @@ struct BodyTextView: UIViewRepresentable {
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
-            print("[BodyTextView.Coordinator] textViewDidBeginEditing (UIKit says this text view is now editing)")
             parent.isFocused.wrappedValue = true
             // Sync toolbar button states with current typing attributes
             if let toolbar = textView.inputAccessoryView as? BodyKeyboardToolbar {

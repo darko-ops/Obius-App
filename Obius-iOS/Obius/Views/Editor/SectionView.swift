@@ -415,11 +415,6 @@ struct SectionView: View {
     @State private var imageDominantColor: Color?
     @State private var imageNodeBackground: PlatformImage?
     @FocusState private var textFieldFocused: Bool
-    // Trigger for focus requests from UIKit gesture closures — @FocusState
-    // writes are silently dropped from that context, so we bump a @State
-    // integer and transition to focus via `.onChange` (SwiftUI view-update
-    // context, where @FocusState writes propagate correctly).
-    @State private var textFieldFocusRequest: Int = 0
 
     @StateObject private var biometricManager = BiometricManager.shared
     
@@ -507,13 +502,6 @@ struct SectionView: View {
             }
         }
         .padding(.leading, CGFloat(section.indentLevel) * 24)
-        .onChange(of: textFieldFocusRequest) { _, _ in
-            // Running in SwiftUI view-update context → @FocusState write
-            // propagates (gesture-closure writes are silently dropped).
-            textFieldFocused = true
-            isEditing = true
-            onFocus()
-        }
         .onChange(of: isFocused) { _, newValue in
             DispatchQueue.main.async {
                 // Image/audio sections have no text field — skip focus handling
@@ -801,12 +789,6 @@ struct SectionView: View {
                     onStatusChange: onIntentChange
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
-                .background(TapToFocusCatcher {
-                    // @FocusState writes from this closure are silently
-                    // dropped; bump a @State trigger instead and let
-                    // `.onChange` transition to focus.
-                    textFieldFocusRequest += 1
-                })
             } else {
                 // Regular text editor using UITextView for proper edit menu support
                 EditableTextView(
@@ -826,12 +808,6 @@ struct SectionView: View {
                     onStatusChange: onIntentChange
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
-                .background(TapToFocusCatcher {
-                    // @FocusState writes from this closure are silently
-                    // dropped; bump a @State trigger instead and let
-                    // `.onChange` transition to focus.
-                    textFieldFocusRequest += 1
-                })
             }
             #else
             // macOS: use NSTextView for rich text support
@@ -1087,12 +1063,6 @@ struct SectionView: View {
                     onStatusChange: onIntentChange
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
-                .background(TapToFocusCatcher {
-                    // @FocusState writes from this closure are silently
-                    // dropped; bump a @State trigger instead and let
-                    // `.onChange` transition to focus.
-                    textFieldFocusRequest += 1
-                })
             } else {
                 // Regular text editor using UITextView for proper edit menu support
                 EditableTextView(
@@ -1112,12 +1082,6 @@ struct SectionView: View {
                     onStatusChange: onIntentChange
                 )
                 .frame(maxWidth: .infinity, minHeight: estimatedHeight, alignment: .topLeading)
-                .background(TapToFocusCatcher {
-                    // @FocusState writes from this closure are silently
-                    // dropped; bump a @State trigger instead and let
-                    // `.onChange` transition to focus.
-                    textFieldFocusRequest += 1
-                })
             }
             #else
             // macOS: use NSTextView for rich text support
@@ -1481,18 +1445,19 @@ class SelfSizingTextView: UITextView {
         // - double tap = select word + menu
         // - long press = selection handles
 
-        // Install our scroll-assist pan. We fully own it (fresh target, fresh
-        // delegate) — no existing UIKit recognizer is touched or proxied, so
-        // UITextView's default arbitration graph for tap, caret placement,
-        // selection, and loupe is preserved exactly. The recognizer is a
-        // `VerticalOnlyPan` subclass that fails fast on anything that isn't
-        // a clear vertical drag, so taps / horizontal drags / small jitter
-        // never engage it and can't perturb the tap-to-position pipeline.
+        // Peer scroll-assist pan, attached to self. Only runs while the text
+        // view is first-responder — and only then on a clear vertical drag
+        // (VerticalOnlyPan). `cancelsTouchesInView = true` means: when it
+        // transitions from .possible → .began (after enough vertical motion),
+        // UIKit cancels the in-flight touches on this text view, so
+        // UITextView's own selection/loupe recognizers abort and our pan
+        // alone drives scroll. Taps don't trigger the transition (no motion),
+        // so native tap-to-position fires unperturbed.
         let pan = VerticalOnlyPan(
             target: self,
             action: #selector(handleScrollAssistPan(_:))
         )
-        pan.cancelsTouchesInView = false
+        pan.cancelsTouchesInView = true
         pan.delaysTouchesBegan = false
         pan.delaysTouchesEnded = false
         pan.maximumNumberOfTouches = 1
@@ -1500,34 +1465,6 @@ class SelfSizingTextView: UITextView {
         pan.isEnabled = false  // Only active while focused
         addGestureRecognizer(pan)
         scrollAssistPan = pan
-        saLog("configured; pan attached, disabled")
-    }
-
-    // MARK: - Scroll-Assist Debug Logging
-    //
-    // Instrumentation for diagnosing why the peer pan isn't driving scroll
-    // while focused. Prints with a `[SA id=XXXX]` tag so you can filter the
-    // Xcode console. Remove once the flow is confirmed working.
-
-    private var saShortId: String {
-        String(ObjectIdentifier(self).hashValue & 0xFFFF, radix: 16)
-    }
-
-    private func saLog(_ message: @autoclosure () -> String) {
-        print("[SA id=\(saShortId)] \(message())")
-    }
-
-    private func saLogRecognizers(label: String) {
-        let recognizers = gestureRecognizers ?? []
-        saLog("\(label) — \(recognizers.count) recognizers on text view:")
-        for (i, gr) in recognizers.enumerated() {
-            let marker = (gr === scrollAssistPan) ? "  ← ours" : ""
-            let state = gr.state.rawValue
-            print(
-                "  [\(i)] \(type(of: gr)) enabled=\(gr.isEnabled) state=\(state) "
-                + "cancelsTouchesInView=\(gr.cancelsTouchesInView)\(marker)"
-            )
-        }
     }
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -1535,15 +1472,15 @@ class SelfSizingTextView: UITextView {
         // exception, the blanket pan-block below would refuse it along with
         // UITextView's own scroll pan.
         if gestureRecognizer === scrollAssistPan {
-            saLog("shouldBegin: OUR pan → true")
             return true
         }
-        // Block any UIPanGestureRecognizer on this view when scrolling is disabled.
-        // UITextView (a UIScrollView subclass) has internal pan gestures beyond just
-        // panGestureRecognizer that can intercept vertical swipes meant for the
-        // parent scroll view. Text selection uses separate gesture types (not pan).
+        // Block any UIPanGestureRecognizer on this view when scrolling is
+        // disabled. UITextView (a UIScrollView subclass) has internal pan
+        // gestures beyond just `panGestureRecognizer` that can intercept
+        // vertical swipes meant for the parent scroll view. Text selection
+        // uses separate (non-pan) gesture types, so this doesn't affect
+        // tap-to-position or text selection.
         if !isScrollEnabled && gestureRecognizer is UIPanGestureRecognizer {
-            saLog("shouldBegin: blocking \(type(of: gestureRecognizer)) (not ours, !isScrollEnabled)")
             return false
         }
         return super.gestureRecognizerShouldBegin(gestureRecognizer)
@@ -1551,60 +1488,22 @@ class SelfSizingTextView: UITextView {
 
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
-        if result {
-            scrollAssistPan?.isEnabled = true
-            saLog("becameFirstResponder → pan.isEnabled=true")
-            saLogRecognizers(label: "at becomeFirstResponder")
-            saLog("enclosingScrollView lookup result: \(enclosingScrollViewDescription())")
-        } else {
-            saLog("becomeFirstResponder returned false")
-        }
+        if result { scrollAssistPan?.isEnabled = true }
         return result
     }
 
     override func resignFirstResponder() -> Bool {
         let result = super.resignFirstResponder()
-        if result {
-            scrollAssistPan?.isEnabled = false
-            saLog("resignedFirstResponder → pan.isEnabled=false")
-        }
+        if result { scrollAssistPan?.isEnabled = false }
         return result
     }
 
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        if isFirstResponder {
-            saLog("touchesBegan count=\(touches.count) (focused)")
-        }
-        super.touchesBegan(touches, with: event)
-    }
-
     @objc private func handleScrollAssistPan(_ recognizer: UIPanGestureRecognizer) {
-        let stateName: String
-        switch recognizer.state {
-        case .possible:  stateName = "possible"
-        case .began:     stateName = "began"
-        case .changed:   stateName = "changed"
-        case .ended:     stateName = "ended"
-        case .cancelled: stateName = "cancelled"
-        case .failed:    stateName = "failed"
-        default:         stateName = "?"
-        }
-        guard isFirstResponder else {
-            saLog("handler: .\(stateName) but !isFirstResponder — skipping")
-            return
-        }
-        guard let scrollView = enclosingScrollView else {
-            saLog("handler: .\(stateName) but enclosingScrollView == nil")
-            return
-        }
+        guard isFirstResponder,
+              let scrollView = enclosingScrollView else { return }
         switch recognizer.state {
         case .began:
             scrollAssistOffsetAtBegin = scrollView.contentOffset
-            saLog("handler: .began sv=\(type(of: scrollView)) "
-                  + "bounds=\(scrollView.bounds.size) "
-                  + "contentSize=\(scrollView.contentSize) "
-                  + "offset=\(scrollView.contentOffset) "
-                  + "inset=\(scrollView.adjustedContentInset)")
         case .changed:
             let translation = recognizer.translation(in: scrollView)
             let minY = -scrollView.adjustedContentInset.top
@@ -1616,15 +1515,10 @@ class SelfSizingTextView: UITextView {
             )
             let proposedY = scrollAssistOffsetAtBegin.y - translation.y
             let clampedY = min(max(proposedY, minY), maxY)
-            let newOffset = CGPoint(x: scrollAssistOffsetAtBegin.x, y: clampedY)
-            let before = scrollView.contentOffset
-            scrollView.contentOffset = newOffset
-            let after = scrollView.contentOffset
-            saLog("handler: .changed tr=\(translation) "
-                  + "proposed=\(proposedY) clamped=\(clampedY) "
-                  + "before=\(before) set=\(newOffset) after=\(after)")
-        case .ended, .cancelled, .failed:
-            saLog("handler: .\(stateName) finalOffset=\(scrollView.contentOffset)")
+            scrollView.contentOffset = CGPoint(
+                x: scrollAssistOffsetAtBegin.x,
+                y: clampedY
+            )
         default:
             break
         }
@@ -1639,35 +1533,6 @@ class SelfSizingTextView: UITextView {
             view = current.superview
         }
         return nil
-    }
-
-    /// Debug helper: describes what `enclosingScrollView` would return,
-    /// including the walk path (classes visited) when no scroll view is found.
-    private func enclosingScrollViewDescription() -> String {
-        var classesSeen: [String] = []
-        var view: UIView? = superview
-        while let current = view {
-            classesSeen.append(String(describing: type(of: current)))
-            if let scroll = current as? UIScrollView, scroll !== self {
-                return "\(type(of: scroll)) (after \(classesSeen.count) hops)"
-            }
-            view = current.superview
-        }
-        return "NONE — walked \(classesSeen.count) ancestors: \(classesSeen.joined(separator: " → "))"
-    }
-
-    // When the text view isn't first-responder, report that no point is
-    // inside it. UIKit skips routing touches to us entirely, so vertical
-    // swipes starting on unfocused text pass straight through to the parent
-    // SwiftUI ScrollView's pan gesture. A UIKit tap catcher (see
-    // `TapToFocusCatcher` at the call site) sits behind the text view and
-    // handles tap-to-focus. Once focused, super's result is returned so
-    // UITextView handles taps natively for cursor placement.
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        if !isFirstResponder {
-            return false
-        }
-        return super.point(inside: point, with: event)
     }
 
     override var intrinsicContentSize: CGSize {
@@ -1795,142 +1660,6 @@ class SelfSizingTextView: UITextView {
         }
 
         return result
-    }
-}
-
-// MARK: - Tap-to-Focus Catcher
-
-/// Transparent UIKit view with a single `UITapGestureRecognizer`, placed
-/// behind `SelfSizingTextView` to catch taps that fall through while the
-/// text view isn't first-responder (its `point(inside:)` returns false in
-/// that state so parent ScrollView pans can pass through for scrolling).
-///
-/// Uses a UIKit recognizer rather than SwiftUI's `.onTapGesture` because
-/// SwiftUI's tap installs a recognizer with `cancelsTouchesInView = true`,
-/// which arbitrates against UITextView's native cursor-placement tap once
-/// the text view is focused. A UIKit recognizer with
-/// `cancelsTouchesInView = false` is invisible to gesture arbitration — it
-/// only fires when the text view declines the hit, and never competes for
-/// taps that reach UITextView directly.
-///
-/// On tap, triggers the `onTap` callback (used to drive SwiftUI focus via a
-/// @State trigger — @FocusState writes from this context are silently
-/// dropped), *and* replicates UITextView's native "tap = focus + cursor-
-/// at-tap-location" behavior by walking the view tree to find the sibling
-/// UITextView and setting its `selectedTextRange` at the tap point. Without
-/// this, the first tap focuses but the cursor lands wherever UITextView
-/// puts it by default (usually end of text), not where the user tapped.
-struct TapToFocusCatcher: UIViewRepresentable {
-    let onTap: () -> Void
-
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.backgroundColor = .clear
-        view.isUserInteractionEnabled = true
-        let tap = UITapGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleTap(_:))
-        )
-        tap.cancelsTouchesInView = false
-        tap.delaysTouchesBegan = false
-        tap.delaysTouchesEnded = false
-        view.addGestureRecognizer(tap)
-        context.coordinator.hostView = view
-        return view
-    }
-
-    func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.onTap = onTap
-        context.coordinator.hostView = uiView
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onTap: onTap)
-    }
-
-    final class Coordinator {
-        var onTap: () -> Void
-        weak var hostView: UIView?
-
-        init(onTap: @escaping () -> Void) { self.onTap = onTap }
-
-        @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
-            guard let hostView = hostView else {
-                print("[TapCatcher] tap fired, no hostView → onTap only")
-                onTap()
-                return
-            }
-            let locationInHost = recognizer.location(in: hostView)
-
-            guard let window = hostView.window else {
-                print("[TapCatcher] tap fired at \(locationInHost), no window → onTap only")
-                onTap()
-                return
-            }
-            let locationInWindow = hostView.convert(locationInHost, to: nil)
-            print("[TapCatcher] tap fired; hostLoc=\(locationInHost) windowLoc=\(locationInWindow)")
-
-            // Find the UITextView the user actually tapped on via a geometric
-            // hit-test rooted at the window. Walking the window hierarchy and
-            // checking frame containment is immune to SwiftUI's sibling
-            // layout quirks — whichever text view is visually under the
-            // tap wins regardless of how the view tree is nested.
-            guard let textView = Self.findTextView(at: locationInWindow, in: window) else {
-                print("[TapCatcher] no UITextView at \(locationInWindow) → onTap only")
-                onTap()
-                return
-            }
-            let tvFrame = textView.convert(textView.bounds, to: nil)
-            print("[TapCatcher] resolved textView with windowFrame=\(tvFrame)")
-
-            // Trigger the SwiftUI focus-sync flow. Redundant with the direct
-            // becomeFirstResponder below but keeps the @State trigger /
-            // .onChange / @FocusState side of the world in sync so other
-            // observers (focusedSectionId, isEditing, etc.) update correctly.
-            onTap()
-
-            // Synchronously focus the text view and place the cursor. Doing
-            // this in the same run-loop turn as the tap avoids any race with
-            // the @State → @FocusState → updateUIView → becomeFirstResponder
-            // chain which runs asynchronously.
-            if !textView.isFirstResponder {
-                let ok = textView.becomeFirstResponder()
-                print("[TapCatcher] becomeFirstResponder returned \(ok)")
-            }
-
-            let pointInTextView = window.convert(locationInWindow, to: textView)
-            print("[TapCatcher] placing cursor at pointInTextView=\(pointInTextView) bounds=\(textView.bounds)")
-            if let position = textView.closestPosition(to: pointInTextView),
-               let range = textView.textRange(from: position, to: position) {
-                textView.selectedTextRange = range
-                print("[TapCatcher] cursor placed")
-            } else {
-                print("[TapCatcher] closestPosition/textRange returned nil")
-            }
-        }
-
-        /// Deepest `UITextView` whose frame in window coordinates contains
-        /// `windowPoint`. Traverses subviews in reverse (topmost first) so
-        /// overlapping siblings resolve to the visually-frontmost match.
-        ///
-        /// This is a pure geometric search — it ignores `point(inside:)`
-        /// overrides (our `SelfSizingTextView` returns `false` when
-        /// unfocused, which would normally hide it from UIKit hit-testing)
-        /// and SwiftUI's sibling layout. Whichever text view is
-        /// actually under the finger at the tap point wins.
-        private static func findTextView(at windowPoint: CGPoint, in root: UIView) -> UITextView? {
-            if root.isHidden { return nil }
-            let frameInWindow = root.convert(root.bounds, to: nil)
-            guard frameInWindow.contains(windowPoint) else { return nil }
-
-            for subview in root.subviews.reversed() {
-                if let match = findTextView(at: windowPoint, in: subview) {
-                    return match
-                }
-            }
-
-            return root as? UITextView
-        }
     }
 }
 
@@ -2479,7 +2208,6 @@ struct EditableTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: SelfSizingTextView, context: Context) {
-        print("[EditableTextView] updateUIView isFocused=\(isFocused.wrappedValue) isFR=\(textView.isFirstResponder)")
         // Never push text back into the text view while the user is actively editing —
         // this prevents cursor jumping and formatting being stripped.
         if !textView.isFirstResponder, textView.text != text {
@@ -2501,9 +2229,7 @@ struct EditableTextView: UIViewRepresentable {
         }
 
         if isFocused.wrappedValue && !textView.isFirstResponder {
-            print("[EditableTextView] updateUIView → dispatching becomeFirstResponder")
             DispatchQueue.main.async {
-                print("[EditableTextView] async → calling textView.becomeFirstResponder()")
                 textView.becomeFirstResponder()
             }
         }
@@ -3379,7 +3105,6 @@ struct TemplateProtectedTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: SelfSizingTextView, context: Context) {
-        print("[TemplateProtectedTextView] updateUIView isFocused=\(isFocused.wrappedValue) isFR=\(textView.isFirstResponder)")
         // Never push text back while the user is actively editing —
         // prevents cursor jumping and formatting being stripped.
         if !textView.isFirstResponder {
@@ -3397,9 +3122,7 @@ struct TemplateProtectedTextView: UIViewRepresentable {
 
         // Handle focus
         if isFocused.wrappedValue && !textView.isFirstResponder {
-            print("[TemplateProtectedTextView] updateUIView → dispatching becomeFirstResponder")
             DispatchQueue.main.async {
-                print("[TemplateProtectedTextView] async → calling textView.becomeFirstResponder()")
                 textView.becomeFirstResponder()
             }
         }
