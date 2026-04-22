@@ -1445,14 +1445,17 @@ class SelfSizingTextView: UITextView {
         // - double tap = select word + menu
         // - long press = selection handles
 
-        // Peer scroll-assist pan, attached to self. Only runs while the text
-        // view is first-responder — and only then on a clear vertical drag
-        // (VerticalOnlyPan). `cancelsTouchesInView = true` means: when it
-        // transitions from .possible → .began (after enough vertical motion),
-        // UIKit cancels the in-flight touches on this text view, so
-        // UITextView's own selection/loupe recognizers abort and our pan
-        // alone drives scroll. Taps don't trigger the transition (no motion),
-        // so native tap-to-position fires unperturbed.
+        // Peer scroll-assist pan, attached to self. Runs whether or not the
+        // text view is first-responder — UITextView has non-pan gesture
+        // recognizers (UITextInteraction / selection) that can claim touches
+        // on the text, which otherwise blocks the parent ScrollView's pan
+        // from beginning over any word. A clear vertical drag (VerticalOnlyPan)
+        // triggers .began; `cancelsTouchesInView = true` then aborts UITextView's
+        // own touch pipeline so our pan alone drives scroll. Taps don't
+        // trigger the transition (no motion), so native tap-to-position
+        // fires unperturbed. VerticalOnlyPan also fails out when an active
+        // selection exists, so the user can extend a selection with a
+        // selection handle instead of hijacking the drag into a scroll.
         let pan = VerticalOnlyPan(
             target: self,
             action: #selector(handleScrollAssistPan(_:))
@@ -1462,45 +1465,29 @@ class SelfSizingTextView: UITextView {
         pan.delaysTouchesEnded = false
         pan.maximumNumberOfTouches = 1
         pan.delegate = scrollAssistDelegate
-        pan.isEnabled = false  // Only active while focused
         addGestureRecognizer(pan)
         scrollAssistPan = pan
     }
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        // Always allow our own scroll-assist pan to begin. Without this
-        // exception, the blanket pan-block below would refuse it along with
-        // UITextView's own scroll pan.
+        // Always allow our own scroll-assist pan to begin.
         if gestureRecognizer === scrollAssistPan {
             return true
         }
-        // Block any UIPanGestureRecognizer on this view when scrolling is
-        // disabled. UITextView (a UIScrollView subclass) has internal pan
-        // gestures beyond just `panGestureRecognizer` that can intercept
-        // vertical swipes meant for the parent scroll view. Text selection
-        // uses separate (non-pan) gesture types, so this doesn't affect
-        // tap-to-position or text selection.
-        if !isScrollEnabled && gestureRecognizer is UIPanGestureRecognizer {
+        // Block only UIScrollView's built-in scroll pan (belt-and-suspenders
+        // on top of `panGestureRecognizer.isEnabled = false`). Do NOT block
+        // other UIPanGestureRecognizer subclasses — UITextView's selection
+        // grabber uses a UIPanGestureRecognizer (via UITextInteraction) to
+        // extend the selection across lines, and blocking every pan by class
+        // silently kills that drag so the selection can't grow past one line.
+        if gestureRecognizer === panGestureRecognizer {
             return false
         }
         return super.gestureRecognizerShouldBegin(gestureRecognizer)
     }
 
-    override func becomeFirstResponder() -> Bool {
-        let result = super.becomeFirstResponder()
-        if result { scrollAssistPan?.isEnabled = true }
-        return result
-    }
-
-    override func resignFirstResponder() -> Bool {
-        let result = super.resignFirstResponder()
-        if result { scrollAssistPan?.isEnabled = false }
-        return result
-    }
-
     @objc private func handleScrollAssistPan(_ recognizer: UIPanGestureRecognizer) {
-        guard isFirstResponder,
-              let scrollView = enclosingScrollView else { return }
+        guard let scrollView = enclosingScrollView else { return }
         switch recognizer.state {
         case .began:
             scrollAssistOffsetAtBegin = scrollView.contentOffset
@@ -1739,6 +1726,16 @@ final class VerticalOnlyPan: UIPanGestureRecognizer {
         // `.possible` without feeding super, so the recognizer doesn't
         // transition prematurely.
         if absDy < Self.activationDistance {
+            return
+        }
+
+        // If the text view has an active selection, the user is likely
+        // dragging a selection handle to extend it. Fail so UITextView's
+        // own selection pipeline handles the drag — without this, the
+        // scroll-assist pan would cancel the handle's touches at 8px of
+        // vertical motion and selection couldn't extend past one line.
+        if let textView = view as? UITextView, textView.selectedRange.length > 0 {
+            state = .failed
             return
         }
 
