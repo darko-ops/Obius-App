@@ -1404,6 +1404,7 @@ class SelfSizingTextView: UITextView {
     private let scrollAssistDelegate = ScrollAssistAllowingDelegate()
     private var scrollAssistPan: VerticalOnlyPan?
     private var scrollAssistOffsetAtBegin: CGPoint = .zero
+    private var scrollAssistDecayAnimator: UIViewPropertyAnimator?
 
     override var canBecomeFirstResponder: Bool { true }
 
@@ -1447,17 +1448,16 @@ class SelfSizingTextView: UITextView {
 
         // Peer scroll-assist pan, attached to self. Only runs while the text
         // view is first-responder — and only then on a clear vertical drag
-        // (VerticalOnlyPan). `cancelsTouchesInView = true` means: when it
-        // transitions from .possible → .began (after enough vertical motion),
-        // UIKit cancels the in-flight touches on this text view, so
-        // UITextView's own selection/loupe recognizers abort and our pan
-        // alone drives scroll. Taps don't trigger the transition (no motion),
-        // so native tap-to-position fires unperturbed.
+        // (VerticalOnlyPan). `cancelsTouchesInView = false` so UITextView's
+        // own selection-handle pan (from UITextInteraction) keeps receiving
+        // touches and the user can drag selection across multiple lines. Our
+        // pan drives scroll in parallel, matching the auto-scroll-while-
+        // selecting behavior of Notes/Messages.
         let pan = VerticalOnlyPan(
             target: self,
             action: #selector(handleScrollAssistPan(_:))
         )
-        pan.cancelsTouchesInView = true
+        pan.cancelsTouchesInView = false
         pan.delaysTouchesBegan = false
         pan.delaysTouchesEnded = false
         pan.maximumNumberOfTouches = 1
@@ -1465,25 +1465,6 @@ class SelfSizingTextView: UITextView {
         pan.isEnabled = false  // Only active while focused
         addGestureRecognizer(pan)
         scrollAssistPan = pan
-    }
-
-    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        // Always allow our own scroll-assist pan to begin. Without this
-        // exception, the blanket pan-block below would refuse it along with
-        // UITextView's own scroll pan.
-        if gestureRecognizer === scrollAssistPan {
-            return true
-        }
-        // Block any UIPanGestureRecognizer on this view when scrolling is
-        // disabled. UITextView (a UIScrollView subclass) has internal pan
-        // gestures beyond just `panGestureRecognizer` that can intercept
-        // vertical swipes meant for the parent scroll view. Text selection
-        // uses separate (non-pan) gesture types, so this doesn't affect
-        // tap-to-position or text selection.
-        if !isScrollEnabled && gestureRecognizer is UIPanGestureRecognizer {
-            return false
-        }
-        return super.gestureRecognizerShouldBegin(gestureRecognizer)
     }
 
     override func becomeFirstResponder() -> Bool {
@@ -1494,7 +1475,11 @@ class SelfSizingTextView: UITextView {
 
     override func resignFirstResponder() -> Bool {
         let result = super.resignFirstResponder()
-        if result { scrollAssistPan?.isEnabled = false }
+        if result {
+            scrollAssistPan?.isEnabled = false
+            scrollAssistDecayAnimator?.stopAnimation(true)
+            scrollAssistDecayAnimator = nil
+        }
         return result
     }
 
@@ -1503,25 +1488,69 @@ class SelfSizingTextView: UITextView {
               let scrollView = enclosingScrollView else { return }
         switch recognizer.state {
         case .began:
+            // Stop any in-flight momentum from a previous flick so this drag
+            // takes over from the currently-visible offset.
+            scrollAssistDecayAnimator?.stopAnimation(true)
+            scrollAssistDecayAnimator = nil
             scrollAssistOffsetAtBegin = scrollView.contentOffset
         case .changed:
             let translation = recognizer.translation(in: scrollView)
-            let minY = -scrollView.adjustedContentInset.top
-            let maxY = max(
-                minY,
-                scrollView.contentSize.height
-                    - scrollView.bounds.height
-                    + scrollView.adjustedContentInset.bottom
-            )
             let proposedY = scrollAssistOffsetAtBegin.y - translation.y
-            let clampedY = min(max(proposedY, minY), maxY)
             scrollView.contentOffset = CGPoint(
                 x: scrollAssistOffsetAtBegin.x,
-                y: clampedY
+                y: clampedContentOffsetY(proposedY, in: scrollView)
             )
+        case .ended:
+            // Project a target offset from the lift-off velocity so flicks
+            // feel like the parent ScrollView's native pan — this removes
+            // the "only the right-edge has momentum" inconsistency.
+            let velocityY = recognizer.velocity(in: scrollView).y
+            startScrollAssistDecay(in: scrollView, velocityY: velocityY)
+        case .cancelled, .failed:
+            break
         default:
             break
         }
+    }
+
+    private func clampedContentOffsetY(_ y: CGFloat, in scrollView: UIScrollView) -> CGFloat {
+        let minY = -scrollView.adjustedContentInset.top
+        let maxY = max(
+            minY,
+            scrollView.contentSize.height
+                - scrollView.bounds.height
+                + scrollView.adjustedContentInset.bottom
+        )
+        return min(max(y, minY), maxY)
+    }
+
+    private func startScrollAssistDecay(in scrollView: UIScrollView, velocityY: CGFloat) {
+        // Match UIScrollView's normal deceleration feel. Projecting with the
+        // standard formula keeps the post-lift-off travel consistent with
+        // the system pan so users don't feel a different curve inside vs.
+        // outside the text view.
+        let decelerationRate = UIScrollView.DecelerationRate.normal.rawValue
+        let projectedDistance = (velocityY / 1000) * decelerationRate / (1 - decelerationRate)
+        guard abs(projectedDistance) > 1 else { return }
+
+        let startY = scrollView.contentOffset.y
+        let targetY = clampedContentOffsetY(startY - projectedDistance, in: scrollView)
+        let distance = abs(targetY - startY)
+        guard distance > 0.5 else { return }
+
+        // Duration scales with distance; capped so very large flicks don't
+        // feel sluggish.
+        let duration = min(max(TimeInterval(distance / max(abs(velocityY), 1)), 0.15), 0.8)
+        let timing = UICubicTimingParameters(animationCurve: .easeOut)
+        let animator = UIViewPropertyAnimator(duration: duration, timingParameters: timing)
+        animator.addAnimations { [weak scrollView] in
+            scrollView?.contentOffset = CGPoint(x: scrollView?.contentOffset.x ?? 0, y: targetY)
+        }
+        animator.addCompletion { [weak self] _ in
+            self?.scrollAssistDecayAnimator = nil
+        }
+        scrollAssistDecayAnimator = animator
+        animator.startAnimation()
     }
 
     private var enclosingScrollView: UIScrollView? {
