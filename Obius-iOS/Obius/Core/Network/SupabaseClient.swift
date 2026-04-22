@@ -10,6 +10,10 @@ final class SupabaseManager {
     /// Whether Supabase is properly configured
     let isConfigured: Bool
 
+    /// Deep-link URL Supabase redirects to after email confirmation / password reset.
+    /// Must be listed under "Redirect URLs" in the Supabase Auth settings.
+    static let authCallbackURL = URL(string: "obius://auth/callback")!
+
     /// Resolve the keychain access group dynamically using the app's team ID prefix.
     /// This ensures it works on both iOS and macOS regardless of sandbox/signing differences.
     private static var keychainAccessGroup: String {
@@ -74,9 +78,17 @@ final class SupabaseManager {
         let response = try await client.auth.signUp(
             email: email,
             password: password,
-            data: data
+            data: data,
+            redirectTo: Self.authCallbackURL
         )
         return response.user
+    }
+
+    /// Exchange an incoming auth callback URL for a session (handles both PKCE `?code=`
+    /// and implicit `#access_token=` flows).
+    @discardableResult
+    func handleAuthCallback(_ url: URL) async throws -> Session {
+        try await client.auth.session(from: url)
     }
 
     func signIn(email: String, password: String) async throws -> Session {
