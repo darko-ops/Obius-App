@@ -220,10 +220,18 @@ private struct NoteEditorContent: View {
                 viewModel.generateAITitleIfNeeded()
                 viewModel.generateAITagsIfNeeded()
                 Task {
-                    // Log pending operations with await — guarantees DB writes complete
-                    // before sync() reads the syncOperations table.
-                    await syncPendingEntitiesAsync(viewModel: viewModel)
-                    await viewModel.cleanupEmptyNoteIfNeeded()
+                    // Clean up an empty page first. If the note never reached the
+                    // server there is nothing to sync; if it did, log an explicit
+                    // delete so peers remove it. Otherwise, fall back to logging
+                    // pending creates/updates like before.
+                    let cleanup = await viewModel.cleanupEmptyNoteIfNeeded()
+                    if cleanup.deleted {
+                        if cleanup.hadServerCopy {
+                            appState.syncLogger.logNoteDelete(noteId)
+                        }
+                    } else {
+                        await syncPendingEntitiesAsync(viewModel: viewModel)
+                    }
                     // Trigger immediate sync so changes push before app backgrounds.
                     await appState.syncEngine.sync()
                 }
