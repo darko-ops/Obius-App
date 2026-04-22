@@ -482,16 +482,24 @@ final class NoteEditorViewModel: ObservableObject {
         return true
     }
 
-    /// Clean up the note if it's empty (called when leaving the note editor)
-    func cleanupEmptyNoteIfNeeded() async {
-        // First clean up empty sections
-        await cleanupAllEmptySections()
+    /// Result of an empty-note cleanup pass.
+    struct EmptyNoteCleanupResult {
+        /// True if the note was soft-deleted.
+        let deleted: Bool
+        /// True if the note had already been pushed to the server (so peers need a delete op).
+        let hadServerCopy: Bool
+    }
 
-        // Then check if the entire note is empty and delete it
-        if isNoteEmpty {
-            print("🗑️ Deleting empty note: \(noteId.prefix(8))")
-            try? await noteRepository.deleteNote(noteId)
-        }
+    /// Clean up the note if it's empty (called when leaving the note editor).
+    /// The caller is responsible for logging a sync delete when `hadServerCopy` is true.
+    @discardableResult
+    func cleanupEmptyNoteIfNeeded() async -> EmptyNoteCleanupResult {
+        await cleanupAllEmptySections()
+        guard isNoteEmpty else { return EmptyNoteCleanupResult(deleted: false, hadServerCopy: false) }
+        let hadServerCopy = (note?.serverVersion != nil)
+        print("🗑️ Deleting empty note: \(noteId.prefix(8)) hadServerCopy=\(hadServerCopy)")
+        try? await noteRepository.deleteNote(noteId)
+        return EmptyNoteCleanupResult(deleted: true, hadServerCopy: hadServerCopy)
     }
 
     /// Generate an AI title if the note has content but no user-set or AI title.
