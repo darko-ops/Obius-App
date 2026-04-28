@@ -20,7 +20,7 @@
     <key>CFBundleShortVersionString</key>
     <string>1.0.0</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
 
     <!-- Supabase Configuration -->
     <key>SUPABASE_URL</key>
@@ -115,6 +115,10 @@
         <key>NSAllowsArbitraryLoads</key>
         <false/>
     </dict>
+
+    <!-- Export Compliance: only uses exempt encryption (HTTPS via URLSession, SHA-256 hashing) -->
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
 
     <!-- Privacy Usage Descriptions -->
     <key>NSFaceIDUsageDescription</key>
