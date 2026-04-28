@@ -1,6 +1,9 @@
 // Release Configuration
 // Obius iOS App
 
+// Import local secrets (gitignored)
+#include? "Secrets.xcconfig"
+
 // Build Settings
 DEBUG_INFORMATION_FORMAT = dwarf-with-dsym
 SWIFT_OPTIMIZATION_LEVEL = -O
@@ -21,7 +24,7 @@ OBIUS_API_BASE_URL = https://api.obius.io
 SUPABASE_URL = https://sqixnykiayfyzrrcjips.supabase.co
 SUPABASE_ANON_KEY = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNxaXhueWtpYXlmeXpycmNqaXBzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk1NzA5NDEsImV4cCI6MjA4NTE0Njk0MX0.h3XIwWspXoTYf7SOgGamLngc11itXwO-xYqLd2rOopA
 CLAUDE_API_KEY = $(CLAUDE_API_KEY)
-REVENUECAT_API_KEY = appl_REPLACE_WITH_PRODUCTION_KEY
+REVENUECAT_API_KEY = $(REVENUECAT_API_KEY_RELEASE)
 
 // Bundle ID
 PRODUCT_BUNDLE_IDENTIFIER = app.obius.ios
@@ -30,11 +33,8 @@ PRODUCT_BUNDLE_IDENTIFIER = app.obius.ios
 PRODUCT_NAME = Obius
 DISPLAY_NAME = Obius
 
-// Code Signing (manual for production)
-CODE_SIGN_STYLE = Manual
-DEVELOPMENT_TEAM =
-CODE_SIGN_IDENTITY = Apple Distribution
-PROVISIONING_PROFILE_SPECIFIER =
+// Code Signing (automatic — Xcode manages distribution profile; DEVELOPMENT_TEAM comes from Secrets.xcconfig)
+CODE_SIGN_STYLE = Automatic
 
 // Logging
 OBIUS_LOG_LEVEL = error

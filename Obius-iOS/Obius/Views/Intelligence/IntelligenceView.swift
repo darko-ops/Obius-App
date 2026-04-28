@@ -1430,73 +1430,73 @@ struct WorkspaceSheet: View {
     }
 
     private var workspaceContent: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if !embedded {
-                        // Search bar (hidden when something is selected)
-                        if !hasSelection {
-                            searchBar
-                        }
-
-                        // Focus mode selector (hidden when opened from editor with a specific page)
-                        if preselectedPageId == nil {
-                            focusSelector
-                        }
-
-                        // Pages list or Loop list based on mode
-                        if focusMode == .pages && preselectedPageId == nil {
-                            pagesList
-                        } else if focusMode == .loops && preselectedPageId == nil {
-                            loopSelector
-                        }
-
-                        // Full page content when a page is selected
-                        if let pageId = selectedPageId,
-                           let page = pages.first(where: { $0.id == pageId }) {
-                            pageFullContent(for: page)
-                        }
-
-                        // Change history (below page content)
-                        if selectedPageId != nil {
-                            changeHistory
-                        }
-
-                        // Loop content editor (only in loops mode)
-                        if focusMode == .loops, let handle = primaryHandle {
-                            loopContentEditor(for: handle)
-                        }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if !embedded {
+                    // Search bar (hidden when something is selected)
+                    if !hasSelection {
+                        searchBar
                     }
 
-                    // Change history at the top of the terminal panel
-                    if embedded && selectedPageId != nil {
+                    // Focus mode selector (hidden when opened from editor with a specific page)
+                    if preselectedPageId == nil {
+                        focusSelector
+                    }
+
+                    // Pages list or Loop list based on mode
+                    if focusMode == .pages && preselectedPageId == nil {
+                        pagesList
+                    } else if focusMode == .loops && preselectedPageId == nil {
+                        loopSelector
+                    }
+
+                    // Full page content when a page is selected
+                    if let pageId = selectedPageId,
+                       let page = pages.first(where: { $0.id == pageId }) {
+                        pageFullContent(for: page)
+                    }
+
+                    // Change history (below page content)
+                    if selectedPageId != nil {
                         changeHistory
                     }
 
-                    // Mode picker after selection
-                    if hasSelection && interactionMode == nil {
-                        modePicker
-                    }
-
-                    // Chat messages (only after mode chosen)
-                    if interactionMode != nil && !messages.isEmpty {
-                        chatSection
-                    }
-
-                    if interactionMode != nil && isLoading {
-                        loadingIndicator
+                    // Loop content editor (only in loops mode)
+                    if focusMode == .loops, let handle = primaryHandle {
+                        loopContentEditor(for: handle)
                     }
                 }
-                .padding()
-                .frame(maxWidth: .infinity)
-            }
 
-            // Input bar pinned at bottom (only after mode chosen)
+                // Change history at the top of the terminal panel
+                if embedded && selectedPageId != nil {
+                    changeHistory
+                }
+
+                // Mode picker after selection
+                if hasSelection && interactionMode == nil {
+                    modePicker
+                }
+
+                // Chat messages (only after mode chosen)
+                if interactionMode != nil && !messages.isEmpty {
+                    chatSection
+                }
+
+                if interactionMode != nil && isLoading {
+                    loadingIndicator
+                }
+            }
+            .padding()
+            .frame(maxWidth: .infinity)
+        }
+        .background(Color.black)
+        // safeAreaInset (not VStack) so SwiftUI keyboard avoidance lifts the
+        // input above iOS 26's floating accessory toolbar.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             if interactionMode != nil {
                 inputBar
             }
         }
-        .background(Color.black)
     }
 
     var body: some View {

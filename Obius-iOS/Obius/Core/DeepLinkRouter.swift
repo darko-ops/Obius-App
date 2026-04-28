@@ -16,6 +16,12 @@ final class DeepLinkRouter: ObservableObject {
     /// - Returns: The extracted slug, or nil if the URL doesn't match
     @discardableResult
     func handleURL(_ url: URL) -> String? {
+        // Auth callback: obius://auth/callback?code=... (PKCE) or #access_token=... (implicit)
+        if url.scheme == "obius", url.host == "auth" {
+            Task { await AuthManager.shared.handleAuthCallback(url) }
+            return nil
+        }
+
         // Universal link: https://obius.io/s/{slug}
         if let host = url.host,
            (host == "obius.io" || host == "www.obius.io"),

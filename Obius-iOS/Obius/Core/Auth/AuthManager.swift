@@ -203,9 +203,26 @@ final class AuthManager: ObservableObject {
         defer { isLoading = false }
 
         do {
-            try await supabase.client.auth.resetPasswordForEmail(email)
+            try await supabase.client.auth.resetPasswordForEmail(
+                email,
+                redirectTo: SupabaseManager.authCallbackURL
+            )
         } catch {
             authError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Deep Link Callback
+
+    /// Called from `DeepLinkRouter` when an `obius://auth/callback` URL is received.
+    /// Exchanges the code/tokens in the URL for a session; `authStateChanges` then
+    /// flips `isAuthenticated`.
+    func handleAuthCallback(_ url: URL) async {
+        do {
+            _ = try await supabase.handleAuthCallback(url)
+        } catch {
+            authError = error.localizedDescription
+            print("[AuthManager] Auth callback failed: \(error)")
         }
     }
 

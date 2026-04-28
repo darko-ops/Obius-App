@@ -1509,10 +1509,6 @@ private struct NoteEditorContent: View {
 
             Divider()
 
-            intentPickerMenu
-
-            Divider()
-
             Button {
                 guard TierManager.shared.requireFeature(.commits) else { return }
                 pageCommitItem = PageCommitItem(noteId: noteId, pageTitle: titleText)
@@ -1540,7 +1536,7 @@ private struct NoteEditorContent: View {
                     searchFieldFocused = true
                 }
             } label: {
-                Label("Find in Page", systemImage: "doc.text.magnifyingglass")
+                Label("Search", systemImage: "doc.text.magnifyingglass")
             }
 
             Divider()
@@ -2504,7 +2500,7 @@ private struct NoteEditorContent: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
                     .font(.subheadline)
-                TextField("Find in page", text: $searchQuery)
+                TextField("Search", text: $searchQuery)
                     .textFieldStyle(.plain)
                     .font(.subheadline)
                     .focused($searchFieldFocused)
