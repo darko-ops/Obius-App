@@ -878,7 +878,11 @@ private struct NoteEditorContent: View {
 
         #if os(iOS)
         ToolbarItemGroup(placement: .keyboard) {
-            keyboardToolbarItems
+            // Suppress while the AI workspace sheet is up — its chat input
+            // doesn't need page-editor controls and they were overlapping it.
+            if !showingAIWorkspace && !showWorkspaceSheet {
+                keyboardToolbarItems
+            }
         }
         #endif
     }
