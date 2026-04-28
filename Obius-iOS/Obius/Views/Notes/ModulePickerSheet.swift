@@ -205,25 +205,3 @@ struct ModulePickerSheet: View {
         }
     }
 }
-
-// MARK: - Storage Type Badge
-
-struct StorageTypeBadge: View {
-    let storageType: ModuleStorageType
-
-    var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: storageType.icon)
-                .font(.system(size: 8, weight: .semibold))
-            Text(storageType.displayName)
-                .font(.system(size: 9, weight: .semibold))
-        }
-        .foregroundStyle(storageType == .cloud ? Color.blue : Color.gray)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(
-            Capsule()
-                .fill(storageType == .cloud ? Color.blue.opacity(0.15) : Color.gray.opacity(0.15))
-        )
-    }
-}
