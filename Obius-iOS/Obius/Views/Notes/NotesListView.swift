@@ -326,12 +326,6 @@ private struct NotesListContent: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         #if os(iOS)
-        ToolbarItem(placement: .cancellationAction) {
-            if let module = selectedModule {
-                StorageTypeBadge(storageType: module.storageType)
-            }
-        }
-
         ToolbarItem(placement: .principal) {
             Button {
                 showingModulePicker = true
