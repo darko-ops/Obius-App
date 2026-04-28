@@ -1182,6 +1182,88 @@ struct BodyTextEditor: UIViewRepresentable {
         }
     }
 }
+
+// MARK: - Workspace Chat Input (UITextView-based)
+
+/// No inputAccessoryView: SwiftUI's keyboard avoidance lifts the safeAreaInset
+/// inputBar directly to the top of the keyboard, putting it right above the
+/// predictive strip. Deliberately omits @FocusState.Binding — setting
+/// @FocusState from UIKit when no .focused() target exists on iOS caused
+/// SwiftUI to resign the UITextView mid-typing.
+struct WorkspaceChatTextView: UIViewRepresentable {
+    @Binding var text: String
+    var placeholder: String
+    var minHeight: CGFloat = 40
+    var maxHeight: CGFloat = 120
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> UITextView {
+        let tv = UITextView()
+        tv.delegate = context.coordinator
+        tv.font = .preferredFont(forTextStyle: .body)
+        tv.textColor = .label
+        tv.backgroundColor = .clear
+        tv.isScrollEnabled = false
+        tv.textContainerInset = UIEdgeInsets(top: 10, left: 14, bottom: 10, right: 14)
+        tv.textContainer.lineFragmentPadding = 0
+        tv.text = text
+        tv.setContentHuggingPriority(.required, for: .vertical)
+        tv.setContentCompressionResistancePriority(.required, for: .vertical)
+
+        let placeholderLabel = UILabel()
+        placeholderLabel.text = placeholder
+        placeholderLabel.textColor = .placeholderText
+        placeholderLabel.font = .preferredFont(forTextStyle: .body)
+        placeholderLabel.numberOfLines = 0
+        placeholderLabel.isHidden = !text.isEmpty
+        placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
+        tv.addSubview(placeholderLabel)
+        NSLayoutConstraint.activate([
+            placeholderLabel.leadingAnchor.constraint(equalTo: tv.leadingAnchor, constant: 14),
+            placeholderLabel.topAnchor.constraint(equalTo: tv.topAnchor, constant: 10),
+            placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: tv.trailingAnchor, constant: -14),
+        ])
+        context.coordinator.placeholderLabel = placeholderLabel
+
+        return tv
+    }
+
+    func updateUIView(_ tv: UITextView, context: Context) {
+        if tv.text != text {
+            tv.text = text
+            context.coordinator.placeholderLabel?.isHidden = !text.isEmpty
+            tv.invalidateIntrinsicContentSize()
+        }
+    }
+
+    /// Tells SwiftUI the chat field's preferred height for a given proposed
+    /// width: the content's natural height clamped to [minHeight, maxHeight].
+    /// Without this, SwiftUI lets the UITextView fill the screen.
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        let width = proposal.width ?? UIScreen.main.bounds.width
+        let measured = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        let exceeded = measured.height > maxHeight
+        if uiView.isScrollEnabled != exceeded {
+            uiView.isScrollEnabled = exceeded
+        }
+        let h = min(max(measured.height, minHeight), maxHeight)
+        return CGSize(width: width, height: h)
+    }
+
+    class Coordinator: NSObject, UITextViewDelegate {
+        var parent: WorkspaceChatTextView
+        weak var placeholderLabel: UILabel?
+
+        init(_ parent: WorkspaceChatTextView) { self.parent = parent }
+
+        func textViewDidChange(_ textView: UITextView) {
+            parent.text = textView.text
+            placeholderLabel?.isHidden = !textView.text.isEmpty
+            textView.invalidateIntrinsicContentSize()
+        }
+    }
+}
 #else
 /// macOS body text editor — wraps the rich-text `EditableTextView` so AI-
 /// generated headings / bold / italic are visible and editable inside the
@@ -1489,6 +1571,9 @@ struct WorkspaceSheet: View {
             .padding()
             .frame(maxWidth: .infinity)
         }
+        #if os(iOS)
+        .scrollDismissesKeyboard(.interactively)
+        #endif
         .background(Color.black)
         // safeAreaInset (not VStack) so SwiftUI keyboard avoidance lifts the
         // input above iOS 26's floating accessory toolbar.
@@ -2636,6 +2721,16 @@ struct WorkspaceSheet: View {
 
     private var inputBar: some View {
         HStack(spacing: 10) {
+            #if os(iOS)
+            WorkspaceChatTextView(
+                text: $inputText,
+                placeholder: inputPlaceholder
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+            )
+            #else
             TextField(
                 "",
                 text: $inputText,
@@ -2661,7 +2756,6 @@ struct WorkspaceSheet: View {
             .onSubmit {
                 sendMessage()
             }
-            #if os(macOS)
             .background {
                 WorkspaceInputKeyHandler(inputText: $inputText)
             }
