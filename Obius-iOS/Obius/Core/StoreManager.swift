@@ -51,6 +51,25 @@ final class StoreManager: ObservableObject {
         do {
             let offerings = try await Purchases.shared.offerings()
             currentOffering = offerings.current
+
+            #if DEBUG
+            let allOfferingIds = offerings.all.keys.joined(separator: ", ")
+            print("[StoreManager] RC offerings loaded — all: [\(allOfferingIds)], current: \(offerings.current?.identifier ?? "nil")")
+            if let current = offerings.current {
+                let pkgSummary = current.availablePackages.map { pkg in
+                    "\(pkg.identifier) → \(pkg.storeProduct.productIdentifier) (\(pkg.storeProduct.localizedPriceString))"
+                }
+                if pkgSummary.isEmpty {
+                    print("[StoreManager] Current offering has 0 packages")
+                } else {
+                    print("[StoreManager] Current offering packages:\n  - \(pkgSummary.joined(separator: "\n  - "))")
+                }
+            } else if offerings.all.isEmpty {
+                print("[StoreManager] No offerings configured in RevenueCat for this project/key")
+            } else {
+                print("[StoreManager] Offerings exist but none is marked Current — set one in RevenueCat dashboard")
+            }
+            #endif
         } catch {
             print("[StoreManager] Failed to load offerings: \(error)")
         }

@@ -48,7 +48,7 @@ Both Debug.xcconfig and Release.xcconfig should include:
 | `OBIUS_API_BASE_URL` | dev.obius.app | api.obius.app |
 | `OBIUS_LOG_LEVEL` | debug | error |
 | `OBIUS_ENABLE_ANALYTICS` | NO | YES |
-| `PRODUCT_BUNDLE_IDENTIFIER` | app.obius.ios.debug | app.obius.ios |
+| `PRODUCT_BUNDLE_IDENTIFIER` | app.obius.ios | app.obius.ios |
 
 ## Accessing Configuration in Code
 
