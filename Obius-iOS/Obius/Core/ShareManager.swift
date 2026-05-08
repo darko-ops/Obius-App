@@ -48,11 +48,19 @@ final class ShareManager: ObservableObject {
 
     private init() {}
 
-    /// Initialize with repositories — call once during app startup
+    /// Initialize with repositories — call once during app startup.
+    /// Safe to re-call on account switch.
     func initialize(shareLinkRepository: ShareLinkRepository, commentRepository: CommentRepository) {
         self.shareLinkRepository = shareLinkRepository
         self.commentRepository = commentRepository
         self.isLoaded = true
+    }
+
+    /// Drop per-user state. Called on sign-out / account switch before re-initialize.
+    func reset() {
+        shareLinkRepository = nil
+        commentRepository = nil
+        isLoaded = false
     }
 
     // MARK: - Create Live Share

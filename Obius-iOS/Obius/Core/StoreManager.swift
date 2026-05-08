@@ -8,6 +8,18 @@ final class StoreManager: ObservableObject {
     // MARK: - Constants
 
     static let entitlementID = "Obius Pro"
+    /// Separately-sold add-on that grants an extra 1,000 Credits/month on top of Pro.
+    /// Configure in RevenueCat as a non-blocking entitlement on a $9.99/mo product
+    /// (suggested product ID prefix: `obius_power_addon`).
+    static let powerAddonEntitlementID = "Obius Power"
+
+    // MARK: - Product Identifiers
+    //
+    // App Store product IDs we ship. Exact-match detection takes precedence over
+    // the substring-based fallback in `syncTier(from:)`, so a future product
+    // named e.g. `pro_monthly_promo` doesn't get mis-bucketed.
+    static let monthlyProductID = "pro_monthly"
+    static let foundersProductID = "pro_founder"
 
     // MARK: - State
 
@@ -17,6 +29,10 @@ final class StoreManager: ObservableObject {
 
     var hasProEntitlement: Bool {
         customerInfo?.entitlements[Self.entitlementID]?.isActive == true
+    }
+
+    var hasPowerAddonEntitlement: Bool {
+        customerInfo?.entitlements[Self.powerAddonEntitlementID]?.isActive == true
     }
 
     private init() {}
@@ -52,6 +68,18 @@ final class StoreManager: ObservableObject {
 
     var lifetimePackage: Package? {
         currentOffering?.lifetime
+    }
+
+    /// The Power Add-on package — looked up by custom identifier on the active
+    /// offering. Set the package identifier to `power_addon` (or include the
+    /// substring "power") in RevenueCat.
+    var powerAddonPackage: Package? {
+        guard let offering = currentOffering else { return nil }
+        return offering.availablePackages.first { pkg in
+            let id = pkg.identifier.lowercased()
+            let prod = pkg.storeProduct.productIdentifier.lowercased()
+            return id.contains("power") || prod.contains("power_addon") || prod.contains("power-addon")
+        }
     }
 
     // MARK: - Purchase
@@ -137,6 +165,10 @@ final class StoreManager: ObservableObject {
         print("[StoreManager] Entitlements: \(allEntitlements.isEmpty ? "(none)" : allEntitlements.joined(separator: ", "))")
         #endif
 
+        // Power Add-on is independent of Pro/Founders — sync it regardless.
+        let powerActive = info.entitlements[Self.powerAddonEntitlementID]?.isActive == true
+        TierManager.shared.updatePowerAddon(powerActive)
+
         guard let entitlement = info.entitlements[Self.entitlementID],
               entitlement.isActive else {
             // Don't downgrade if Supabase already confirmed a paid tier
@@ -145,26 +177,44 @@ final class StoreManager: ObservableObject {
                TierManager.shared.serverConfirmedTier == nil {
                 TierManager.shared.updateTier(.free)
             }
+            // Push add-on state in case it changed independently
+            Task { await Self.syncAddonToServer(active: powerActive) }
             return
         }
 
-        // Detect Founders plan — matches the rc_lifetime package
+        // Detect Founders plan — exact-match our shipped ID first, then fall
+        // back to substring detection for legacy / sandbox / lifetime SKUs.
         let productId = entitlement.productIdentifier.lowercased()
         let tier: Tier
-        if productId.contains("founding") || productId.contains("founder") || productId.contains("lifetime") {
+        var period: ProPeriod? = nil
+        if productId == Self.foundersProductID
+            || productId.contains("founding")
+            || productId.contains("founder")
+            || productId.contains("lifetime") {
             TierManager.shared.isFoundingMember = true
             UserDefaults.standard.set(true, forKey: "obius_is_founding_member")
             tier = .founding
         } else {
             tier = .pro
+            // Exact-match our shipped product IDs first, then fall back to
+            // substring detection for legacy / sandbox / future test SKUs.
+            if productId == Self.monthlyProductID {
+                period = .monthly
+            } else if productId.contains("annual") || productId.contains("yearly") || productId.contains("year") {
+                period = .annual
+            } else {
+                period = .monthly
+            }
         }
-        TierManager.shared.updateTier(tier)
+        TierManager.shared.updateTier(tier, period: period)
 
         // Write confirmed tier to Supabase so other devices (macOS) can read it
         // even if the RevenueCat webhook hasn't fired
         Task {
             await Self.syncTierToServer(
                 tier: tier,
+                period: period,
+                hasPowerAddon: powerActive,
                 productId: entitlement.productIdentifier,
                 expiresAt: entitlement.expirationDate
             )
@@ -173,7 +223,13 @@ final class StoreManager: ObservableObject {
 
     /// Push the locally-confirmed tier to Supabase user_profiles.
     /// Acts as a client-side fallback for the RevenueCat webhook.
-    private static func syncTierToServer(tier: Tier, productId: String, expiresAt: Date?) async {
+    private static func syncTierToServer(
+        tier: Tier,
+        period: ProPeriod?,
+        hasPowerAddon: Bool,
+        productId: String,
+        expiresAt: Date?
+    ) async {
         guard SupabaseManager.shared.isAuthenticated,
               let userId = SupabaseManager.shared.currentUser?.id.uuidString.lowercased() else {
             return
@@ -193,15 +249,42 @@ final class StoreManager: ObservableObject {
             update["is_founding_member"] = "true"
         }
 
+        if let period, tier == .pro {
+            update["subscription_period"] = period.rawValue
+        }
+
+        update["has_power_addon"] = hasPowerAddon ? "true" : "false"
+
         do {
             try await SupabaseManager.shared.client
                 .from("user_profiles")
                 .update(update)
                 .eq("id", value: userId)
                 .execute()
-            print("[StoreManager] Synced tier '\(tier.rawValue)' to server for \(userId)")
+            print("[StoreManager] Synced tier '\(tier.rawValue)' (period=\(period?.rawValue ?? "n/a"), power=\(hasPowerAddon)) to server for \(userId)")
         } catch {
             print("[StoreManager] Failed to sync tier to server: \(error)")
+        }
+    }
+
+    /// Push only the Power Add-on state (used when the user is on Free/grandfathered
+    /// and toggles the add-on without changing their main entitlement).
+    private static func syncAddonToServer(active: Bool) async {
+        guard SupabaseManager.shared.isAuthenticated,
+              let userId = SupabaseManager.shared.currentUser?.id.uuidString.lowercased() else {
+            return
+        }
+        do {
+            try await SupabaseManager.shared.client
+                .from("user_profiles")
+                .update([
+                    "has_power_addon": active ? "true" : "false",
+                    "updated_at": ISO8601DateFormatter().string(from: Date()),
+                ])
+                .eq("id", value: userId)
+                .execute()
+        } catch {
+            print("[StoreManager] Failed to sync add-on state: \(error)")
         }
     }
 }

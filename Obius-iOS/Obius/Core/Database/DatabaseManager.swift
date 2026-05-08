@@ -7,11 +7,32 @@ final class DatabaseManager {
 
     static let schemaVersion = 39
 
-    /// The App Group container path for the shared database
-    static var appGroupDatabaseURL: URL? {
+    /// The user this database is scoped to. `nil` means anonymous (signed-out).
+    let userId: String?
+
+    /// Filename for the per-user SQLite file. Anonymous users get a dedicated `_anon` file
+    /// so account A's local data can never appear in account B.
+    static func databaseFilename(forUserId userId: String?) -> String {
+        if let userId, !userId.isEmpty {
+            return "obius_\(userId.lowercased()).sqlite"
+        }
+        return "obius_anon.sqlite"
+    }
+
+    /// The App Group container directory used to host all per-user database files.
+    static var appGroupContainerURL: URL? {
         FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: "group.app.obius.shared")?
-            .appendingPathComponent("obius.sqlite")
+            .containerURL(forSecurityApplicationGroupIdentifier: "group.app.obius.shared")
+    }
+
+    /// Returns the App Group URL for the database scoped to the given user (or anon).
+    static func appGroupDatabaseURL(forUserId userId: String?) -> URL? {
+        appGroupContainerURL?.appendingPathComponent(databaseFilename(forUserId: userId))
+    }
+
+    /// Legacy shared path (pre-multi-account). Kept so the migration helper can find it.
+    static var legacyAppGroupDatabaseURL: URL? {
+        appGroupContainerURL?.appendingPathComponent("obius.sqlite")
     }
 
     // Expose dbQueue for repositories that need direct observation
@@ -22,16 +43,19 @@ final class DatabaseManager {
     let isReadOnly: Bool
 
     /// - Parameters:
+    ///   - userId: The signed-in user's id, or `nil` for anonymous. Selects the on-disk
+    ///     SQLite file so each account has its own isolated local data.
     ///   - inMemory: Use an in-memory database (for testing)
     ///   - readOnly: Open the database in read-only mode (for extensions). Skips migrations.
-    init(inMemory: Bool = false, readOnly: Bool = false) throws {
+    init(userId: String? = nil, inMemory: Bool = false, readOnly: Bool = false) throws {
+        self.userId = userId
         self.isReadOnly = readOnly
 
         if inMemory {
             _dbQueue = try DatabaseQueue()
         } else {
             let dbURL: URL
-            if let appGroupURL = Self.appGroupDatabaseURL {
+            if let appGroupURL = Self.appGroupDatabaseURL(forUserId: userId) {
                 // Ensure the directory exists
                 let dir = appGroupURL.deletingLastPathComponent()
                 try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -47,7 +71,7 @@ final class DatabaseManager {
                     appropriateFor: nil,
                     create: true
                 )
-                dbURL = appSupport.appendingPathComponent("obius.sqlite")
+                dbURL = appSupport.appendingPathComponent(Self.databaseFilename(forUserId: userId))
                 #if DEBUG
                 print("[DatabaseManager] ⚠️ App group unavailable — using fallback: \(dbURL.path)")
                 #endif
@@ -1061,12 +1085,13 @@ final class DatabaseManager {
 
     /// Move the corrupted database aside and return true if recovery was performed.
     /// The caller should retry initialization after this returns true.
-    static func recoverFromCorruption() -> Bool {
-        guard let dbURL = appGroupDatabaseURL else { return false }
+    static func recoverFromCorruption(forUserId userId: String? = nil) -> Bool {
+        guard let dbURL = appGroupDatabaseURL(forUserId: userId) else { return false }
         let fm = FileManager.default
         guard fm.fileExists(atPath: dbURL.path) else { return false }
 
-        let backupName = "obius_corrupt_\(Int(Date().timeIntervalSince1970)).sqlite"
+        let scope = userId?.lowercased() ?? "anon"
+        let backupName = "obius_\(scope)_corrupt_\(Int(Date().timeIntervalSince1970)).sqlite"
         let backupURL = dbURL.deletingLastPathComponent().appendingPathComponent(backupName)
 
         do {

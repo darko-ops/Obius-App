@@ -10,6 +10,9 @@ struct SettingsView: View {
     @State private var showingAuth = false
     @State private var showingEditProfile = false
     @State private var showingChangePassword = false
+    @State private var showingDeleteAccount = false
+    @State private var isDeletingAccount = false
+    @State private var deleteAccountError: String?
     @State private var settingsPath: [SettingsDestination] = []
 
     enum SettingsDestination: Hashable {
@@ -58,6 +61,13 @@ struct SettingsView: View {
                     } label: {
                         Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
                     }
+
+                    Button(role: .destructive) {
+                        showingDeleteAccount = true
+                    } label: {
+                        Label("Delete Account", systemImage: "trash")
+                    }
+                    .disabled(isDeletingAccount)
                 } else {
                     Button {
                         showingAuth = true
@@ -161,6 +171,35 @@ struct SettingsView: View {
         } message: {
             Text("Your local notes will remain on this device. You can sign in again to sync.")
         }
+        .alert("Delete Account", isPresented: $showingDeleteAccount) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete Forever", role: .destructive) {
+                Task { await performDeleteAccount() }
+            }
+        } message: {
+            Text("This will permanently delete your account and all of your data, including notes, versions, handles, echoes, and media — on this device and in the cloud. This cannot be undone.")
+        }
+        .alert(
+            "Couldn't Delete Account",
+            isPresented: Binding(
+                get: { deleteAccountError != nil },
+                set: { if !$0 { deleteAccountError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { deleteAccountError = nil }
+        } message: {
+            Text(deleteAccountError ?? "")
+        }
+        .overlay {
+            if isDeletingAccount {
+                ZStack {
+                    Color.black.opacity(0.4).ignoresSafeArea()
+                    ProgressView("Deleting account…")
+                        .padding(20)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
+        }
         .sheet(isPresented: $showingAuth) {
             AuthView()
         }
@@ -172,6 +211,25 @@ struct SettingsView: View {
             ChangePasswordView()
                 .environmentObject(authManager)
         }
+    }
+
+    @MainActor
+    private func performDeleteAccount() async {
+        isDeletingAccount = true
+        defer { isDeletingAccount = false }
+
+        do {
+            try await authManager.deleteAccount()
+        } catch {
+            deleteAccountError = "We couldn't delete your account: \(error.localizedDescription). Your account is still active. Please try again, or contact support."
+            return
+        }
+
+        // Server-side delete succeeded — wipe local state. Failures here are not
+        // fatal (the cloud account is gone); we still sign out and dismiss.
+        try? await appState.deleteAllLocalData()
+        await authManager.signOut()
+        dismiss()
     }
 }
 

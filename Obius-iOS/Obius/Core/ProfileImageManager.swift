@@ -16,7 +16,8 @@ final class ProfileImageManager: ObservableObject {
     static let shared = ProfileImageManager()
 
     private let fileManager = FileManager.default
-    private let profileDirectory: URL
+    private var profileDirectory: URL
+    private(set) var userId: String?
     private let supabase = SupabaseManager.shared
     private let storageBucket = "profile-images"
 
@@ -24,10 +25,73 @@ final class ProfileImageManager: ObservableObject {
     @Published var bannerImage: PlatformImage?
 
     private init() {
-        let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        profileDirectory = documents.appendingPathComponent("profile", isDirectory: true)
+        let userId: String? = nil
+        self.userId = userId
+        self.profileDirectory = Self.directory(forUserId: userId)
         try? fileManager.createDirectory(at: profileDirectory, withIntermediateDirectories: true)
         loadLocalImages()
+    }
+
+    /// Returns the per-user profile-image directory. Anonymous users get a
+    /// dedicated `users/anon` scope so account A's avatar/banner never leak
+    /// into account B.
+    private static func directory(forUserId userId: String?) -> URL {
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let scope = (userId?.isEmpty == false ? userId!.lowercased() : "anon")
+        return documents
+            .appendingPathComponent("users", isDirectory: true)
+            .appendingPathComponent(scope, isDirectory: true)
+            .appendingPathComponent("profile", isDirectory: true)
+    }
+
+    /// Re-point storage at a different user. Clears in-memory images first so
+    /// the previous user's avatar/banner don't briefly remain visible while
+    /// the new user's local files load.
+    func switchUser(_ userId: String?) {
+        guard userId != self.userId else { return }
+        self.userId = userId
+        self.profileDirectory = Self.directory(forUserId: userId)
+        try? fileManager.createDirectory(at: profileDirectory, withIntermediateDirectories: true)
+        profileImage = nil
+        bannerImage = nil
+        loadLocalImages()
+    }
+
+    /// One-time migration of the legacy single-tenant `Documents/profile/`
+    /// into the booting user's scope. Safe to call repeatedly.
+    static func migrateLegacyDirectoryIfNeeded(currentUserId: String?) {
+        let fm = FileManager.default
+        let documents = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let legacy = documents.appendingPathComponent("profile", isDirectory: true)
+        guard fm.fileExists(atPath: legacy.path) else { return }
+
+        let destination = directory(forUserId: currentUserId)
+        try? fm.createDirectory(at: destination.deletingLastPathComponent(),
+                                withIntermediateDirectories: true)
+
+        if !fm.fileExists(atPath: destination.path) {
+            do {
+                try fm.moveItem(at: legacy, to: destination)
+                print("[ProfileImages] Migrated legacy profile/ → \(destination.path)")
+                return
+            } catch {
+                print("[ProfileImages] Legacy move failed: \(error)")
+            }
+        }
+
+        // Destination already exists — merge contents.
+        if let contents = try? fm.contentsOfDirectory(atPath: legacy.path) {
+            for item in contents {
+                let src = legacy.appendingPathComponent(item)
+                let dst = destination.appendingPathComponent(item)
+                if !fm.fileExists(atPath: dst.path) {
+                    try? fm.moveItem(at: src, to: dst)
+                }
+            }
+            if let remaining = try? fm.contentsOfDirectory(atPath: legacy.path), remaining.isEmpty {
+                try? fm.removeItem(at: legacy)
+            }
+        }
     }
 
     // MARK: - File Paths

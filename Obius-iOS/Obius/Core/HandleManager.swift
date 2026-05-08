@@ -19,9 +19,10 @@ final class HandleManager: ObservableObject {
 
     private init() {}
 
-    /// Initialize the HandleManager with a repository
-    /// This should be called once during app startup
+    /// Initialize the HandleManager with a repository.
+    /// Safe to call again on user switch — existing subscriptions are torn down first.
     func initialize(handleRepository: HandleRepository) {
+        reset()
         self.handleRepository = handleRepository
 
         // Observe all handles and update caches
@@ -35,6 +36,16 @@ final class HandleManager: ObservableObject {
                 self?.updateHandles(handles)
             }
             .store(in: &cancellables)
+    }
+
+    /// Drop all per-user state. Called on sign-out / account switch before re-initialize.
+    func reset() {
+        cancellables.removeAll()
+        handleRepository = nil
+        handles = []
+        handlesByName = [:]
+        handlesById = [:]
+        isLoaded = false
     }
 
     private func updateHandles(_ newHandles: [Handle]) {

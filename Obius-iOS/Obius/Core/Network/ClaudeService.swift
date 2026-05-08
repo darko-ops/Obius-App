@@ -73,7 +73,7 @@ enum ClaudeService {
     private static func checkAIGate() async throws {
         let allowed = await MainActor.run { TierManager.shared.requireAI() }
         guard allowed else {
-            throw ClaudeError.proxyError("AI token limit reached. Upgrade for more.")
+            throw ClaudeError.proxyError("AI Credit limit reached. Upgrade — or add the Power Pack — for more.")
         }
     }
 
@@ -89,8 +89,8 @@ enum ClaudeService {
         // Local estimate if we couldn't parse; server tracks exact count
         if tokens == 0 { tokens = 500 }
         await MainActor.run { TierManager.shared.recordTokenUsage(tokens) }
-        // Sync real count from server in the background
-        Task { await MainActor.run { Task { await TierManager.shared.syncTokenUsage() } } }
+        // Reconcile authoritative monthly usage from the server in the background
+        Task { await MainActor.run { Task { await TierManager.shared.syncCreditUsage() } } }
     }
 
     // MARK: - Send With Tools

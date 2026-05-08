@@ -57,6 +57,9 @@ interface RCWebhookPayload {
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const ENTITLEMENT_ID = 'Obius Pro';
+/// Power Add-on entitlement: independent +1,000 Credits/month at $9.99/mo.
+/// Configure as a separate entitlement in RevenueCat with its own product.
+const POWER_ADDON_ENTITLEMENT_ID = 'Obius Power';
 const REVENUECAT_API_KEY = Deno.env.get('REVENUECAT_API_KEY')!;
 const WEBHOOK_SECRET = Deno.env.get('REVENUECAT_WEBHOOK_SECRET');
 
@@ -114,9 +117,13 @@ serve(async (req: Request) => {
     return jsonResponse({ ok: true, message: 'Test event received' });
   }
 
-  // Only process events that affect the "Obius Pro" entitlement
-  const affectsEntitlement =
-    !event.entitlement_ids || event.entitlement_ids.length === 0 || event.entitlement_ids.includes(ENTITLEMENT_ID);
+  // Process events that affect the main "Obius Pro" entitlement OR the
+  // independently-sold "Obius Power" add-on entitlement.
+  const ids = event.entitlement_ids ?? [];
+  const noEntitlementsListed = ids.length === 0;
+  const affectsPro = noEntitlementsListed || ids.includes(ENTITLEMENT_ID);
+  const affectsPower = ids.includes(POWER_ADDON_ENTITLEMENT_ID);
+  const affectsEntitlement = affectsPro || affectsPower;
 
   if (!affectsEntitlement) {
     return jsonResponse({ ok: true, message: 'Ignored — unrelated entitlement' });
@@ -173,22 +180,33 @@ serve(async (req: Request) => {
 // ── Process event ───────────────────────────────────────────────────────────
 
 async function processEvent(supabase: any, userId: string, event: RCEvent): Promise<Response> {
+  const isPowerAddonEvent = isAddonEvent(event);
+
+  // Power Add-on lifecycle is independent of the main Pro entitlement.
+  if (isPowerAddonEvent) {
+    return await processPowerAddonEvent(supabase, userId, event);
+  }
+
   if (GRANT_EVENTS.includes(event.type)) {
     const tier = determineTier(event.product_id);
+    const period = determinePeriod(event.product_id, tier);
     const expiresAt = event.expiration_at_ms
       ? new Date(event.expiration_at_ms).toISOString()
       : null;
 
+    const update: Record<string, unknown> = {
+      rc_app_user_id: event.app_user_id,
+      subscription_tier: tier,
+      subscription_period: period,
+      subscription_product_id: event.product_id ?? null,
+      subscription_expires_at: expiresAt,
+      subscription_store: event.store ?? null,
+      updated_at: new Date().toISOString(),
+    };
+
     const { error } = await supabase
       .from('user_profiles')
-      .update({
-        rc_app_user_id: event.app_user_id,
-        subscription_tier: tier,
-        subscription_product_id: event.product_id ?? null,
-        subscription_expires_at: expiresAt,
-        subscription_store: event.store ?? null,
-        updated_at: new Date().toISOString(),
-      })
+      .update(update)
       .eq('id', userId);
 
     if (error) {
@@ -207,12 +225,12 @@ async function processEvent(supabase: any, userId: string, event: RCEvent): Prom
         product_id: event.product_id,
         tier_before: 'free',
         tier_after: tier,
-        metadata: { store: event.store, environment: event.environment },
+        metadata: { store: event.store, environment: event.environment, period },
       }).then(() => {}, () => {}); // fire-and-forget
     }
 
-    console.log(`[RC Webhook] Granted ${tier} to ${userId} (expires ${expiresAt ?? 'never'})`);
-    return jsonResponse({ ok: true, tier });
+    console.log(`[RC Webhook] Granted ${tier} (period=${period ?? 'n/a'}) to ${userId} (expires ${expiresAt ?? 'never'})`);
+    return jsonResponse({ ok: true, tier, period });
   }
 
   if (REVOKE_EVENTS.includes(event.type)) {
@@ -229,6 +247,7 @@ async function processEvent(supabase: any, userId: string, event: RCEvent): Prom
       .from('user_profiles')
       .update({
         subscription_tier: newTier,
+        subscription_period: null,
         subscription_product_id: null,
         subscription_expires_at: null,
         subscription_store: null,
@@ -266,11 +285,13 @@ async function processEvent(supabase: any, userId: string, event: RCEvent): Prom
 
   if (event.type === 'PRODUCT_CHANGE') {
     const newTier = determineTier(event.new_product_id);
+    const newPeriod = determinePeriod(event.new_product_id, newTier);
 
     const { error } = await supabase
       .from('user_profiles')
       .update({
         subscription_tier: newTier,
+        subscription_period: newPeriod,
         subscription_product_id: event.new_product_id ?? null,
         updated_at: new Date().toISOString(),
       })
@@ -281,8 +302,8 @@ async function processEvent(supabase: any, userId: string, event: RCEvent): Prom
       return errorResponse('db_error', error.message, 500);
     }
 
-    console.log(`[RC Webhook] Product change → ${newTier} for ${userId}`);
-    return jsonResponse({ ok: true, tier: newTier });
+    console.log(`[RC Webhook] Product change → ${newTier} (period=${newPeriod ?? 'n/a'}) for ${userId}`);
+    return jsonResponse({ ok: true, tier: newTier, period: newPeriod });
   }
 
   // SUBSCRIPTION_PAUSED, TRANSFER, etc. — acknowledge without action
@@ -290,15 +311,60 @@ async function processEvent(supabase: any, userId: string, event: RCEvent): Prom
   return jsonResponse({ ok: true, message: `${event.type} acknowledged` });
 }
 
+// ── Power Add-on ─────────────────────────────────────────────────────────────
+
+function isAddonEvent(event: RCEvent): boolean {
+  // Trust the entitlement_ids list when present; fall back to product ID heuristics.
+  if (event.entitlement_ids?.includes(POWER_ADDON_ENTITLEMENT_ID)) return true;
+  const id = (event.product_id ?? '').toLowerCase();
+  return id.includes('power_addon') || id.includes('power-addon');
+}
+
+async function processPowerAddonEvent(supabase: any, userId: string, event: RCEvent): Promise<Response> {
+  const grant = GRANT_EVENTS.includes(event.type);
+  const revoke = REVOKE_EVENTS.includes(event.type);
+
+  if (!grant && !revoke) {
+    console.log(`[RC Webhook] Power add-on: no action for ${event.type}`);
+    return jsonResponse({ ok: true, message: `${event.type} acknowledged (add-on)` });
+  }
+
+  const { error } = await supabase
+    .from('user_profiles')
+    .update({
+      has_power_addon: grant,
+      rc_app_user_id: event.app_user_id,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', userId);
+
+  if (error) {
+    console.error(`[RC Webhook] Failed to ${grant ? 'grant' : 'revoke'} add-on: ${error.message}`);
+    return errorResponse('db_error', error.message, 500);
+  }
+
+  console.log(`[RC Webhook] Power add-on ${grant ? 'granted' : 'revoked'} for ${userId}`);
+  return jsonResponse({ ok: true, has_power_addon: grant });
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function determineTier(productId: string | undefined): string {
   if (!productId) return 'pro';
+  const id = productId.toLowerCase();
 
-  // Lifetime purchases get pro
-  if (productId.includes('lifetime')) return 'pro';
-  // Founding member products
-  if (productId.includes('founding')) return 'founding';
+  // Founding member products (priced-locked)
+  if (id.includes('founding') || id.includes('founder')) return 'founding';
+  // Lifetime → treat as pro for backwards compat
+  if (id.includes('lifetime')) return 'pro';
   // Everything else is pro
   return 'pro';
+}
+
+function determinePeriod(productId: string | undefined, tier: string): 'monthly' | 'annual' | null {
+  if (tier !== 'pro' || !productId) return null;
+  const id = productId.toLowerCase();
+  if (id.includes('annual') || id.includes('yearly') || id.includes('year')) return 'annual';
+  if (id.includes('monthly') || id.includes('month')) return 'monthly';
+  return 'monthly'; // default Pro to monthly when unclear
 }

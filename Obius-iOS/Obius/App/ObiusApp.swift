@@ -41,7 +41,6 @@ struct ObiusApp: App {
                 .environmentObject(tierManager)
                 .preferredColorScheme(appearanceManager.currentMode.colorScheme)
                 .task {
-                    await TierManager.shared.initialize()
                     await StoreManager.shared.initialize()
                     await appState.initialize()
                 }
@@ -132,119 +131,317 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
 
 @MainActor
 class AppState: ObservableObject {
-    let database: DatabaseManager
-    let noteRepository: NoteRepository
-    let sectionRepository: SectionRepository
-    let handleRepository: HandleRepository  // Handle Loop support
-    let echoRepository: EchoRepository      // Echo alert/reminder support
-    let shareLinkRepository: ShareLinkRepository  // Share link support
-    let commentRepository: CommentRepository      // Share comments support
-    let moduleRepository: ModuleRepository        // Module (folder) support
-    let syncEngine: SyncEngine
-    let syncLogger: SyncOperationLogger
+    @Published private(set) var database: DatabaseManager
+    @Published private(set) var noteRepository: NoteRepository
+    @Published private(set) var sectionRepository: SectionRepository
+    @Published private(set) var handleRepository: HandleRepository  // Handle Loop support
+    @Published private(set) var echoRepository: EchoRepository      // Echo alert/reminder support
+    @Published private(set) var shareLinkRepository: ShareLinkRepository  // Share link support
+    @Published private(set) var commentRepository: CommentRepository      // Share comments support
+    @Published private(set) var moduleRepository: ModuleRepository        // Module (folder) support
+    @Published private(set) var syncEngine: SyncEngine
+    @Published private(set) var syncLogger: SyncOperationLogger
 
     // Split-Storage Engine components
-    let coldStore: ColdStore
-    let commitRepository: CommitRepository
-    let mediaRepository: MediaRepository
-    let commitModule: CommitModule
-    let autoCommitManager: AutoCommitManager
-    let insightRepository: InsightRepository
-    let calendarMemoRepository: CalendarMemoRepository
-    let noteIndexRepository: NoteIndexRepository
-    let contextAssembler: ContextAssembler
+    let coldStore: ColdStore  // singleton, retargeted via switchUser
+    @Published private(set) var commitRepository: CommitRepository
+    @Published private(set) var mediaRepository: MediaRepository
+    @Published private(set) var commitModule: CommitModule
+    @Published private(set) var autoCommitManager: AutoCommitManager
+    @Published private(set) var insightRepository: InsightRepository
+    @Published private(set) var calendarMemoRepository: CalendarMemoRepository
+    @Published private(set) var noteIndexRepository: NoteIndexRepository
+    @Published private(set) var contextAssembler: ContextAssembler
+
+    /// Identifier of the user the local database is currently scoped to. `nil` = anon.
+    @Published private(set) var currentUserId: String?
 
     @Published var isInitialized = false
     /// Set to true if the database had to be recreated from scratch due to corruption.
     /// The UI can check this to inform the user that local data was reset.
     @Published var didRecoverFromCorruption = false
 
+    private var authObservationTask: Task<Void, Never>?
+    private var isSwitching = false
+    private var pendingSwitchTarget: String?? = nil
+
     init() {
+        // Read the synchronous Supabase session so cold launch opens the right
+        // per-user file immediately, with no anon→user flash.
+        let bootUserId = SupabaseManager.shared.currentSession?.user.id.uuidString.lowercased()
+
+        // Migrate database from legacy path / shared file to per-user file (one-time)
+        DatabaseMigrationHelper.migrateIfNeeded(currentUserId: bootUserId)
+        ColdStore.migrateLegacyDirectoriesIfNeeded(currentUserId: bootUserId)
+        ProfileImageManager.migrateLegacyDirectoryIfNeeded(currentUserId: bootUserId)
+
+        // Point ColdStore + ProfileImageManager at this user's directories before any
+        // dependent code runs.
+        ColdStore.shared.switchUser(bootUserId)
+        ProfileImageManager.shared.switchUser(bootUserId)
+        self.coldStore = ColdStore.shared
+
         do {
-            // Migrate database from legacy path to App Group container (one-time)
-            DatabaseMigrationHelper.migrateIfNeeded()
+            let opened = try Self.openDatabase(forUserId: bootUserId)
+            let bundle = Self.makeRepositories(database: opened.manager, coldStore: ColdStore.shared)
 
-            let db = try Self.openDatabase()
-            self.database = db.manager
-            if db.wasRecovered { didRecoverFromCorruption = true }
+            self.database = opened.manager
+            self.currentUserId = bootUserId
+            if opened.wasRecovered { self.didRecoverFromCorruption = true }
+            self.noteRepository = bundle.noteRepository
+            self.sectionRepository = bundle.sectionRepository
+            self.handleRepository = bundle.handleRepository
+            self.echoRepository = bundle.echoRepository
+            self.shareLinkRepository = bundle.shareLinkRepository
+            self.commentRepository = bundle.commentRepository
+            self.moduleRepository = bundle.moduleRepository
+            self.syncEngine = bundle.syncEngine
+            self.syncLogger = bundle.syncLogger
+            self.commitRepository = bundle.commitRepository
+            self.mediaRepository = bundle.mediaRepository
+            self.commitModule = bundle.commitModule
+            self.autoCommitManager = bundle.autoCommitManager
+            self.insightRepository = bundle.insightRepository
+            self.calendarMemoRepository = bundle.calendarMemoRepository
+            self.noteIndexRepository = bundle.noteIndexRepository
+            self.contextAssembler = bundle.contextAssembler
 
-            self.noteRepository = NoteRepository(database: database)
-            self.sectionRepository = SectionRepository(database: database)
-            self.handleRepository = HandleRepository(database: database)  // Handle Loop support
-            self.echoRepository = EchoRepository(database: database)      // Echo alert/reminder support
-            self.shareLinkRepository = ShareLinkRepository(database: database)  // Share link support
-            self.commentRepository = CommentRepository(database: database)      // Share comments support
-            self.moduleRepository = ModuleRepository(database: database)        // Module (folder) support
-            self.syncEngine = SyncEngine(database: database)
-            self.syncLogger = SyncOperationLogger(database: database)
-            self.handleRepository.syncLogger = syncLogger  // Wire up handle cloud sync
-            self.echoRepository.syncLogger = syncLogger  // Wire up echo cloud sync
-            self.moduleRepository.syncLogger = syncLogger  // Wire up module rename sync
-
-            // Initialize Split-Storage Engine
-            self.coldStore = ColdStore.shared
-            self.commitRepository = CommitRepository(database: database)
-            self.mediaRepository = MediaRepository(database: database, coldStore: coldStore)
-            self.commitModule = CommitModule(
-                coldStore: coldStore,
-                noteRepository: noteRepository,
-                sectionRepository: sectionRepository,
-                commitRepository: commitRepository
-            )
-            self.autoCommitManager = AutoCommitManager(
-                commitModule: commitModule,
-                noteRepository: noteRepository,
-                commitRepository: commitRepository,
-                sectionRepository: sectionRepository,
-                coldStore: coldStore
-            )
-            self.insightRepository = InsightRepository(database: database)
-            self.calendarMemoRepository = CalendarMemoRepository(database: database)
-            self.calendarMemoRepository.syncLogger = syncLogger
-
-            // Smart context assembly for AI Workspace
-            self.noteIndexRepository = NoteIndexRepository(database: database)
-            self.contextAssembler = ContextAssembler(
-                noteIndexRepo: noteIndexRepository,
-                sectionRepository: sectionRepository,
-                noteRepository: noteRepository,
-                handleRepository: handleRepository,
-                database: database,
-                syncEngine: syncEngine
-            )
-
-            // Initialize HandleManager singleton with repository
-            HandleManager.shared.initialize(handleRepository: handleRepository)
-
-            // Initialize EchoManager singleton with repository
-            EchoManager.shared.initialize(echoRepository: echoRepository)
-
-            // Initialize ShareManager singleton with repositories
-            ShareManager.shared.initialize(
-                shareLinkRepository: shareLinkRepository,
-                commentRepository: commentRepository
-            )
+            wireSingletons(with: bundle)
+            observeAuthChanges()
         } catch {
             fatalError("Failed to initialize database after recovery attempt: \(error)")
         }
     }
 
+    deinit {
+        authObservationTask?.cancel()
+    }
+
+    // MARK: - Repository assembly
+
+    private struct RepositoryBundle {
+        let noteRepository: NoteRepository
+        let sectionRepository: SectionRepository
+        let handleRepository: HandleRepository
+        let echoRepository: EchoRepository
+        let shareLinkRepository: ShareLinkRepository
+        let commentRepository: CommentRepository
+        let moduleRepository: ModuleRepository
+        let syncEngine: SyncEngine
+        let syncLogger: SyncOperationLogger
+        let commitRepository: CommitRepository
+        let mediaRepository: MediaRepository
+        let commitModule: CommitModule
+        let autoCommitManager: AutoCommitManager
+        let insightRepository: InsightRepository
+        let calendarMemoRepository: CalendarMemoRepository
+        let noteIndexRepository: NoteIndexRepository
+        let contextAssembler: ContextAssembler
+    }
+
+    private static func makeRepositories(database: DatabaseManager, coldStore: ColdStore) -> RepositoryBundle {
+        let noteRepository = NoteRepository(database: database)
+        let sectionRepository = SectionRepository(database: database)
+        let handleRepository = HandleRepository(database: database)
+        let echoRepository = EchoRepository(database: database)
+        let shareLinkRepository = ShareLinkRepository(database: database)
+        let commentRepository = CommentRepository(database: database)
+        let moduleRepository = ModuleRepository(database: database)
+        let syncEngine = SyncEngine(database: database)
+        let syncLogger = SyncOperationLogger(database: database)
+        handleRepository.syncLogger = syncLogger
+        echoRepository.syncLogger = syncLogger
+        moduleRepository.syncLogger = syncLogger
+
+        let commitRepository = CommitRepository(database: database)
+        let mediaRepository = MediaRepository(database: database, coldStore: coldStore)
+        let commitModule = CommitModule(
+            coldStore: coldStore,
+            noteRepository: noteRepository,
+            sectionRepository: sectionRepository,
+            commitRepository: commitRepository
+        )
+        let autoCommitManager = AutoCommitManager(
+            commitModule: commitModule,
+            noteRepository: noteRepository,
+            commitRepository: commitRepository,
+            sectionRepository: sectionRepository,
+            coldStore: coldStore
+        )
+        let insightRepository = InsightRepository(database: database)
+        let calendarMemoRepository = CalendarMemoRepository(database: database)
+        calendarMemoRepository.syncLogger = syncLogger
+
+        let noteIndexRepository = NoteIndexRepository(database: database)
+        let contextAssembler = ContextAssembler(
+            noteIndexRepo: noteIndexRepository,
+            sectionRepository: sectionRepository,
+            noteRepository: noteRepository,
+            handleRepository: handleRepository,
+            database: database,
+            syncEngine: syncEngine
+        )
+
+        return RepositoryBundle(
+            noteRepository: noteRepository,
+            sectionRepository: sectionRepository,
+            handleRepository: handleRepository,
+            echoRepository: echoRepository,
+            shareLinkRepository: shareLinkRepository,
+            commentRepository: commentRepository,
+            moduleRepository: moduleRepository,
+            syncEngine: syncEngine,
+            syncLogger: syncLogger,
+            commitRepository: commitRepository,
+            mediaRepository: mediaRepository,
+            commitModule: commitModule,
+            autoCommitManager: autoCommitManager,
+            insightRepository: insightRepository,
+            calendarMemoRepository: calendarMemoRepository,
+            noteIndexRepository: noteIndexRepository,
+            contextAssembler: contextAssembler
+        )
+    }
+
+    private func wireSingletons(with bundle: RepositoryBundle) {
+        HandleManager.shared.initialize(handleRepository: bundle.handleRepository)
+        EchoManager.shared.initialize(echoRepository: bundle.echoRepository)
+        ShareManager.shared.initialize(
+            shareLinkRepository: bundle.shareLinkRepository,
+            commentRepository: bundle.commentRepository
+        )
+    }
+
     /// Try to open the database. If it fails (corruption, migration error, etc.),
     /// back up the broken file and create a fresh database.
-    private static func openDatabase() throws -> (manager: DatabaseManager, wasRecovered: Bool) {
+    private static func openDatabase(forUserId userId: String?) throws -> (manager: DatabaseManager, wasRecovered: Bool) {
         do {
-            let manager = try DatabaseManager()
+            let manager = try DatabaseManager(userId: userId)
             return (manager, false)
         } catch {
             print("[AppState] Database initialization failed: \(error)")
             print("[AppState] Attempting corruption recovery...")
-            if DatabaseManager.recoverFromCorruption() {
+            if DatabaseManager.recoverFromCorruption(forUserId: userId) {
                 // Retry with a fresh database
-                let manager = try DatabaseManager()
+                let manager = try DatabaseManager(userId: userId)
                 print("[AppState] Recovery successful — fresh database created")
                 return (manager, true)
             }
             throw error
+        }
+    }
+
+    // MARK: - Account switching
+
+    /// Watches the Supabase auth stream for sign-in/sign-out and re-points the
+    /// local store at the corresponding per-user database file.
+    /// We listen to `authStateChanges` directly (not `AuthManager.$currentUser`)
+    /// because that publisher initializes to `nil` and races with the async
+    /// session-refresh on cold launch — which would spuriously switch us back
+    /// to the anon database immediately after we booted with a real user.
+    private func observeAuthChanges() {
+        authObservationTask?.cancel()
+        authObservationTask = Task { [weak self] in
+            for await (event, session) in SupabaseManager.shared.client.auth.authStateChanges {
+                guard let self else { return }
+                switch event {
+                case .signedIn:
+                    let newUserId = session?.user.id.uuidString.lowercased()
+                    if newUserId != self.currentUserId {
+                        await self.switchUser(to: newUserId)
+                    }
+                case .signedOut:
+                    if self.currentUserId != nil {
+                        await self.switchUser(to: nil)
+                    }
+                default:
+                    // .tokenRefreshed / .userUpdated / .initialSession etc. do not change identity.
+                    // For any unknown event, reconcile against the synchronous session in case
+                    // identity drifted (defensive — should be rare).
+                    let canonicalUserId = SupabaseManager.shared.currentSession?.user.id.uuidString.lowercased()
+                    if canonicalUserId != self.currentUserId {
+                        await self.switchUser(to: canonicalUserId)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Tear down the active per-user state and rebuild it for `newUserId`.
+    /// Triggered automatically when the auth state changes.
+    /// If a switch is already in-flight, the latest target is queued and applied
+    /// once the current swap finishes (so a sign-out during sign-in's `initialize()`
+    /// is not lost).
+    func switchUser(to newUserId: String?) async {
+        // Record the latest request. `String??` distinguishes "no pending request"
+        // (`nil`) from "pending request to switch to anon" (`.some(nil)`).
+        pendingSwitchTarget = .some(newUserId)
+        guard !isSwitching else { return }
+        isSwitching = true
+        defer { isSwitching = false }
+
+        while let next = pendingSwitchTarget {
+            pendingSwitchTarget = nil
+            let target = next
+            guard target != currentUserId else { continue }
+
+            print("[AppState] Switching active user: \(currentUserId ?? "anon") → \(target ?? "anon")")
+
+            // 1. Tear down sync engine subscriptions on the old database.
+            await syncEngine.unsubscribeRealtime()
+
+            // 2. Drop singleton state so they don't keep observing the old DB queue.
+            HandleManager.shared.reset()
+            EchoManager.shared.reset()
+            ShareManager.shared.reset()
+            // Tier state is per-user; clear before initialize() re-fetches from server.
+            // Otherwise the new user inherits the previous user's tier, and a Free
+            // account stays "Pro" because the no-entitlement downgrade is gated on
+            // serverConfirmedTier being nil.
+            TierManager.shared.logout()
+            UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+
+            // 3. Repoint cold storage + profile images, and open the new database.
+            ColdStore.shared.switchUser(target)
+            ProfileImageManager.shared.switchUser(target)
+
+            let opened: (manager: DatabaseManager, wasRecovered: Bool)
+            do {
+                opened = try Self.openDatabase(forUserId: target)
+            } catch {
+                print("[AppState] Failed to open database for user \(target ?? "anon"): \(error)")
+                continue
+            }
+
+            let bundle = Self.makeRepositories(database: opened.manager, coldStore: coldStore)
+
+            // 4. Publish the new bundle. SwiftUI observers re-render and pick up new repos.
+            self.database = opened.manager
+            self.noteRepository = bundle.noteRepository
+            self.sectionRepository = bundle.sectionRepository
+            self.handleRepository = bundle.handleRepository
+            self.echoRepository = bundle.echoRepository
+            self.shareLinkRepository = bundle.shareLinkRepository
+            self.commentRepository = bundle.commentRepository
+            self.moduleRepository = bundle.moduleRepository
+            self.syncEngine = bundle.syncEngine
+            self.syncLogger = bundle.syncLogger
+            self.commitRepository = bundle.commitRepository
+            self.mediaRepository = bundle.mediaRepository
+            self.commitModule = bundle.commitModule
+            self.autoCommitManager = bundle.autoCommitManager
+            self.insightRepository = bundle.insightRepository
+            self.calendarMemoRepository = bundle.calendarMemoRepository
+            self.noteIndexRepository = bundle.noteIndexRepository
+            self.contextAssembler = bundle.contextAssembler
+            self.currentUserId = target
+            self.didRecoverFromCorruption = self.didRecoverFromCorruption || opened.wasRecovered
+            self.isInitialized = false
+
+            wireSingletons(with: bundle)
+
+            // 5. Re-run startup so the new account gets sync, echo scheduling, etc.
+            await initialize()
         }
     }
 
@@ -293,6 +490,11 @@ class AppState: ObservableObject {
 
         // Clean up expired versions based on retention settings
         _ = await VersionRetentionManager.runCleanup(commitRepository: commitRepository, coldStore: coldStore)
+
+        // Re-fetch tier for the current user before the sync gate decision.
+        // On account switch, switchUser() called TierManager.logout() to clear
+        // the previous user's state; this re-populates it from Supabase + RC.
+        await TierManager.shared.initialize()
 
         // Auto-sync if authenticated and tier allows it
         let isAuthed = AuthManager.shared.isAuthenticated
