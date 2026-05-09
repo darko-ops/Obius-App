@@ -29,7 +29,10 @@ struct SharedContentView: View {
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Image("ObiusLogo")
+                        .resizable()
                         .renderingMode(.original)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 28, height: 28)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") {

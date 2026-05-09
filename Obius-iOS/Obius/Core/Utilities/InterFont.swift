@@ -45,6 +45,23 @@ enum InterFontRegistration {
             }
         }
 
+        #if DEBUG
+        // Verify Lexend Exa is registered too — used for the welcome / auth headlines.
+        let lexendName = "LexendExa-SemiBold"
+        if UIFont(name: lexendName, size: 12) == nil {
+            print("[Fonts] '\(lexendName)' NOT registered — falling back to system. Delete the app + clean build.")
+            // List anything Lexend-ish that IS available, in case the PostScript name is different
+            let lexendish = UIFont.familyNames
+                .filter { $0.lowercased().contains("lexend") }
+                .flatMap { UIFont.fontNames(forFamilyName: $0) }
+            if !lexendish.isEmpty {
+                print("[Fonts] But these Lexend variants ARE registered: \(lexendish)")
+            }
+        } else {
+            print("[Fonts] '\(lexendName)' registered ✓")
+        }
+        #endif
+
         // Override UILabel default font via appearance
         let labelAppearance = UILabel.appearance()
         labelAppearance.font = UIFont(name: "Inter-Regular", size: UIFont.labelFontSize)

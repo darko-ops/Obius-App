@@ -129,13 +129,16 @@
     <string>Access your photo library to add images to notes</string>
 
     <!-- Custom Fonts -->
+    <!-- Filenames only — files are copied to the .app bundle root, not a Fonts/ subdir.
+         Using "Fonts/" prefix here makes iOS look in a path that doesn't exist. -->
     <key>UIAppFonts</key>
     <array>
-        <string>Fonts/Inter-Regular.ttf</string>
-        <string>Fonts/Inter-Medium.ttf</string>
-        <string>Fonts/Inter-SemiBold.ttf</string>
-        <string>Fonts/Inter-Bold.ttf</string>
-        <string>Fonts/Inter-Light.ttf</string>
+        <string>Inter-Regular.ttf</string>
+        <string>Inter-Medium.ttf</string>
+        <string>Inter-SemiBold.ttf</string>
+        <string>Inter-Bold.ttf</string>
+        <string>Inter-Light.ttf</string>
+        <string>LexendExa-SemiBold.ttf</string>
     </array>
 
     <!-- Status Bar -->

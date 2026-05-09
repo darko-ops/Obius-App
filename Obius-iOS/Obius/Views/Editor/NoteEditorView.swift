@@ -856,7 +856,10 @@ private struct NoteEditorContent: View {
         ToolbarItem(placement: .principal) {
             if titleVisible {
                 Image("ObiusLogo")
+                    .resizable()
                     .renderingMode(.original)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 28, height: 28)
                     .transition(.opacity)
             } else {
                 Text(viewModel.displayTitle)
@@ -877,11 +880,18 @@ private struct NoteEditorContent: View {
         }
 
         #if os(iOS)
-        ToolbarItemGroup(placement: .keyboard) {
+        // Single ToolbarItem (not ToolbarItemGroup) wrapping an HStack — on
+        // iOS 26 each ToolbarItemGroup child renders as a separate pill, so
+        // the seven controls below were overflowing the screen. Collapsed
+        // into one HStack they share a single bar.
+        ToolbarItem(placement: .keyboard) {
             // Suppress while the AI workspace sheet is up — its chat input
             // doesn't need page-editor controls and they were overlapping it.
             if !showingAIWorkspace && !showWorkspaceSheet {
-                keyboardToolbarItems
+                HStack(spacing: 14) {
+                    keyboardToolbarItems
+                }
+                .frame(maxWidth: .infinity)
             }
         }
         #endif
@@ -2565,15 +2575,18 @@ private struct NoteEditorContent: View {
 // MARK: - Body Text View (iOS)
 
 #if os(iOS)
-/// Keyboard toolbar for body text with formatting buttons
-class BodyKeyboardToolbar: UIToolbar {
+/// Keyboard toolbar for body text with formatting buttons.
+///
+/// Plain UIView (not UIToolbar) so iOS 26 doesn't auto-pill every UIBarButtonItem
+/// into its own bubble — the formatting controls stay in one continuous bar.
+class BodyKeyboardToolbar: UIView {
     weak var textView: UITextView?
     var onDismiss: (() -> Void)?
 
-    private var titleButton: UIBarButtonItem?
-    private var boldButton: UIBarButtonItem?
-    private var italicButton: UIBarButtonItem?
-    private var underlineButton: UIBarButtonItem?
+    private var titleButton: UIButton?
+    private var boldButton: UIButton?
+    private var italicButton: UIButton?
+    private var underlineButton: UIButton?
 
     // Track active formatting states for typing
     private var isTitleActive = false
@@ -2603,88 +2616,88 @@ class BodyKeyboardToolbar: UIToolbar {
         self.init(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 44))
     }
 
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: 44)
+    }
+
     private func setupToolbar() {
-        barStyle = .default
-        isTranslucent = true
-        sizeToFit()
+        // System-material blur background to match the keyboard surface.
+        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+        blur.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(blur)
+        NSLayoutConstraint.activate([
+            blur.topAnchor.constraint(equalTo: topAnchor),
+            blur.leadingAnchor.constraint(equalTo: leadingAnchor),
+            blur.trailingAnchor.constraint(equalTo: trailingAnchor),
+            blur.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
 
-        var items: [UIBarButtonItem] = []
+        // Hairline separator on top edge
+        let separator = UIView()
+        separator.backgroundColor = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(separator)
+        NSLayoutConstraint.activate([
+            separator.topAnchor.constraint(equalTo: topAnchor),
+            separator.leadingAnchor.constraint(equalTo: leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: trailingAnchor),
+            separator.heightAnchor.constraint(equalToConstant: 0.5),
+        ])
 
-        // Indent/Outdent buttons (visual consistency, disabled for body)
-        let outdentButton = UIBarButtonItem(
-            image: UIImage(systemName: "decrease.indent"),
-            style: .plain,
-            target: nil,
-            action: nil
-        )
-        outdentButton.isEnabled = false
-        items.append(outdentButton)
+        // Indent/Outdent (disabled for body — visual parity with section editor)
+        let outdent = makeButton(systemName: "decrease.indent")
+        outdent.isEnabled = false
 
-        let indentButton = UIBarButtonItem(
-            image: UIImage(systemName: "increase.indent"),
-            style: .plain,
-            target: nil,
-            action: nil
-        )
-        indentButton.isEnabled = false
-        items.append(indentButton)
+        let indent = makeButton(systemName: "increase.indent")
+        indent.isEnabled = false
 
-        let flexSpace = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
-        items.append(flexSpace)
-
-        // Title size button
-        let title = UIBarButtonItem(
-            image: UIImage(systemName: "textformat.size"),
-            style: .plain,
-            target: self,
-            action: #selector(titleTapped)
-        )
+        // Formatting controls
+        let title = makeButton(systemName: "textformat.size", action: #selector(titleTapped))
         titleButton = title
-        items.append(title)
-
-        // Formatting buttons
-        let bold = UIBarButtonItem(
-            image: UIImage(systemName: "bold"),
-            style: .plain,
-            target: self,
-            action: #selector(boldTapped)
-        )
+        let bold = makeButton(systemName: "bold", action: #selector(boldTapped))
         boldButton = bold
-        items.append(bold)
-
-        let italic = UIBarButtonItem(
-            image: UIImage(systemName: "italic"),
-            style: .plain,
-            target: self,
-            action: #selector(italicTapped)
-        )
+        let italic = makeButton(systemName: "italic", action: #selector(italicTapped))
         italicButton = italic
-        items.append(italic)
-
-        let underline = UIBarButtonItem(
-            image: UIImage(systemName: "underline"),
-            style: .plain,
-            target: self,
-            action: #selector(underlineTapped)
-        )
+        let underline = makeButton(systemName: "underline", action: #selector(underlineTapped))
         underlineButton = underline
-        items.append(underline)
 
-        // Add spacing
-        let fixedSpace = UIBarButtonItem(barButtonSystemItem: .fixedSpace, target: nil, action: nil)
-        fixedSpace.width = 12
-        items.append(fixedSpace)
+        // Dismiss keyboard
+        let dismiss = makeButton(systemName: "keyboard.chevron.compact.down", action: #selector(dismissTapped))
 
-        // Dismiss button (far right)
-        let dismissButton = UIBarButtonItem(
-            image: UIImage(systemName: "keyboard.chevron.compact.down"),
-            style: .plain,
-            target: self,
-            action: #selector(dismissTapped)
-        )
-        items.append(dismissButton)
+        // Flexible spacer pushes the formatting + dismiss group right.
+        let spacer = UIView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        setItems(items, animated: false)
+        let stack = UIStackView(arrangedSubviews: [
+            outdent, indent, spacer,
+            title, bold, italic, underline, dismiss,
+        ])
+        stack.axis = .horizontal
+        stack.spacing = 14
+        stack.alignment = .center
+        stack.distribution = .fill
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+        ])
+    }
+
+    private func makeButton(systemName: String, action: Selector? = nil) -> UIButton {
+        var config = UIButton.Configuration.plain()
+        config.image = UIImage(systemName: systemName)
+        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 6, bottom: 6, trailing: 6)
+        let btn = UIButton(configuration: config)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        if let action {
+            btn.addTarget(self, action: action, for: .touchUpInside)
+        }
+        return btn
     }
 
     private func updateButtonAppearance() {

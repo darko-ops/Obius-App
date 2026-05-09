@@ -45,85 +45,63 @@ struct ContentView: View {
 
 struct LocalOrAuthView: View {
     @EnvironmentObject var appState: AppState
-    @State private var useLocalMode = false
     @State private var showAuth = false
 
     var body: some View {
-        if useLocalMode {
-            MainTabView()
-        } else {
-            VStack(spacing: 32) {
-                Spacer()
+        VStack(spacing: 32) {
+            Spacer()
 
-                // Logo
-                VStack(spacing: 8) {
-                    Image(systemName: "note.text")
-                        .font(.system(size: 80))
-                        .foregroundStyle(Color.accentColor)
+            // Logo
+            VStack(spacing: 0) {
+                Image("ObiusLogo")
+                    .resizable()
+                    .renderingMode(.original)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 96, height: 96)
+                    .padding(.bottom, 20)
 
-                    Text("Obius")
-                        .font(.largeTitle.bold())
+                Text("Obius")
+                    .font(.custom("LexendExa-SemiBold", size: 34, relativeTo: .largeTitle))
+                    .padding(.bottom, 2)
 
-                    Text("Local-first notes with AI")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                Text("Architect your thoughts")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            // Sign in
+            VStack(spacing: 16) {
+                Button {
+                    showAuth = true
+                } label: {
+                    Text("Sign In")
+                        .foregroundStyle(.black)
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(.white)
+            }
+            .padding(.horizontal, 32)
 
-                Spacer()
-
-                // Options
-                VStack(spacing: 16) {
-                    Button {
-                        showAuth = true
-                    } label: {
-                        HStack {
-                            Image(systemName: "cloud")
-                            Text("Sign In for Cloud Sync")
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-
-                    Button {
-                        useLocalMode = true
-                    } label: {
-                        HStack {
-                            #if os(iOS)
-                            Image(systemName: "iphone")
-                            #else
-                            Image(systemName: "desktopcomputer")
-                            #endif
-                            Text("Continue Offline")
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-
-                    Text("Your notes are always stored locally. Sign in to enable cloud sync and AI features.")
-                        .font(.caption)
+            // Free trial nudge — shown after they've seen the app intro
+            if TierManager.shared.currentTier == .free {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                    Text("Start a 14-day free trial of Pro anytime in Settings.")
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
                 }
                 .padding(.horizontal, 32)
-
-                // Free trial nudge — shown after they've seen the app intro
-                if TierManager.shared.currentTier == .free {
-                    HStack(spacing: 6) {
-                        Image(systemName: "sparkles")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                        Text("Start a 7-day free trial of Pro anytime in Settings.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 32)
-                }
-
-                Spacer()
             }
-            .sheet(isPresented: $showAuth) {
-                AuthView()
-            }
+
+            Spacer()
+        }
+        .sheet(isPresented: $showAuth) {
+            AuthView()
         }
     }
 }
