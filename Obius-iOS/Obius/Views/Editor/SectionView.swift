@@ -34,6 +34,17 @@ enum RichTextHelper {
         return normalizeFontSizes(raw)
     }
 
+    /// Default body attributes for plain text inserted into rich-text streams.
+    /// Without these, RTF round-trip renders the run in a default serif font
+    /// at the wrong size and in black — visible after merging interstitials on
+    /// section deletion.
+    static func bodyAttributes() -> [NSAttributedString.Key: Any] {
+        [
+            .font: UIFont.preferredFont(forTextStyle: .body),
+            .foregroundColor: UIColor.label
+        ]
+    }
+
     /// Rescale absolute font sizes so the most common ("body") size matches the
     /// current iOS preferred body size. Preserves font weight, italic, and the
     /// proportional ratio between body and headings (so H1 stays ~1.65x body).
@@ -257,6 +268,17 @@ enum RichTextHelper {
             documentAttributes: nil
         ) else { return nil }
         return normalizeFontSizes(raw)
+    }
+
+    /// Default body attributes for plain text inserted into rich-text streams.
+    /// Without these, RTF round-trip renders the run in a default serif font
+    /// at the wrong size and in black — visible after merging interstitials on
+    /// section deletion.
+    static func bodyAttributes() -> [NSAttributedString.Key: Any] {
+        [
+            .font: NSFont.systemFont(ofSize: 17),
+            .foregroundColor: NSColor.labelColor
+        ]
     }
 
     /// Rescale absolute font sizes so the most common ("body") size matches the

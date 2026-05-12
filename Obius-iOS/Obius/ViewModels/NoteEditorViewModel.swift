@@ -315,9 +315,25 @@ final class NoteEditorViewModel: ObservableObject {
                     let prevId = sections[index - 1].id
                     let prevKey = "after_\(prevId)"
                     let existingText = note?.interstitialContent[prevKey] ?? ""
+                    let existingRich = note?.interstitialRichContent[prevKey]
                     let merged = existingText.isEmpty ? orphanedText : existingText + "\n" + orphanedText
-                    let mergedRich = existingText.isEmpty ? orphanedRich : nil
-                    try? await noteRepository.updateInterstitialContent(noteId, afterSectionId: prevId, content: merged, richText: mergedRich)
+                    // Preserve both interstitials' formatting on merge — wiping
+                    // mergedRich to nil meant each deletion stripped styling
+                    // from the surviving interstitial.
+                    let mergedRich = existingText.isEmpty
+                        ? orphanedRich
+                        : Self.appendPlainToRichText(
+                            base: existingRich,
+                            basePlain: existingText,
+                            appendedPlain: orphanedText,
+                            appendedRich: orphanedRich
+                        )
+                    try? await noteRepository.updateInterstitialContent(
+                        noteId,
+                        afterSectionId: prevId,
+                        content: merged,
+                        richText: mergedRich
+                    )
                 } else {
                     let existingBody = note?.body ?? ""
                     let merged = existingBody.isEmpty ? orphanedText : existingBody + "\n" + orphanedText
@@ -989,20 +1005,27 @@ final class NoteEditorViewModel: ObservableObject {
         // No existing rich text and nothing rich to append → skip rich entirely.
         if base == nil && appendedRich == nil { return nil }
 
+        let bodyAttrs = RichTextHelper.bodyAttributes()
         let result = NSMutableAttributedString()
         if let base = base, let baseAttr = RichTextHelper.deserialize(base) {
             result.append(baseAttr)
         } else if !basePlain.isEmpty {
-            result.append(NSAttributedString(string: basePlain))
+            result.append(NSAttributedString(string: basePlain, attributes: bodyAttrs))
         }
+        // Inherit the trailing run's attributes for the separator and any plain
+        // appended text; otherwise RTF round-trip renders them in a default
+        // serif font at the wrong size and in black.
+        let trailingAttrs: [NSAttributedString.Key: Any] = result.length > 0
+            ? result.attributes(at: result.length - 1, effectiveRange: nil)
+            : bodyAttrs
         if result.length > 0 {
-            result.append(NSAttributedString(string: "\n"))
+            result.append(NSAttributedString(string: "\n", attributes: trailingAttrs))
         }
         if let appendedRich = appendedRich,
            let appendedAttr = RichTextHelper.deserialize(appendedRich) {
             result.append(appendedAttr)
         } else {
-            result.append(NSAttributedString(string: appendedPlain))
+            result.append(NSAttributedString(string: appendedPlain, attributes: trailingAttrs))
         }
         return RichTextHelper.serialize(result)
     }
