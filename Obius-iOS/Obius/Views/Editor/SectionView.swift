@@ -20,14 +20,47 @@ enum RichTextHelper {
         return data.base64EncodedString()
     }
 
-    /// Deserialize base64-encoded RTF to NSAttributedString
+    /// Deserialize base64-encoded RTF to NSAttributedString.
+    /// Font sizes are rescaled so the document's "body" size matches the iOS
+    /// preferred body size — RTF created on macOS embeds absolute 17/19/22/28pt
+    /// fonts that otherwise render at the wrong proportional size on iOS.
     static func deserialize(_ base64String: String) -> NSAttributedString? {
         guard let data = Data(base64Encoded: base64String) else { return nil }
-        return try? NSAttributedString(
+        guard let raw = try? NSAttributedString(
             data: data,
             options: [.documentType: NSAttributedString.DocumentType.rtf],
             documentAttributes: nil
-        )
+        ) else { return nil }
+        return normalizeFontSizes(raw)
+    }
+
+    /// Rescale absolute font sizes so the most common ("body") size matches the
+    /// current iOS preferred body size. Preserves font weight, italic, and the
+    /// proportional ratio between body and headings (so H1 stays ~1.65x body).
+    private static func normalizeFontSizes(_ attr: NSAttributedString) -> NSAttributedString {
+        guard attr.length > 0 else { return attr }
+        let targetBody = UIFont.preferredFont(forTextStyle: .body).pointSize
+
+        // Find the most common font size (by character coverage) — that's the body.
+        var sizeCoverage: [CGFloat: Int] = [:]
+        let fullRange = NSRange(location: 0, length: attr.length)
+        attr.enumerateAttribute(.font, in: fullRange, options: []) { value, range, _ in
+            guard let font = value as? UIFont else { return }
+            sizeCoverage[font.pointSize, default: 0] += range.length
+        }
+        guard let bodyReference = sizeCoverage.max(by: { $0.value < $1.value })?.key,
+              bodyReference > 0 else { return attr }
+
+        let scale = targetBody / bodyReference
+        if abs(scale - 1.0) < 0.01 { return attr }
+
+        let mutable = NSMutableAttributedString(attributedString: attr)
+        mutable.enumerateAttribute(.font, in: fullRange, options: []) { value, range, _ in
+            guard let font = value as? UIFont else { return }
+            let newFont = UIFont(descriptor: font.fontDescriptor, size: font.pointSize * scale)
+            mutable.addAttribute(.font, value: newFont, range: range)
+        }
+        return mutable
     }
 
     /// Convert base64-encoded RTF back to markdown text.
@@ -218,11 +251,44 @@ enum RichTextHelper {
 
     static func deserialize(_ base64String: String) -> NSAttributedString? {
         guard let data = Data(base64Encoded: base64String) else { return nil }
-        return try? NSAttributedString(
+        guard let raw = try? NSAttributedString(
             data: data,
             options: [.documentType: NSAttributedString.DocumentType.rtf],
             documentAttributes: nil
-        )
+        ) else { return nil }
+        return normalizeFontSizes(raw)
+    }
+
+    /// Rescale absolute font sizes so the most common ("body") size matches the
+    /// macOS body size (17pt). iOS users with non-default Dynamic Type sizes can
+    /// produce RTF whose body font is e.g. 14pt or 19pt — without normalization
+    /// that lands on macOS as a visibly smaller (or larger) paragraph than
+    /// macOS-native body text. Preserves font weight/italic and heading ratios.
+    private static func normalizeFontSizes(_ attr: NSAttributedString) -> NSAttributedString {
+        guard attr.length > 0 else { return attr }
+        let targetBody: CGFloat = 17
+
+        // Find the most common font size (by character coverage) — that's the body.
+        var sizeCoverage: [CGFloat: Int] = [:]
+        let fullRange = NSRange(location: 0, length: attr.length)
+        attr.enumerateAttribute(.font, in: fullRange, options: []) { value, range, _ in
+            guard let font = value as? NSFont else { return }
+            sizeCoverage[font.pointSize, default: 0] += range.length
+        }
+        guard let bodyReference = sizeCoverage.max(by: { $0.value < $1.value })?.key,
+              bodyReference > 0 else { return attr }
+
+        let scale = targetBody / bodyReference
+        if abs(scale - 1.0) < 0.01 { return attr }
+
+        let mutable = NSMutableAttributedString(attributedString: attr)
+        mutable.enumerateAttribute(.font, in: fullRange, options: []) { value, range, _ in
+            guard let font = value as? NSFont else { return }
+            if let newFont = NSFont(descriptor: font.fontDescriptor, size: font.pointSize * scale) {
+                mutable.addAttribute(.font, value: newFont, range: range)
+            }
+        }
+        return mutable
     }
 
     /// Convert base64-encoded RTF back to markdown text.
@@ -538,16 +604,26 @@ struct SectionView: View {
                 onContentChange(content, nil)
             }
         }
-        .onChange(of: displayContent) { oldValue, newValue in
-            // Always sync when content changed externally (e.g. AI workspace action).
-            // Only skip if the user is actively typing AND the change is just
-            // their own keystroke echoing back (old == what we had before).
+        .onChange(of: displayContent) { _, newValue in
+            // While the user is typing, treat the local @State as the source of
+            // truth. updateSectionContent's async DB writes echo back through the
+            // observation out of order — applying an older snapshot here while
+            // the user has typed further reverts content mid-keystroke and jumps
+            // the caret into the middle of the typed string. The oldValue==content
+            // guard only catches single-step echoes; stale ones from earlier
+            // writes slip past. Catch up on blur instead.
             guard content != newValue else { return }
-            if textFieldFocused && oldValue == content {
-                // User is typing and this is their own edit propagating — skip to avoid cursor jump
+            if textFieldFocused {
                 return
             }
             content = newValue
+        }
+        .onChange(of: textFieldFocused) { _, isFocused in
+            // Reconcile content with the latest model on blur — we skip
+            // observation-driven updates during typing.
+            if !isFocused, content != displayContent {
+                content = displayContent
+            }
         }
         .onChange(of: section.handleId) { _, _ in
             // When a section is linked/unlinked from a handle,
@@ -2447,6 +2523,21 @@ struct EditableTextView: NSViewRepresentable {
         textView.font = NSFont.systemFont(ofSize: 17)
         textView.textColor = NSColor.labelColor
 
+        // Disable all automatic text substitutions. NSTextView defaults to
+        // replacing "..." → "…", "---" → "—", straight quotes → curly quotes,
+        // autocorrecting words, etc. Each substitution silently shortens the
+        // typed buffer mid-keystroke — when the user is typing repeated keys
+        // fast, the caret visibly jumps to the middle of the run as 3-char
+        // sequences collapse to 1. iOS's SelfSizingTextView disables the
+        // equivalent UITextView flags for the same reason.
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.smartInsertDeleteEnabled = false
+        textView.isAutomaticDataDetectionEnabled = false
+        textView.isAutomaticLinkDetectionEnabled = false
+
         // Disable scroll view scrolling — parent ScrollView handles it.
         // Pin content to top so the inner NSScrollView never auto-scrolls
         // to reveal the cursor (which fights the outer SwiftUI ScrollView
@@ -2457,13 +2548,17 @@ struct EditableTextView: NSViewRepresentable {
         scrollView.contentView.postsBoundsChangedNotifications = true
         scrollView.verticalScrollElasticity = .none
 
-        // Load rich text if available, otherwise plain text
+        // Load rich text if available, otherwise plain text.
+        // Only use richText when its plain text matches `text` — peers may push
+        // body-only updates that leave an out-of-sync bodyRichText behind, which
+        // would otherwise render stale content on first open.
         // Suppress textDidChange during initial load and hashtag highlighting —
         // otherwise HashtagHelper's textStorage edits fire a non-suppressed
         // textDidChange that schedules a spurious writeback of the AI body.
         context.coordinator.isProgrammaticUpdate = true
         if let richText = richText,
-           let attrText = RichTextHelper.deserialize(richText) {
+           let attrText = RichTextHelper.deserialize(richText),
+           attrText.string == text {
             textView.textStorage?.setAttributedString(attrText)
         } else {
             textView.string = text
@@ -2491,12 +2586,16 @@ struct EditableTextView: NSViewRepresentable {
             // to prevent observation → setText → textDidChange → DB write → observation loop.
             context.coordinator.isProgrammaticUpdate = true
             let selectedRanges = textView.selectedRanges
-            // Always prefer the rich-text path when available — assigning
-            // textView.string strips all attributes and inherits typingAttributes,
-            // which can collapse a mixed-format document (headings/bold/body) into
-            // whatever style the caret happens to sit in.
+            // Prefer the rich-text path when available — assigning textView.string
+            // strips attributes. But only when richText's plain text actually matches
+            // the current `text` binding. Peers may push body-only updates (iOS
+            // textViewDidChange persists with richText=nil; updateNoteBody preserves
+            // the old bodyRichText), leaving an RTF whose contents don't match `text`.
+            // Falling back to plain text in that case prevents stale content from
+            // showing up after a cross-device edit.
             if let richText = richText,
-               let attrText = RichTextHelper.deserialize(richText) {
+               let attrText = RichTextHelper.deserialize(richText),
+               attrText.string == text {
                 textView.textStorage?.setAttributedString(attrText)
             } else {
                 // Reset typingAttributes to body defaults BEFORE setting .string —

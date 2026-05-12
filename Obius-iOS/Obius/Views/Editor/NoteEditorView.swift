@@ -138,7 +138,11 @@ private struct NoteEditorContent: View {
         let totalSections = viewModel.sections.count
         let pendingSections = viewModel.sections.filter { $0.syncStatus == .pending }.count
         print("[Sync] syncPendingEntities: note=\(viewModel.note?.syncStatus.rawValue ?? "nil") sections=\(totalSections) (pending=\(pendingSections))")
-        if let note = viewModel.note, note.syncStatus == .pending {
+        // Skip soft-deleted entities. deleteNote() sets deletedAt and syncStatus=pending,
+        // and logNoteDelete writes the delete op; logging a create/update here would
+        // overwrite the pending delete op (logOperationSync purges existing unsynced ops
+        // for the same entity), so the deletion would never reach the server.
+        if let note = viewModel.note, note.syncStatus == .pending, note.deletedAt == nil {
             if note.serverVersion == nil {
                 await appState.syncLogger.logNoteCreateSync(note)
             } else {
@@ -147,7 +151,7 @@ private struct NoteEditorContent: View {
         }
         var pendingSectionCount = 0
         for section in viewModel.sections {
-            guard section.syncStatus == .pending else { continue }
+            guard section.syncStatus == .pending, section.deletedAt == nil else { continue }
             pendingSectionCount += 1
             if section.serverVersion == nil {
                 await appState.syncLogger.logSectionCreateSync(section)
@@ -197,6 +201,13 @@ private struct NoteEditorContent: View {
                 if isFocused {
                     focusedSectionId = nil
                     viewModel.focusedSectionId = nil
+                } else {
+                    // Reconcile bodyText with the latest model body on blur — we
+                    // skip observation-driven updates while typing to prevent stale
+                    // echoes from jumping the caret, so do the catch-up here.
+                    if let body = viewModel.note?.body, body != bodyText {
+                        DispatchQueue.main.async { bodyText = body }
+                    }
                 }
             }
             .onChange(of: viewModel.isLoading) { _, isLoading in
@@ -2331,6 +2342,10 @@ private struct NoteEditorContent: View {
         .onReceive(viewModel.$note) { note in
             // Skip live updates while workspace is open — resyncFromViewModel handles dismiss
             guard !showWorkspaceSheet && !showingAIWorkspace else { return }
+            // Don't overwrite bodyText while the user is typing — async updateBody
+            // echoes back out of order and can revert text mid-keystroke. Catch-up
+            // happens on blur.
+            guard !bodyFocused else { return }
             if let body = note?.body, body != bodyText {
                 print("[DEBUG] .onReceive(note) body changed: \(body.prefix(50))")
                 DispatchQueue.main.async {
@@ -2395,6 +2410,13 @@ private struct NoteEditorContent: View {
         .onChange(of: viewModel.note?.body) { _, newBody in
             // Skip live updates while workspace is open — resyncFromViewModel handles dismiss
             guard !showWorkspaceSheet && !showingAIWorkspace else { return }
+            // While the user is typing in the body, treat their local edits as the
+            // source of truth. updateBody's async DB writes echo back through the
+            // observation out of order — applying an older snapshot here while the
+            // user has already typed further reverts text mid-keystroke and jumps
+            // the caret into the middle of the typed string. Stale echoes are
+            // reconciled on blur (see .onChange of bodyFocused above).
+            guard !bodyFocused else { return }
             if let newBody = newBody, newBody != bodyText {
                 print("[DEBUG] .onChange(note.body) → bodyText: \(newBody.prefix(50))")
                 isExternalBodyUpdate = true
@@ -2916,10 +2938,16 @@ struct BodyTextView: UIViewRepresentable {
         }
         textView.inputAccessoryView = toolbar
 
-        // Load rich text if available on initial creation
+        // Load rich text if available on initial creation.
+        // Only use it when its plain text matches `text` — peers may push body-only
+        // updates that leave an out-of-sync bodyRichText behind, which would
+        // otherwise render stale content on first open.
         if let richText = richText,
-           let attrText = RichTextHelper.deserialize(richText) {
+           let attrText = RichTextHelper.deserialize(richText),
+           attrText.string == text {
             textView.attributedText = attrText
+        } else {
+            textView.text = text
         }
 
         // Highlight any existing hashtags on load
@@ -2950,8 +2978,12 @@ struct BodyTextView: UIViewRepresentable {
             // programmatic updates, which would trigger a DB write-back loop.
             let selectedRange = textView.selectedRange
             textView.delegate = nil
+            // Only apply richText when its plain text matches the current `text`
+            // binding. Cross-device body edits don't always re-serialize the RTF,
+            // so the bodyRichText can lag behind body and render stale content.
             if let richText = richText,
-               let attrText = RichTextHelper.deserialize(richText) {
+               let attrText = RichTextHelper.deserialize(richText),
+               attrText.string == text {
                 textView.attributedText = attrText
             } else {
                 // Reset typingAttributes to body defaults before reassigning

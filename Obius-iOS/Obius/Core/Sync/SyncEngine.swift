@@ -662,7 +662,43 @@ actor SyncEngine {
                     if (existing.serverVersion ?? 0) < localNote.localVersion {
                         // Preserve local-only fields not included in server data
                         var mergedNote = localNote
-                        mergedNote.moduleId = localNote.moduleId ?? existing.moduleId  // Accept remote module assignment if provided
+
+                        // Resolve moduleId carefully. Modules are device-local UUIDs piggybacked on notes:
+                        // the same project name has a different UUID on each device. Naively trusting the
+                        // remote moduleId orphans the note locally and triggers cleanupOrphanedModules to
+                        // create a phantom 'Synced' module — making the page appear to move/disappear.
+                        // Resolution order:
+                        //   1. If the existing local moduleId already names the same project, keep it.
+                        //   2. Else if a local module shares the remote name, remap to it.
+                        //   3. Else if the remote moduleId happens to exist locally, accept it.
+                        //   4. Else keep the existing local moduleId rather than orphan the note.
+                        var resolvedModuleId: String? = existing.moduleId
+                        if let remoteName = remoteNote.moduleName, !remoteName.isEmpty {
+                            if let existingId = existing.moduleId,
+                               let existingName = try String.fetchOne(db, sql: """
+                                   SELECT name FROM modules WHERE id = ? AND deletedAt IS NULL
+                               """, arguments: [existingId]),
+                               existingName == remoteName {
+                                resolvedModuleId = existingId
+                            } else if let nameMatchId = try String.fetchOne(db, sql: """
+                                SELECT id FROM modules WHERE name = ? AND deletedAt IS NULL
+                            """, arguments: [remoteName]) {
+                                resolvedModuleId = nameMatchId
+                                if resolvedModuleId != existing.moduleId {
+                                    print("[Sync] Remapped updated note \(localNote.id.prefix(8)) to local module '\(remoteName)' (\(nameMatchId.prefix(8)))")
+                                }
+                            } else if let remoteId = localNote.moduleId, !remoteId.isEmpty,
+                                      (try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM modules WHERE id = ? AND deletedAt IS NULL", arguments: [remoteId]) ?? 0) > 0 {
+                                resolvedModuleId = remoteId
+                            } else {
+                                resolvedModuleId = existing.moduleId ?? localNote.moduleId
+                            }
+                        } else if let remoteId = localNote.moduleId, !remoteId.isEmpty,
+                                  (try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM modules WHERE id = ? AND deletedAt IS NULL", arguments: [remoteId]) ?? 0) > 0 {
+                            resolvedModuleId = remoteId
+                        }
+                        mergedNote.moduleId = resolvedModuleId
+
                         mergedNote.tags = existing.tags
                         mergedNote.aiTags = existing.aiTags
                         mergedNote.viewCount = existing.viewCount
@@ -692,13 +728,18 @@ actor SyncEngine {
                     // Ensure the module exists locally (remap or create as needed)
                     var noteToInsert = localNote
                     if let moduleId = localNote.moduleId, !moduleId.isEmpty {
-                        let moduleExists = (try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM modules WHERE id = ?", arguments: [moduleId]) ?? 0) > 0
+                        // IMPORTANT: only count LIVE modules. A previously cross-device
+                        // sync may have created this module locally and then empty-cleanup
+                        // soft-deleted it; without `deletedAt IS NULL` the orphan would
+                        // be inserted with a soft-deleted moduleId and never appear in
+                        // any module view.
+                        let moduleExists = (try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM modules WHERE id = ? AND deletedAt IS NULL", arguments: [moduleId]) ?? 0) > 0
                         if !moduleExists {
                             let moduleName = remoteNote.moduleName ?? "Synced"
                             let moduleIcon = remoteNote.moduleIcon ?? "cloud"
                             let now = Int64(Date().timeIntervalSince1970 * 1000)
 
-                            // Check if a module with the same name already exists
+                            // Check if a module with the same name already exists (live)
                             if let existingId = try String.fetchOne(db, sql: """
                                 SELECT id FROM modules WHERE name = ? AND deletedAt IS NULL
                             """, arguments: [moduleName]) {
@@ -706,12 +747,21 @@ actor SyncEngine {
                                 noteToInsert.moduleId = existingId
                                 print("[Sync] Remapped new note \(localNote.id.prefix(8)) to existing module '\(moduleName)' (\(existingId.prefix(8)))")
                             } else {
-                                // Create the module with the server's ID
-                                try db.execute(sql: """
-                                    INSERT OR IGNORE INTO modules (id, name, icon, isDefault, storageType, orderIndex, createdAt, updatedAt)
-                                    VALUES (?, ?, ?, 0, 'cloud', 0, ?, ?)
-                                """, arguments: [moduleId, moduleName, moduleIcon, now, now])
-                                print("[Sync] Created module '\(moduleName)' (\(moduleId.prefix(8))) for new note")
+                                // If the moduleId already exists soft-deleted, restore it
+                                // rather than failing the INSERT OR IGNORE silently.
+                                let rowExists = (try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM modules WHERE id = ?", arguments: [moduleId]) ?? 0) > 0
+                                if rowExists {
+                                    try db.execute(sql: """
+                                        UPDATE modules SET deletedAt = NULL, name = ?, icon = ?, updatedAt = ? WHERE id = ?
+                                    """, arguments: [moduleName, moduleIcon, now, moduleId])
+                                    print("[Sync] Restored soft-deleted module '\(moduleName)' (\(moduleId.prefix(8))) for new note")
+                                } else {
+                                    try db.execute(sql: """
+                                        INSERT OR IGNORE INTO modules (id, name, icon, isDefault, storageType, orderIndex, createdAt, updatedAt)
+                                        VALUES (?, ?, ?, 0, 'cloud', 0, ?, ?)
+                                    """, arguments: [moduleId, moduleName, moduleIcon, now, now])
+                                    print("[Sync] Created module '\(moduleName)' (\(moduleId.prefix(8))) for new note")
+                                }
                             }
                         }
                     }
@@ -1192,33 +1242,74 @@ actor SyncEngine {
 
     // MARK: - Module Cleanup
 
-    /// Create missing modules for orphaned notes instead of reassigning them.
-    /// This preserves the server's moduleId so both devices converge.
+    /// Reconcile note↔module references. Notes whose moduleId points to a
+    /// soft-deleted (or missing) module get reassigned to a live module of the
+    /// same name when one exists — otherwise a new module is created preserving
+    /// the orphan's id and name. Without this, a "ghost" cycle develops:
+    ///   - Notes still reference an old soft-deleted Artifacts UUID.
+    ///   - The current live Artifacts has no notes pointing to it → looks empty.
+    ///   - Empty-cleanup deletes the live Artifacts.
+    ///   - Fallback recreates a fresh Artifacts with a new UUID.
+    ///   - Notes are still on the old UUID → repeat next sync.
+    /// Reassignment breaks the cycle and makes the user's notes visible in the
+    /// live module again.
     private func cleanupOrphanedModules() async {
         do { try await database.write { db in
             let now = Int64(Date().timeIntervalSince1970 * 1000)
 
-            // 1. Find orphaned moduleIds (non-deleted notes point to modules that don't exist locally)
+            // 1. Find orphaned moduleIds (non-deleted notes point to modules that don't exist
+            //    or are soft-deleted locally).
             let orphanedModuleIds = try String.fetchAll(db, sql: """
                 SELECT DISTINCT moduleId FROM notes
                 WHERE deletedAt IS NULL AND moduleId IS NOT NULL
                 AND NOT EXISTS (SELECT 1 FROM modules WHERE id = notes.moduleId AND deletedAt IS NULL)
             """)
 
-            // 2. Create missing modules for genuinely orphaned notes
-            for moduleId in orphanedModuleIds {
-                let inserted = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM modules WHERE id = ?", arguments: [moduleId]) ?? 0
-                if inserted == 0 {
+            // 2. For each orphaned moduleId: prefer reassigning to a live module of the
+            //    same name; otherwise create a new module preserving the original id+name.
+            for orphanModuleId in orphanedModuleIds {
+                // Look up the orphan's name regardless of deletedAt — soft-deleted modules
+                // still carry their name, which is what we need to find a live equivalent.
+                let orphanName = try String.fetchOne(db, sql: """
+                    SELECT name FROM modules WHERE id = ?
+                """, arguments: [orphanModuleId])
+
+                if let name = orphanName, !name.isEmpty,
+                   let liveModuleId = try String.fetchOne(db, sql: """
+                       SELECT id FROM modules WHERE name = ? AND deletedAt IS NULL
+                   """, arguments: [name]) {
+                    // Reassign orphan notes to the live same-named module. Mark them pending
+                    // so the moduleId change propagates to peers.
                     try db.execute(sql: """
-                        INSERT INTO modules (id, name, icon, isDefault, storageType, orderIndex, createdAt, updatedAt)
-                        VALUES (?, 'Synced', 'folder', 0, 'cloud', 0, ?, ?)
-                    """, arguments: [moduleId, now, now])
-                    print("[Sync] Created missing module for orphaned notes (moduleId: \(moduleId.prefix(8))...)")
+                        UPDATE notes SET moduleId = ?, syncStatus = 'pending', localVersion = localVersion + 1, updatedAt = ?
+                        WHERE moduleId = ? AND deletedAt IS NULL
+                    """, arguments: [liveModuleId, now, orphanModuleId])
+                    print("[Sync] Reassigned orphaned notes from soft-deleted module \(orphanModuleId.prefix(8)) to live module '\(name)' (\(liveModuleId.prefix(8)))")
+                } else {
+                    // No live same-named module — create one with the orphan's id so peers
+                    // referencing that id resolve correctly. Use the orphan's stored name
+                    // if available, otherwise fall back to 'Synced'.
+                    let inserted = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM modules WHERE id = ?", arguments: [orphanModuleId]) ?? 0
+                    if inserted == 0 {
+                        let createName = (orphanName?.isEmpty == false) ? orphanName! : "Synced"
+                        try db.execute(sql: """
+                            INSERT INTO modules (id, name, icon, isDefault, storageType, orderIndex, createdAt, updatedAt)
+                            VALUES (?, ?, 'folder', 0, 'cloud', 0, ?, ?)
+                        """, arguments: [orphanModuleId, createName, now, now])
+                        print("[Sync] Created missing module '\(createName)' for orphaned notes (\(orphanModuleId.prefix(8)))")
+                    } else {
+                        // Module row exists but is soft-deleted with no live same-name peer.
+                        // Restore it so its notes have somewhere to live.
+                        try db.execute(sql: """
+                            UPDATE modules SET deletedAt = NULL, updatedAt = ? WHERE id = ?
+                        """, arguments: [now, orphanModuleId])
+                        print("[Sync] Restored soft-deleted module \(orphanModuleId.prefix(8)) — orphaned notes still reference it and no same-named live module exists")
+                    }
                 }
             }
 
-            // 3. Delete empty non-default modules (no non-deleted notes)
-            // This handles: project deleted on another device → notes deleted via sync → module is now empty
+            // 3. Delete empty non-default modules (no non-deleted notes).
+            //    Handles: project deleted on another device → notes deleted via sync → module is now empty.
             let emptyModuleIds = try String.fetchAll(db, sql: """
                 SELECT m.id FROM modules m
                 WHERE m.deletedAt IS NULL AND m.isDefault = 0
@@ -1233,7 +1324,7 @@ actor SyncEngine {
                 print("[Sync] Cleaned up \(emptyModuleIds.count) empty modules")
             }
 
-            // 4. Ensure at least one module exists
+            // 4. Ensure at least one module exists.
             let remaining = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM modules WHERE deletedAt IS NULL") ?? 0
             if remaining == 0 {
                 try db.execute(sql: """
