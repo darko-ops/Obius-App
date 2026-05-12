@@ -1,23 +1,42 @@
 // Server-side entitlement checks
-// Uses the subscription_tier column set by the RevenueCat webhook
+// Uses the subscription_tier (+ subscription_period, has_power_addon) columns set by the
+// RevenueCat webhook (and the iOS client as a fallback).
+//
+// Unit Economics (post-rework):
+//   1 Credit = 1,000 tokens (input + output combined). Caps reset on the 1st of
+//   each calendar month, UTC. The Power Add-on grants +1,000 Credits/month on top
+//   of the base tier and is independent of Pro/Founders.
 
 import { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { errorResponse } from './supabase-client.ts';
 
 export type SubscriptionTier = 'free' | 'pro' | 'founding';
+export type SubscriptionPeriod = 'monthly' | 'annual' | null;
 
 interface UserTierInfo {
   tier: SubscriptionTier;
+  period: SubscriptionPeriod;
+  hasPowerAddon: boolean;
   isFoundingMember: boolean;
   expiresAt: string | null;
 }
 
-// Per-tier daily token limits (must match iOS TierLimits)
-const AI_TOKEN_LIMITS: Record<SubscriptionTier, number> = {
-  free: 50_000,
-  pro: 500_000,
-  founding: 500_000,
-};
+// 1 Credit = 1,000 tokens (must match iOS Credits.tokensPerCredit)
+export const TOKENS_PER_CREDIT = 1_000;
+
+// Per-tier monthly Credit caps (must match iOS TierLimits)
+//   - pro_monthly: 200, pro_annual: 250 (annual gets a small bonus)
+//   - free: 5 (a taste; conversion not retention)
+//   - founding: 200 (matches Pro Monthly)
+export const AI_CREDIT_LIMITS = {
+  free: 5,
+  pro_monthly: 200,
+  pro_annual: 250,
+  founding: 200,
+} as const;
+
+// Power Add-on: +1,000 Credits/month on top of the user's base tier
+export const POWER_ADDON_CREDITS = 1_000;
 
 // Per-tier entity limits (null = unlimited, must match iOS TierLimits)
 interface TierLimits {
@@ -53,7 +72,22 @@ export function getLimits(tier: SubscriptionTier): TierLimits {
 }
 
 /**
- * Get the subscription tier for a user from the database.
+ * Resolve the base monthly Credit cap for a (tier, period) combination.
+ * Does NOT include the Power Add-on — call `effectiveCreditCap` for that.
+ */
+export function baseCreditCap(tier: SubscriptionTier, period: SubscriptionPeriod): number {
+  if (tier === 'free') return AI_CREDIT_LIMITS.free;
+  if (tier === 'founding') return AI_CREDIT_LIMITS.founding;
+  // pro
+  return period === 'annual' ? AI_CREDIT_LIMITS.pro_annual : AI_CREDIT_LIMITS.pro_monthly;
+}
+
+export function effectiveCreditCap(info: UserTierInfo): number {
+  return baseCreditCap(info.tier, info.period) + (info.hasPowerAddon ? POWER_ADDON_CREDITS : 0);
+}
+
+/**
+ * Get the subscription tier (+ period + add-on) for a user from the database.
  */
 export async function getUserTier(
   supabase: SupabaseClient,
@@ -61,16 +95,17 @@ export async function getUserTier(
 ): Promise<UserTierInfo> {
   const { data, error } = await supabase
     .from('user_profiles')
-    .select('subscription_tier, is_founding_member, subscription_expires_at')
+    .select('subscription_tier, subscription_period, has_power_addon, is_founding_member, subscription_expires_at')
     .eq('id', userId)
     .single();
 
   if (error || !data) {
     console.warn(`[Entitlements] Could not fetch tier for ${userId}: ${error?.message}`);
-    return { tier: 'free', isFoundingMember: false, expiresAt: null };
+    return { tier: 'free', period: null, hasPowerAddon: false, isFoundingMember: false, expiresAt: null };
   }
 
   let tier = data.subscription_tier as SubscriptionTier;
+  let period = (data.subscription_period ?? null) as SubscriptionPeriod;
 
   // Check if subscription has expired (webhook may have been delayed)
   if (tier !== 'free' && data.subscription_expires_at) {
@@ -78,11 +113,17 @@ export async function getUserTier(
     if (expiresAt < new Date()) {
       // Expired — founding members keep access, others revert
       tier = data.is_founding_member ? 'founding' : 'free';
+      // Neither founding nor free has a monthly/annual period
+      period = null;
     }
   }
 
+  if (tier !== 'pro') period = null;
+
   return {
     tier,
+    period,
+    hasPowerAddon: data.has_power_addon === true,
     isFoundingMember: data.is_founding_member ?? false,
     expiresAt: data.subscription_expires_at,
   };
@@ -123,8 +164,16 @@ export async function requireFeature(
   return null;
 }
 
+/** Start of the current calendar month, UTC, as ISO string. */
+function monthStartIso(): string {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
+  return start.toISOString();
+}
+
 /**
- * Check AI token rate limit. Returns null if allowed, or an error Response if blocked.
+ * Check AI credit rate limit. Returns null if allowed, or an error Response if blocked.
+ * Cap window: the current calendar month, UTC.
  */
 export async function requireAIAction(
   supabase: SupabaseClient,
@@ -133,31 +182,23 @@ export async function requireAIAction(
   // Anonymous users get a small free allowance
   if (userId === 'anonymous') return null;
 
-  const { tier } = await getUserTier(supabase, userId);
-  const limit = AI_TOKEN_LIMITS[tier];
+  const info = await getUserTier(supabase, userId);
+  const cap = effectiveCreditCap(info);
 
-  // Sum today's token usage from usage_log
-  const todayStart = new Date();
-  todayStart.setUTCHours(0, 0, 0, 0);
+  const tokensUsed = await sumMonthTokens(supabase, userId);
+  const creditsUsed = Math.floor(tokensUsed / TOKENS_PER_CREDIT);
 
-  const { data, error } = await supabase
-    .from('usage_log')
-    .select('input_tokens, output_tokens')
-    .eq('user_id', userId)
-    .gte('created_at', todayStart.toISOString());
+  if (creditsUsed >= cap) {
+    const upgradeHint =
+      info.tier === 'free'
+        ? 'Upgrade to Pro for 200 Credits/month.'
+        : info.hasPowerAddon
+          ? 'Limit resets on the 1st of next month.'
+          : 'Add the Power Pack for +1,000 Credits/month, or wait for the 1st-of-month refill.';
 
-  if (error) {
-    console.warn(`[Entitlements] Could not check usage for ${userId}: ${error.message}`);
-    return null; // fail open
-  }
-
-  const tokensUsed = (data ?? []).reduce((sum: number, row: { input_tokens: number; output_tokens: number }) => sum + row.input_tokens + row.output_tokens, 0);
-
-  if (tokensUsed >= limit) {
-    const limitStr = limit >= 1000 ? `${Math.round(limit / 1000)}K` : `${limit}`;
     return errorResponse(
       'AI_LIMIT_REACHED',
-      `You've used all ${limitStr} tokens for today. ${tier === 'free' ? 'Upgrade to Pro for 500K/day.' : 'Limit resets at midnight UTC.'}`,
+      `You've used all ${cap} of your AI Credits this month. ${upgradeHint}`,
       429,
     );
   }
@@ -165,28 +206,46 @@ export async function requireAIAction(
   return null;
 }
 
-/**
- * Get today's total token usage for a user.
- */
-export async function getTokensUsedToday(
-  supabase: SupabaseClient,
-  userId: string,
-): Promise<number> {
-  const todayStart = new Date();
-  todayStart.setUTCHours(0, 0, 0, 0);
-
+/** Sum input + output tokens for the current month, UTC. */
+async function sumMonthTokens(supabase: SupabaseClient, userId: string): Promise<number> {
+  const since = monthStartIso();
   const { data, error } = await supabase
     .from('usage_log')
     .select('input_tokens, output_tokens')
     .eq('user_id', userId)
-    .gte('created_at', todayStart.toISOString());
+    .gte('created_at', since);
 
   if (error) {
-    console.warn(`[Entitlements] Could not fetch token usage for ${userId}: ${error.message}`);
-    return 0;
+    console.warn(`[Entitlements] Could not check usage for ${userId}: ${error.message}`);
+    return 0; // fail open
   }
 
-  return (data ?? []).reduce((sum: number, row: { input_tokens: number; output_tokens: number }) => sum + row.input_tokens + row.output_tokens, 0);
+  return (data ?? []).reduce(
+    (sum: number, row: { input_tokens: number; output_tokens: number }) => sum + row.input_tokens + row.output_tokens,
+    0,
+  );
+}
+
+/**
+ * Get this month's total Credit usage for a user (rounded down to whole Credits).
+ */
+export async function getCreditsUsedThisMonth(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<number> {
+  const tokens = await sumMonthTokens(supabase, userId);
+  return Math.floor(tokens / TOKENS_PER_CREDIT);
+}
+
+/**
+ * Backwards-compatible alias. Returns this month's raw token total.
+ * Prefer `getCreditsUsedThisMonth` for new code.
+ */
+export async function getTokensUsedThisMonth(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<number> {
+  return await sumMonthTokens(supabase, userId);
 }
 
 /**

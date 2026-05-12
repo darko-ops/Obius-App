@@ -17,8 +17,10 @@ final class EchoManager: ObservableObject {
 
     private init() {}
 
-    /// Initialize with repository — call once during app startup
+    /// Initialize with repository — call once during app startup.
+    /// Safe to re-call on account switch; existing subscriptions are torn down first.
     func initialize(echoRepository: EchoRepository) {
+        reset()
         self.echoRepository = echoRepository
 
         echoRepository.$activeEchoes
@@ -30,6 +32,17 @@ final class EchoManager: ObservableObject {
                 self?.scheduleNextCheck()
             }
             .store(in: &cancellables)
+    }
+
+    /// Drop all per-user state. Called on sign-out / account switch before re-initialize.
+    func reset() {
+        cancellables.removeAll()
+        checkTimer?.invalidate()
+        checkTimer = nil
+        echoRepository = nil
+        activeEchoes = []
+        firedEcho = nil
+        isLoaded = false
     }
 
     /// Schedule a precise timer for the next echo fire date

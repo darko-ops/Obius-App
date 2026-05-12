@@ -139,6 +139,12 @@ final class AuthManager: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
+        // Clear tier state up front so the UI doesn't briefly show the previous
+        // user's plan while supabase.signOut + the auth-state observer chain run.
+        // AppState.switchUser also calls this, but the observer fires async — so
+        // we want a deterministic synchronous reset here.
+        TierManager.shared.logout()
+
         do {
             try await supabase.signOut()
             currentUser = nil
@@ -149,6 +155,17 @@ final class AuthManager: ObservableObject {
         } catch {
             authError = error.localizedDescription
         }
+    }
+
+    // MARK: - Delete Account
+
+    /// Permanently deletes the user's cloud account and all associated data.
+    /// Server-side cascade removes every row in public.* owned by this user, and
+    /// storage objects under the user's folder are wiped. The local sign-out and
+    /// on-device wipe are performed by the caller after this returns.
+    func deleteAccount() async throws {
+        struct EmptyBody: Encodable {}
+        try await supabase.invokeFunction("delete-account", body: EmptyBody())
     }
 
     // MARK: - Update Profile

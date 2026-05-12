@@ -64,10 +64,41 @@ final class NoteRepository: ObservableObject {
     // MARK: - Create
 
     func createNote(title: String? = nil, intent: IntentType = .idea, moduleId: String? = nil) async throws -> Note {
+        // Validate moduleId at insert time. The UI's @AppStorage selectedModuleId
+        // can lag behind sync's empty-module cleanup, so we may be handed an id
+        // that points to a row that was just soft-deleted — which would land the
+        // new note as an orphan and make it invisible in the current module view
+        // until the next cleanup pass reassigns it.
+        let resolvedModuleId = try await database.read { db -> String? in
+            guard let requested = moduleId else { return nil }
+            let liveCount = try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM modules WHERE id = ? AND deletedAt IS NULL",
+                arguments: [requested]
+            ) ?? 0
+            if liveCount > 0 { return requested }
+            // Soft-deleted (or missing). Try to remap to a live module of the same name.
+            if let staleName = try String.fetchOne(
+                db, sql: "SELECT name FROM modules WHERE id = ?", arguments: [requested]
+            ),
+            let liveByName = try String.fetchOne(
+                db,
+                sql: "SELECT id FROM modules WHERE name = ? AND deletedAt IS NULL ORDER BY createdAt LIMIT 1",
+                arguments: [staleName]
+            ) {
+                return liveByName
+            }
+            // No same-name live module — fall back to any live module.
+            return try String.fetchOne(
+                db,
+                sql: "SELECT id FROM modules WHERE deletedAt IS NULL ORDER BY createdAt LIMIT 1"
+            )
+        }
+
         let note = Note(
             title: title,
             intent: intent,
-            moduleId: moduleId
+            moduleId: resolvedModuleId
         )
 
         try await database.write { db in

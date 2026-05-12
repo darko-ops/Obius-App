@@ -75,46 +75,102 @@ struct PaywallSheet: View {
 
     private var planCards: some View {
         VStack(spacing: 10) {
-            // Monthly
+            // Monthly — $9.99/mo · 200 Credits/month · 14-day free trial
             if let monthly = storeManager.monthlyPackage {
                 planCard(
                     plan: .monthly,
-                    title: "Monthly",
+                    title: "Pro Monthly",
                     price: monthly.storeProduct.localizedPriceString,
-                    detail: "per month",
-                    badge: nil,
+                    detail: "per month · 200 Credits/mo",
+                    badge: "14-DAY TRIAL",
                     subtitle: "Full access, cancel anytime"
                 )
             }
 
-            // Annual
+            // Annual — $79/yr · 250 Credits/month · 14-day free trial
             if let annual = storeManager.yearlyPackage {
                 let monthlyEquiv = formattedMonthlyPrice(from: annual)
                 planCard(
                     plan: .annual,
-                    title: "Annual",
+                    title: "Pro Annual",
                     price: annual.storeProduct.localizedPriceString,
-                    detail: "\(monthlyEquiv)/mo · billed yearly",
-                    badge: "SAVE 33%",
-                    subtitle: "Best value for most people"
+                    detail: "\(monthlyEquiv)/mo · billed yearly · 250 Credits/mo",
+                    badge: "BEST VALUE",
+                    subtitle: "Save ~34% vs monthly · 14-day trial"
                 )
             }
 
-            // Founders
+            // Founders — $5.99/mo locked forever · 200 Credits/month · 300 spots
             if let founders = storeManager.lifetimePackage {
                 let spotsLeft = tierManager.foundersSpotsRemaining
                 planCard(
                     plan: .founders,
                     title: "Founders Plan",
                     price: founders.storeProduct.localizedPriceString,
-                    detail: "per month · locked forever",
+                    detail: "per month · locked forever · 200 Credits/mo",
                     badge: spotsLeft > 0 ? "\(spotsLeft) SPOTS LEFT" : "SOLD OUT",
-                    subtitle: "14-day free trial · Early access · Founders badge",
+                    subtitle: "Locked rate forever · Early access · Founders badge",
                     isFounders: true,
                     isSoldOut: spotsLeft <= 0
                 )
             }
+
+            // Power Add-on — $9.99/mo, only relevant once user has Pro/Founders
+            if tierManager.currentTier != .free, let power = storeManager.powerAddonPackage {
+                powerAddonCard(package: power)
+            }
         }
+    }
+
+    @ViewBuilder
+    private func powerAddonCard(package: Package) -> some View {
+        let active = tierManager.hasPowerAddon
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "bolt.fill")
+                    .foregroundStyle(.yellow)
+                Text("Power Add-on")
+                    .font(.subheadline.weight(.semibold))
+                if active {
+                    Text("ACTIVE")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.green))
+                }
+            }
+            Text("\(package.storeProduct.localizedPriceString)/mo · +1,000 Credits/month")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("For users hammering the AI Workspace. Stacks on top of your plan.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            if !active {
+                Button {
+                    purchasePackage(package)
+                } label: {
+                    Text("Add Power Pack")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Color.yellow))
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.yellow.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.yellow.opacity(0.4), lineWidth: 1.5)
+        )
     }
 
     private func planCard(
@@ -205,14 +261,23 @@ struct PaywallSheet: View {
             comparisonRow("Notes", free: "50", paid: "Unlimited")
             comparisonRow("Search & capture", free: "checkmark", paid: "checkmark")
             comparisonRow("Multi-device sync", free: nil, paid: "checkmark")
-            comparisonRow("AI resurfacing", free: nil, paid: "checkmark")
-            comparisonRow("AI tokens / day", free: "50K", paid: "500K")
+            comparisonRow("AI Credits / month", free: "5", paid: paidCreditsLabel)
+            comparisonRow("Semantic Search", free: nil, paid: "checkmark")
+            comparisonRow("AI Workspace", free: nil, paid: "checkmark")
             comparisonRow("Version history", free: nil, paid: "checkmark")
             comparisonRow("Share links", free: nil, paid: "checkmark")
-            comparisonRow("AI workspace", free: nil, paid: "checkmark")
         }
         .background(Color.secondarySystemBackground)
         .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    /// Credit value in the "Paid" column — adjusts based on which plan the user
+    /// has currently selected so the table reads as expected.
+    private var paidCreditsLabel: String {
+        switch selectedPlan {
+        case .annual: return "250"
+        case .founders, .monthly: return "200"
+        }
     }
 
     private var comparisonHeader: some View {
@@ -299,13 +364,16 @@ struct PaywallSheet: View {
 
     private var purchaseButtonLabel: String {
         guard let package = selectedPackage else { return "Subscribe" }
-        if selectedPlan == .founders {
-            return "Start 14-Day Free Trial"
+        switch selectedPlan {
+        case .founders:
+            // Founders is no-trial — locked rate is the offer
+            return "Lock In Founders Rate"
+        case .monthly, .annual:
+            if package.storeProduct.introductoryDiscount != nil {
+                return "Start 14-Day Free Trial"
+            }
+            return "Subscribe"
         }
-        if package.storeProduct.introductoryDiscount != nil {
-            return "Start Free Trial"
-        }
-        return "Subscribe"
     }
 
     // MARK: - Footer
@@ -382,7 +450,7 @@ extension GatedFeature {
     var softMessage: String {
         switch self {
         case .notes: return "Unlock unlimited notes"
-        case .aiActions: return "Get more AI tokens"
+        case .aiActions: return "Get more AI Credits"
         case .aiWorkspace: return "Unlock the AI workspace"
         case .cloudSync: return "Sync across all your devices"
         case .commits: return "Unlock version history"

@@ -9,30 +9,105 @@ class ColdStore: ObservableObject {
 
     private let fileManager = FileManager.default
 
-    /// Directory for .obx commit files
-    private let vaultDirectory: URL
+    /// The user this store is currently scoped to. `nil` means anonymous.
+    private(set) var userId: String?
 
-    /// Directory for content-addressable media files
-    private let mediaDirectory: URL
+    /// Directory for .obx commit files (per-user)
+    private var vaultDirectory: URL
+
+    /// Directory for content-addressable media files (per-user)
+    private var mediaDirectory: URL
 
     init() {
-        let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        vaultDirectory = documents.appendingPathComponent("vault", isDirectory: true)
-        mediaDirectory = documents.appendingPathComponent("media", isDirectory: true)
-
+        let userId: String? = nil
+        let dirs = Self.directories(forUserId: userId)
+        self.userId = userId
+        self.vaultDirectory = dirs.vault
+        self.mediaDirectory = dirs.media
         createDirectoriesIfNeeded()
     }
 
     /// Initialize with custom directories (for testing)
     init(vaultDirectory: URL, mediaDirectory: URL) {
+        self.userId = nil
         self.vaultDirectory = vaultDirectory
         self.mediaDirectory = mediaDirectory
+        createDirectoriesIfNeeded()
+    }
+
+    /// Returns per-user vault and media directories. Anonymous users get a
+    /// dedicated `users/anon` scope so account A's commits never appear in B.
+    private static func directories(forUserId userId: String?) -> (vault: URL, media: URL) {
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let scope = (userId?.isEmpty == false ? userId!.lowercased() : "anon")
+        let userRoot = documents
+            .appendingPathComponent("users", isDirectory: true)
+            .appendingPathComponent(scope, isDirectory: true)
+        return (
+            vault: userRoot.appendingPathComponent("vault", isDirectory: true),
+            media: userRoot.appendingPathComponent("media", isDirectory: true)
+        )
+    }
+
+    /// Re-point the Cold Store at a different user's directories. Existing
+    /// commits/media are not touched — each scope keeps its own files.
+    func switchUser(_ userId: String?) {
+        guard userId != self.userId else { return }
+        let dirs = Self.directories(forUserId: userId)
+        self.userId = userId
+        self.vaultDirectory = dirs.vault
+        self.mediaDirectory = dirs.media
         createDirectoriesIfNeeded()
     }
 
     private func createDirectoriesIfNeeded() {
         try? fileManager.createDirectory(at: vaultDirectory, withIntermediateDirectories: true)
         try? fileManager.createDirectory(at: mediaDirectory, withIntermediateDirectories: true)
+    }
+
+    /// One-time migration from the legacy single-tenant `Documents/vault` and
+    /// `Documents/media` into the current user's scoped directory. Safe to call
+    /// repeatedly — only runs while legacy directories still exist and the
+    /// destination is empty.
+    static func migrateLegacyDirectoriesIfNeeded(currentUserId: String?) {
+        let fm = FileManager.default
+        let documents = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let legacyVault = documents.appendingPathComponent("vault", isDirectory: true)
+        let legacyMedia = documents.appendingPathComponent("media", isDirectory: true)
+
+        let dirs = directories(forUserId: currentUserId)
+
+        for (legacy, destination) in [(legacyVault, dirs.vault), (legacyMedia, dirs.media)] {
+            guard fm.fileExists(atPath: legacy.path) else { continue }
+
+            // If destination doesn't exist yet, just rename the whole tree.
+            if !fm.fileExists(atPath: destination.path) {
+                try? fm.createDirectory(at: destination.deletingLastPathComponent(),
+                                        withIntermediateDirectories: true)
+                do {
+                    try fm.moveItem(at: legacy, to: destination)
+                    print("[ColdStore] Migrated legacy \(legacy.lastPathComponent) → \(destination.path)")
+                    continue
+                } catch {
+                    print("[ColdStore] Migration move failed for \(legacy.lastPathComponent): \(error)")
+                }
+            }
+
+            // Otherwise merge contents and remove the legacy dir if empty.
+            if let contents = try? fm.contentsOfDirectory(atPath: legacy.path) {
+                try? fm.createDirectory(at: destination, withIntermediateDirectories: true)
+                for item in contents {
+                    let src = legacy.appendingPathComponent(item)
+                    let dst = destination.appendingPathComponent(item)
+                    if !fm.fileExists(atPath: dst.path) {
+                        try? fm.moveItem(at: src, to: dst)
+                    }
+                }
+                if let remaining = try? fm.contentsOfDirectory(atPath: legacy.path), remaining.isEmpty {
+                    try? fm.removeItem(at: legacy)
+                }
+            }
+        }
     }
 
     // MARK: - Commit Storage

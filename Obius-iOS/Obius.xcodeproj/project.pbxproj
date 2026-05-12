@@ -91,6 +91,7 @@
 		B8A1D0010000000000000098 /* Inter-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000098 /* Inter-SemiBold.ttf */; };
 		B8A1D0010000000000000099 /* Inter-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000099 /* Inter-Bold.ttf */; };
 		B8A1D0010000000000000100 /* Inter-Light.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000100 /* Inter-Light.ttf */; };
+		B8A1D0010000000000000120 /* LexendExa-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000120 /* LexendExa-SemiBold.ttf */; };
 		B8A1D0010000000000000091 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = B8A1E0010000000000000091 /* GRDB */; };
 		B8A1D0010000000000000092 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = B8A1E0010000000000000092 /* Supabase */; };
 		B8A1D0010000000000000093 /* ProfileImageManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000093 /* ProfileImageManager.swift */; };
@@ -243,6 +244,7 @@
 		B8A1F0010000000000000098 /* Inter-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Inter-SemiBold.ttf"; sourceTree = "<group>"; };
 		B8A1F0010000000000000099 /* Inter-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Inter-Bold.ttf"; sourceTree = "<group>"; };
 		B8A1F0010000000000000100 /* Inter-Light.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Inter-Light.ttf"; sourceTree = "<group>"; };
+		B8A1F0010000000000000120 /* LexendExa-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "LexendExa-SemiBold.ttf"; sourceTree = "<group>"; };
 		B8A1F0020000000000000001 /* ShareLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareLink.swift; sourceTree = "<group>"; };
 		B8A1F0020000000000000002 /* Comment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Comment.swift; sourceTree = "<group>"; };
 		B8A1F0020000000000000003 /* ShareLinkRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareLinkRepository.swift; sourceTree = "<group>"; };
@@ -579,6 +581,7 @@
 				B8A1F0010000000000000098 /* Inter-SemiBold.ttf */,
 				B8A1F0010000000000000099 /* Inter-Bold.ttf */,
 				B8A1F0010000000000000100 /* Inter-Light.ttf */,
+				B8A1F0010000000000000120 /* LexendExa-SemiBold.ttf */,
 			);
 			path = Fonts;
 			sourceTree = "<group>";
@@ -727,6 +730,7 @@
 				B8A1D0010000000000000098 /* Inter-SemiBold.ttf in Resources */,
 				B8A1D0010000000000000099 /* Inter-Bold.ttf in Resources */,
 				B8A1D0010000000000000100 /* Inter-Light.ttf in Resources */,
+				B8A1D0010000000000000120 /* LexendExa-SemiBold.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

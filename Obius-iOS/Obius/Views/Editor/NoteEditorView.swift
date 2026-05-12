@@ -138,7 +138,11 @@ private struct NoteEditorContent: View {
         let totalSections = viewModel.sections.count
         let pendingSections = viewModel.sections.filter { $0.syncStatus == .pending }.count
         print("[Sync] syncPendingEntities: note=\(viewModel.note?.syncStatus.rawValue ?? "nil") sections=\(totalSections) (pending=\(pendingSections))")
-        if let note = viewModel.note, note.syncStatus == .pending {
+        // Skip soft-deleted entities. deleteNote() sets deletedAt and syncStatus=pending,
+        // and logNoteDelete writes the delete op; logging a create/update here would
+        // overwrite the pending delete op (logOperationSync purges existing unsynced ops
+        // for the same entity), so the deletion would never reach the server.
+        if let note = viewModel.note, note.syncStatus == .pending, note.deletedAt == nil {
             if note.serverVersion == nil {
                 await appState.syncLogger.logNoteCreateSync(note)
             } else {
@@ -147,7 +151,7 @@ private struct NoteEditorContent: View {
         }
         var pendingSectionCount = 0
         for section in viewModel.sections {
-            guard section.syncStatus == .pending else { continue }
+            guard section.syncStatus == .pending, section.deletedAt == nil else { continue }
             pendingSectionCount += 1
             if section.serverVersion == nil {
                 await appState.syncLogger.logSectionCreateSync(section)
@@ -197,6 +201,13 @@ private struct NoteEditorContent: View {
                 if isFocused {
                     focusedSectionId = nil
                     viewModel.focusedSectionId = nil
+                } else {
+                    // Reconcile bodyText with the latest model body on blur — we
+                    // skip observation-driven updates while typing to prevent stale
+                    // echoes from jumping the caret, so do the catch-up here.
+                    if let body = viewModel.note?.body, body != bodyText {
+                        DispatchQueue.main.async { bodyText = body }
+                    }
                 }
             }
             .onChange(of: viewModel.isLoading) { _, isLoading in
@@ -856,7 +867,10 @@ private struct NoteEditorContent: View {
         ToolbarItem(placement: .principal) {
             if titleVisible {
                 Image("ObiusLogo")
+                    .resizable()
                     .renderingMode(.original)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 28, height: 28)
                     .transition(.opacity)
             } else {
                 Text(viewModel.displayTitle)
@@ -877,11 +891,18 @@ private struct NoteEditorContent: View {
         }
 
         #if os(iOS)
-        ToolbarItemGroup(placement: .keyboard) {
+        // Single ToolbarItem (not ToolbarItemGroup) wrapping an HStack — on
+        // iOS 26 each ToolbarItemGroup child renders as a separate pill, so
+        // the seven controls below were overflowing the screen. Collapsed
+        // into one HStack they share a single bar.
+        ToolbarItem(placement: .keyboard) {
             // Suppress while the AI workspace sheet is up — its chat input
             // doesn't need page-editor controls and they were overlapping it.
             if !showingAIWorkspace && !showWorkspaceSheet {
-                keyboardToolbarItems
+                HStack(spacing: 14) {
+                    keyboardToolbarItems
+                }
+                .frame(maxWidth: .infinity)
             }
         }
         #endif
@@ -2321,6 +2342,10 @@ private struct NoteEditorContent: View {
         .onReceive(viewModel.$note) { note in
             // Skip live updates while workspace is open — resyncFromViewModel handles dismiss
             guard !showWorkspaceSheet && !showingAIWorkspace else { return }
+            // Don't overwrite bodyText while the user is typing — async updateBody
+            // echoes back out of order and can revert text mid-keystroke. Catch-up
+            // happens on blur.
+            guard !bodyFocused else { return }
             if let body = note?.body, body != bodyText {
                 print("[DEBUG] .onReceive(note) body changed: \(body.prefix(50))")
                 DispatchQueue.main.async {
@@ -2385,6 +2410,13 @@ private struct NoteEditorContent: View {
         .onChange(of: viewModel.note?.body) { _, newBody in
             // Skip live updates while workspace is open — resyncFromViewModel handles dismiss
             guard !showWorkspaceSheet && !showingAIWorkspace else { return }
+            // While the user is typing in the body, treat their local edits as the
+            // source of truth. updateBody's async DB writes echo back through the
+            // observation out of order — applying an older snapshot here while the
+            // user has already typed further reverts text mid-keystroke and jumps
+            // the caret into the middle of the typed string. Stale echoes are
+            // reconciled on blur (see .onChange of bodyFocused above).
+            guard !bodyFocused else { return }
             if let newBody = newBody, newBody != bodyText {
                 print("[DEBUG] .onChange(note.body) → bodyText: \(newBody.prefix(50))")
                 isExternalBodyUpdate = true
@@ -2565,15 +2597,18 @@ private struct NoteEditorContent: View {
 // MARK: - Body Text View (iOS)
 
 #if os(iOS)
-/// Keyboard toolbar for body text with formatting buttons
-class BodyKeyboardToolbar: UIToolbar {
+/// Keyboard toolbar for body text with formatting buttons.
+///
+/// Plain UIView (not UIToolbar) so iOS 26 doesn't auto-pill every UIBarButtonItem
+/// into its own bubble — the formatting controls stay in one continuous bar.
+class BodyKeyboardToolbar: UIView {
     weak var textView: UITextView?
     var onDismiss: (() -> Void)?
 
-    private var titleButton: UIBarButtonItem?
-    private var boldButton: UIBarButtonItem?
-    private var italicButton: UIBarButtonItem?
-    private var underlineButton: UIBarButtonItem?
+    private var titleButton: UIButton?
+    private var boldButton: UIButton?
+    private var italicButton: UIButton?
+    private var underlineButton: UIButton?
 
     // Track active formatting states for typing
     private var isTitleActive = false
@@ -2603,88 +2638,88 @@ class BodyKeyboardToolbar: UIToolbar {
         self.init(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 44))
     }
 
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: 44)
+    }
+
     private func setupToolbar() {
-        barStyle = .default
-        isTranslucent = true
-        sizeToFit()
+        // System-material blur background to match the keyboard surface.
+        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+        blur.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(blur)
+        NSLayoutConstraint.activate([
+            blur.topAnchor.constraint(equalTo: topAnchor),
+            blur.leadingAnchor.constraint(equalTo: leadingAnchor),
+            blur.trailingAnchor.constraint(equalTo: trailingAnchor),
+            blur.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
 
-        var items: [UIBarButtonItem] = []
+        // Hairline separator on top edge
+        let separator = UIView()
+        separator.backgroundColor = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(separator)
+        NSLayoutConstraint.activate([
+            separator.topAnchor.constraint(equalTo: topAnchor),
+            separator.leadingAnchor.constraint(equalTo: leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: trailingAnchor),
+            separator.heightAnchor.constraint(equalToConstant: 0.5),
+        ])
 
-        // Indent/Outdent buttons (visual consistency, disabled for body)
-        let outdentButton = UIBarButtonItem(
-            image: UIImage(systemName: "decrease.indent"),
-            style: .plain,
-            target: nil,
-            action: nil
-        )
-        outdentButton.isEnabled = false
-        items.append(outdentButton)
+        // Indent/Outdent (disabled for body — visual parity with section editor)
+        let outdent = makeButton(systemName: "decrease.indent")
+        outdent.isEnabled = false
 
-        let indentButton = UIBarButtonItem(
-            image: UIImage(systemName: "increase.indent"),
-            style: .plain,
-            target: nil,
-            action: nil
-        )
-        indentButton.isEnabled = false
-        items.append(indentButton)
+        let indent = makeButton(systemName: "increase.indent")
+        indent.isEnabled = false
 
-        let flexSpace = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
-        items.append(flexSpace)
-
-        // Title size button
-        let title = UIBarButtonItem(
-            image: UIImage(systemName: "textformat.size"),
-            style: .plain,
-            target: self,
-            action: #selector(titleTapped)
-        )
+        // Formatting controls
+        let title = makeButton(systemName: "textformat.size", action: #selector(titleTapped))
         titleButton = title
-        items.append(title)
-
-        // Formatting buttons
-        let bold = UIBarButtonItem(
-            image: UIImage(systemName: "bold"),
-            style: .plain,
-            target: self,
-            action: #selector(boldTapped)
-        )
+        let bold = makeButton(systemName: "bold", action: #selector(boldTapped))
         boldButton = bold
-        items.append(bold)
-
-        let italic = UIBarButtonItem(
-            image: UIImage(systemName: "italic"),
-            style: .plain,
-            target: self,
-            action: #selector(italicTapped)
-        )
+        let italic = makeButton(systemName: "italic", action: #selector(italicTapped))
         italicButton = italic
-        items.append(italic)
-
-        let underline = UIBarButtonItem(
-            image: UIImage(systemName: "underline"),
-            style: .plain,
-            target: self,
-            action: #selector(underlineTapped)
-        )
+        let underline = makeButton(systemName: "underline", action: #selector(underlineTapped))
         underlineButton = underline
-        items.append(underline)
 
-        // Add spacing
-        let fixedSpace = UIBarButtonItem(barButtonSystemItem: .fixedSpace, target: nil, action: nil)
-        fixedSpace.width = 12
-        items.append(fixedSpace)
+        // Dismiss keyboard
+        let dismiss = makeButton(systemName: "keyboard.chevron.compact.down", action: #selector(dismissTapped))
 
-        // Dismiss button (far right)
-        let dismissButton = UIBarButtonItem(
-            image: UIImage(systemName: "keyboard.chevron.compact.down"),
-            style: .plain,
-            target: self,
-            action: #selector(dismissTapped)
-        )
-        items.append(dismissButton)
+        // Flexible spacer pushes the formatting + dismiss group right.
+        let spacer = UIView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        setItems(items, animated: false)
+        let stack = UIStackView(arrangedSubviews: [
+            outdent, indent, spacer,
+            title, bold, italic, underline, dismiss,
+        ])
+        stack.axis = .horizontal
+        stack.spacing = 14
+        stack.alignment = .center
+        stack.distribution = .fill
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+        ])
+    }
+
+    private func makeButton(systemName: String, action: Selector? = nil) -> UIButton {
+        var config = UIButton.Configuration.plain()
+        config.image = UIImage(systemName: systemName)
+        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 6, bottom: 6, trailing: 6)
+        let btn = UIButton(configuration: config)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        if let action {
+            btn.addTarget(self, action: action, for: .touchUpInside)
+        }
+        return btn
     }
 
     private func updateButtonAppearance() {
@@ -2903,10 +2938,16 @@ struct BodyTextView: UIViewRepresentable {
         }
         textView.inputAccessoryView = toolbar
 
-        // Load rich text if available on initial creation
+        // Load rich text if available on initial creation.
+        // Only use it when its plain text matches `text` — peers may push body-only
+        // updates that leave an out-of-sync bodyRichText behind, which would
+        // otherwise render stale content on first open.
         if let richText = richText,
-           let attrText = RichTextHelper.deserialize(richText) {
+           let attrText = RichTextHelper.deserialize(richText),
+           attrText.string == text {
             textView.attributedText = attrText
+        } else {
+            textView.text = text
         }
 
         // Highlight any existing hashtags on load
@@ -2937,8 +2978,12 @@ struct BodyTextView: UIViewRepresentable {
             // programmatic updates, which would trigger a DB write-back loop.
             let selectedRange = textView.selectedRange
             textView.delegate = nil
+            // Only apply richText when its plain text matches the current `text`
+            // binding. Cross-device body edits don't always re-serialize the RTF,
+            // so the bodyRichText can lag behind body and render stale content.
             if let richText = richText,
-               let attrText = RichTextHelper.deserialize(richText) {
+               let attrText = RichTextHelper.deserialize(richText),
+               attrText.string == text {
                 textView.attributedText = attrText
             } else {
                 // Reset typingAttributes to body defaults before reassigning

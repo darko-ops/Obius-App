@@ -1097,7 +1097,10 @@ struct CommitDetailSheet: View {
             }
             ToolbarItem(placement: .principal) {
                 Image("ObiusLogo")
+                    .resizable()
                     .renderingMode(.original)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 28, height: 28)
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button {

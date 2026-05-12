@@ -297,8 +297,14 @@ private struct NotesListContent: View {
         }
         .onAppear {
             DispatchQueue.main.async {
-                if selectedModuleId == nil, let local = moduleRepository.getLocalModule() {
-                    selectedModuleId = local.id
+                // Also validate that a persisted selectedModuleId still points to a
+                // live module. @AppStorage survives across launches and sync-time
+                // empty-module cleanup can soft-delete the UUID we last selected —
+                // leaving the user staring at an empty list of a module that doesn't
+                // exist anymore.
+                if selectedModuleId == nil
+                    || !moduleRepository.modules.contains(where: { $0.id == selectedModuleId }) {
+                    selectedModuleId = moduleRepository.getLocalModule()?.id
                 }
             }
         }

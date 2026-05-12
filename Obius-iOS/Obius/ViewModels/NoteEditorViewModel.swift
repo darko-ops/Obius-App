@@ -449,7 +449,12 @@ final class NoteEditorViewModel: ObservableObject {
 
     /// Check if the note is completely empty (no content anywhere)
     var isNoteEmpty: Bool {
-        guard let note = note else { return true }
+        // If the note model hasn't loaded yet, do NOT treat the page as empty —
+        // otherwise a quick open/close (before the DB observation fires) would
+        // soft-delete a note that actually has content on disk, and the delete
+        // op propagates to other devices.
+        guard let note = note else { return false }
+        if isLoading { return false }
 
         // Check if title has content (treat "Untitled" as no content)
         let trimmedTitle = note.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

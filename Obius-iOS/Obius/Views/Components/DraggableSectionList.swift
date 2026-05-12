@@ -395,11 +395,26 @@ struct InterstitialTextField: View {
             text = getContent(afterSectionId)
         }
         .onChange(of: modelContent) { _, newContent in
-            // Sync text when the underlying model changes (e.g. content merged during section deletion)
+            // Sync text when the underlying model changes (e.g. content merged during section deletion).
+            // While the user is typing, the local @State is the source of truth — async DB writes echo
+            // back out of order and would otherwise revert the text mid-keystroke and jump the caret.
+            // Reconcile on blur instead (see .onChange of isFocused below).
+            guard !isFocused else { return }
             if newContent != text {
                 isExternalUpdate = true
                 text = newContent
                 // Delay reset to absorb the write-back cascade from the text view
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    isExternalUpdate = false
+                }
+            }
+        }
+        .onChange(of: isFocused) { _, focused in
+            // Reconcile text with the latest model on blur — observation-driven updates
+            // are suppressed during typing to prevent caret jumps from stale echoes.
+            if !focused, modelContent != text {
+                isExternalUpdate = true
+                text = modelContent
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     isExternalUpdate = false
                 }

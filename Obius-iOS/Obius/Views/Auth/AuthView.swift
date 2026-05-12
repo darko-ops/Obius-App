@@ -32,15 +32,19 @@ struct SignInView: View {
             Spacer()
 
             // Logo/Title
-            VStack(spacing: 8) {
-                Image(systemName: "note.text")
-                    .font(.system(size: 60))
-                    .foregroundStyle(Color.accentColor)
+            VStack(spacing: 0) {
+                Image("ObiusLogo")
+                    .resizable()
+                    .renderingMode(.original)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 96, height: 96)
+                    .padding(.bottom, 20)
 
                 Text("Obius")
-                    .font(.largeTitle.bold())
+                    .font(.custom("LexendExa-SemiBold", size: 34, relativeTo: .largeTitle))
+                    .padding(.bottom, 2)
 
-                Text("Local-first notes with AI")
+                Text("Architect your thoughts")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -74,13 +78,16 @@ struct SignInView: View {
                 } label: {
                     if authManager.isLoading {
                         ProgressView()
+                            .tint(.black)
                             .frame(maxWidth: .infinity)
                     } else {
                         Text("Sign In")
+                            .foregroundStyle(.black)
                             .frame(maxWidth: .infinity)
                     }
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(.white)
                 .disabled(email.isEmpty || password.isEmpty || authManager.isLoading)
 
                 Button("Forgot password?") {
@@ -142,11 +149,19 @@ struct SignUpView: View {
             Spacer()
 
             // Title
-            VStack(spacing: 8) {
-                Text("Create Account")
-                    .font(.largeTitle.bold())
+            VStack(spacing: 0) {
+                Image("ObiusLogo")
+                    .resizable()
+                    .renderingMode(.original)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 96, height: 96)
+                    .padding(.bottom, 20)
 
-                Text("Start organizing your thoughts")
+                Text("Create Account")
+                    .font(.custom("LexendExa-SemiBold", size: 34, relativeTo: .largeTitle))
+                    .padding(.bottom, 2)
+
+                Text("Architect your thoughts")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -198,13 +213,16 @@ struct SignUpView: View {
                 } label: {
                     if authManager.isLoading {
                         ProgressView()
+                            .tint(.black)
                             .frame(maxWidth: .infinity)
                     } else {
                         Text("Create Account")
+                            .foregroundStyle(.black)
                             .frame(maxWidth: .infinity)
                     }
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(.white)
                 .disabled(email.isEmpty || !passwordsMatch || authManager.isLoading)
             }
             .padding()

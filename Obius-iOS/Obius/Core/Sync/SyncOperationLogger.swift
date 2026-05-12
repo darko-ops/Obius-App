@@ -306,8 +306,12 @@ final class SyncOperationLogger {
             payload["body_rich_text"] = bodyRichText
         }
 
-        payload["interstitial_content"] = note.interstitialContent
-        payload["interstitial_rich_content"] = note.interstitialRichContent
+        // Send as JSON-encoded strings to match the server's TEXT column and the
+        // enqueueUnsyncedEntities format. Sending a nested dict here makes the
+        // round-trip through Postgres TEXT inconsistent — peers end up with no
+        // interstitial content (text-after-section) even though the section synced.
+        payload["interstitial_content"] = Self.jsonString(from: note.interstitialContent)
+        payload["interstitial_rich_content"] = Self.jsonString(from: note.interstitialRichContent)
 
         if let deletedAt = note.deletedAt {
             payload["deleted_at"] = formatTimestamp(deletedAt)
@@ -428,5 +432,13 @@ final class SyncOperationLogger {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.string(from: date)
+    }
+
+    private static func jsonString(from dict: [String: String]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: dict),
+              let str = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return str
     }
 }
