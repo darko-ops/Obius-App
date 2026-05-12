@@ -150,12 +150,31 @@ final class ProfileImageManager: ObservableObject {
         }
         print("[ProfileImages] syncFromCloud starting for user: \(supabase.currentUser?.id.uuidString ?? "nil")")
 
-        await downloadAndSave(type: .avatar)
-        await downloadAndSave(type: .banner)
+        await syncOne(type: .avatar)
+        await syncOne(type: .banner)
     }
 
-    private func downloadAndSave(type: ImageType) async {
-        guard let path = remotePath(for: type) else { return }
+    /// Two-way reconciliation for a single image type:
+    ///   - If cloud has it: download and overwrite local.
+    ///   - If cloud is missing it (404) but local has a copy: upload local.
+    /// This self-heals past upload misses (e.g. banner set while signed out
+    /// so the original `uploadToCloud` was silently skipped).
+    private func syncOne(type: ImageType) async {
+        let downloaded = await downloadAndSave(type: type)
+        guard !downloaded else { return }
+
+        let localURL = type == .avatar ? profileImageURL : bannerImageURL
+        guard let localData = try? Data(contentsOf: localURL), !localData.isEmpty else {
+            return
+        }
+        print("[ProfileImages] Cloud missing \(type) but local exists — pushing local to cloud (\(localData.count) bytes)")
+        await uploadToCloud(data: localData, type: type)
+    }
+
+    /// Returns `true` if a cloud copy was found and saved locally.
+    @discardableResult
+    private func downloadAndSave(type: ImageType) async -> Bool {
+        guard let path = remotePath(for: type) else { return false }
 
         print("[ProfileImages] Downloading \(type) from: \(storageBucket)/\(path)")
 
@@ -168,7 +187,7 @@ final class ProfileImageManager: ObservableObject {
 
             guard let image = PlatformImage(data: data) else {
                 print("[ProfileImages] Failed to create image from downloaded \(type) data")
-                return
+                return false
             }
 
             // Save locally
@@ -181,8 +200,10 @@ final class ProfileImageManager: ObservableObject {
             case .avatar: profileImage = image
             case .banner: bannerImage = image
             }
+            return true
         } catch {
             print("[ProfileImages] Cloud download FAILED for \(type): \(error)")
+            return false
         }
     }
 

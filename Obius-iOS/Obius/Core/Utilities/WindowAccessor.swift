@@ -26,12 +26,21 @@ private class WindowAccessorView: NSView {
     private func configureWindow() {
         guard let window = self.window else { return }
         window.titlebarAppearsTransparent = true
-        window.isOpaque = false
+        window.isOpaque = true
         window.backgroundColor = .black
         window.appearance = NSAppearance(named: .darkAqua)
         window.titlebarSeparatorStyle = .none
+        window.toolbarStyle = .unifiedCompact
         if let toolbar = window.toolbar {
             toolbar.displayMode = .iconOnly
+            toolbar.showsBaselineSeparator = false
+        }
+        // Liquid Glass on macOS 26 paints a translucent grey behind SwiftUI views.
+        // Force a solid black layer on the content view so transparent toolbar
+        // areas read as black, not grey.
+        if let contentView = window.contentView {
+            contentView.wantsLayer = true
+            contentView.layer?.backgroundColor = NSColor.black.cgColor
         }
     }
 }
@@ -42,10 +51,16 @@ extension View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 for window in NSApplication.shared.windows {
                     window.titlebarAppearsTransparent = true
-                    window.isOpaque = false
+                    window.isOpaque = true
                     window.backgroundColor = .black
                     window.appearance = NSAppearance(named: .darkAqua)
                     window.titlebarSeparatorStyle = .none
+                    window.toolbarStyle = .unifiedCompact
+                    window.toolbar?.showsBaselineSeparator = false
+                    if let contentView = window.contentView {
+                        contentView.wantsLayer = true
+                        contentView.layer?.backgroundColor = NSColor.black.cgColor
+                    }
                 }
             }
         }

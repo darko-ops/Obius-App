@@ -113,6 +113,7 @@ struct MainTabView: View {
     @StateObject private var echoManager = EchoManager.shared
     #if os(macOS)
     @State private var selectedTab = -1  // -1 = welcome screen
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @AppStorage("macSelectedNoteId") private var macSelectedNoteId: String?
     @AppStorage("macIsInEditor") private var macIsInEditor = false
     #else
@@ -270,49 +271,58 @@ struct MainTabView: View {
         }
         .tint(.white)
         #else
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             MacSidebarProjectList(
                 moduleRepository: appState.moduleRepository,
                 selectedTab: $selectedTab
             )
             .environmentObject(appState)
+            .toolbar(removing: .sidebarToggle)
         } detail: {
             NavigationStack {
-                switch selectedTab {
-                case -1:
-                    MacWelcomeView(
-                        onNewProject: { selectedTab = 0 },
-                        onOpenProject: { selectedTab = 0 }
-                    )
-                    .environmentObject(appState)
-                case 0:
-                    if let noteId = macSelectedNoteId {
-                        let _ = print("[DEBUG] ContentView rendering NoteEditorView for: \(noteId.prefix(8))")
-                        NoteEditorView(noteId: noteId)
-                            .id(noteId)
-                            .toolbar {
-                                ToolbarItem(placement: .navigation) {
-                                    Button {
-                                        macSelectedNoteId = nil
-                                        macIsInEditor = false
-                                    } label: {
-                                        Label("Back", systemImage: "chevron.left")
+                ZStack {
+                    Color.black.ignoresSafeArea()
+                    switch selectedTab {
+                    case -1:
+                        MacWelcomeView(
+                            onNewProject: { selectedTab = 0 },
+                            onOpenProject: { selectedTab = 0 }
+                        )
+                        .environmentObject(appState)
+                    case 0:
+                        if let noteId = macSelectedNoteId {
+                            let _ = print("[DEBUG] ContentView rendering NoteEditorView for: \(noteId.prefix(8))")
+                            NoteEditorView(noteId: noteId)
+                                .id(noteId)
+                                .toolbar {
+                                    ToolbarItem(placement: .navigation) {
+                                        Button {
+                                            macSelectedNoteId = nil
+                                            macIsInEditor = false
+                                        } label: {
+                                            Label("Back", systemImage: "chevron.left")
+                                        }
                                     }
                                 }
-                            }
-                    } else {
+                        } else {
+                            NotesListView()
+                        }
+                    case 1:
+                        IntelligenceView()
+                            .environmentObject(appState.insightRepository)
+                    case 2:
+                        LibraryView(pendingEchoId: $pendingEchoId)
+                    default:
                         NotesListView()
                     }
-                case 1:
-                    IntelligenceView()
-                        .environmentObject(appState.insightRepository)
-                case 2:
-                    LibraryView(pendingEchoId: $pendingEchoId)
-                default:
-                    NotesListView()
                 }
             }
-            .background(Color.black)
+        }
+        .navigationSplitViewStyle(.balanced)
+        .onAppear {
+            // macOS 26 (Tahoe) collapses the sidebar by default; force it open
+            // so the project list / week calendar / nav tabs stay visible.
+            columnVisibility = .all
         }
         .background(WindowAccessor())
         .configureWindowBackground()

@@ -59,15 +59,17 @@ extension View {
         #endif
     }
 
-    /// Apply navigation bar toolbar background on iOS; on macOS the window-level
-    /// WindowAccessor handles the titlebar appearance globally.
+    /// Apply navigation bar toolbar background on iOS; on macOS apply to the
+    /// window toolbar so Liquid Glass (macOS 26) doesn't render the title bar
+    /// as translucent grey over the page content.
     @ViewBuilder
     func platformToolbarBackground(_ color: Color) -> some View {
         #if os(iOS)
         self.toolbarBackground(color, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
         #else
-        self
+        self.toolbarBackground(color, for: .windowToolbar)
+            .toolbarBackground(.visible, for: .windowToolbar)
         #endif
     }
 }
