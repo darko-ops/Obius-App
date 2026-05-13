@@ -440,13 +440,8 @@ private class InterstitialKeyboardToolbar: UIToolbar {
     private var isItalicActive = false
     private var isUnderlineActive = false
 
-    private var normalFontSize: CGFloat {
-        UIFont.preferredFont(forTextStyle: .body).pointSize
-    }
-
-    private var titleFontSize: CGFloat {
-        UIFont.preferredFont(forTextStyle: .body).pointSize * 2
-    }
+    private var normalFontSize: CGFloat { RichTextHelper.bodySize }
+    private var titleFontSize: CGFloat { RichTextHelper.h1Size }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -557,7 +552,7 @@ private class InterstitialKeyboardToolbar: UIToolbar {
     func syncWithTypingAttributes() {
         guard let textView = textView else { return }
         let attrs = textView.typingAttributes
-        let font = (attrs[.font] as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+        let font = (attrs[.font] as? UIFont) ?? UIFont.systemFont(ofSize: RichTextHelper.bodySize)
         let traits = font.fontDescriptor.symbolicTraits
 
         isTitleActive = font.pointSize >= titleFontSize && traits.contains(.traitBold)
@@ -576,7 +571,7 @@ private class InterstitialKeyboardToolbar: UIToolbar {
         if range.length > 0 {
             let mutableAttrString = NSMutableAttributedString(attributedString: textView.attributedText)
             mutableAttrString.enumerateAttribute(.font, in: range, options: []) { value, subRange, _ in
-                let currentFont = (value as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+                let currentFont = (value as? UIFont) ?? UIFont.systemFont(ofSize: RichTextHelper.bodySize)
                 let size = isTitleActive ? titleFontSize : normalFontSize
                 var traits = currentFont.fontDescriptor.symbolicTraits
                 if isTitleActive { traits.insert(.traitBold) }
@@ -590,7 +585,7 @@ private class InterstitialKeyboardToolbar: UIToolbar {
             notifyContentChanged()
         } else {
             var attrs = textView.typingAttributes
-            let currentFont = (attrs[.font] as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+            let currentFont = (attrs[.font] as? UIFont) ?? UIFont.systemFont(ofSize: RichTextHelper.bodySize)
             let size = isTitleActive ? titleFontSize : normalFontSize
             var traits = currentFont.fontDescriptor.symbolicTraits
             if isTitleActive { traits.insert(.traitBold) } else if !isBoldActive { traits.remove(.traitBold) }
@@ -672,7 +667,7 @@ private class InterstitialKeyboardToolbar: UIToolbar {
         let mutableAttrString = NSMutableAttributedString(attributedString: textView.attributedText)
 
         mutableAttrString.enumerateAttribute(.font, in: range, options: []) { value, subRange, _ in
-            let currentFont = (value as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+            let currentFont = (value as? UIFont) ?? UIFont.systemFont(ofSize: RichTextHelper.bodySize)
             var newTraits = currentFont.fontDescriptor.symbolicTraits
 
             if newTraits.contains(trait) {
@@ -694,7 +689,7 @@ private class InterstitialKeyboardToolbar: UIToolbar {
 
     private func applyFontTraitToTyping(_ trait: UIFontDescriptor.SymbolicTraits, isActive: Bool, in textView: UITextView) {
         var attrs = textView.typingAttributes
-        let currentFont = (attrs[.font] as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+        let currentFont = (attrs[.font] as? UIFont) ?? UIFont.systemFont(ofSize: RichTextHelper.bodySize)
         var newTraits = currentFont.fontDescriptor.symbolicTraits
 
         if isActive {
@@ -735,7 +730,7 @@ struct InterstitialTextView: UIViewRepresentable {
         // Use SelfSizingTextView which has proper single-tap handling
         let textView = SelfSizingTextView()
         textView.delegate = context.coordinator
-        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.font = UIFont.systemFont(ofSize: RichTextHelper.bodySize)
         textView.backgroundColor = .clear
         textView.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
         textView.textContainer.lineFragmentPadding = 0

@@ -10,6 +10,14 @@ import AppKit
 #if os(iOS)
 /// Helper for serializing/deserializing NSAttributedString to/from base64-encoded RTF
 enum RichTextHelper {
+    /// Unified type scale across iOS and macOS. Body is pinned to 17pt on both
+    /// platforms; headings are absolute sizes so that bold/title/heading runs
+    /// render identically regardless of device or Dynamic Type settings.
+    static let bodySize: CGFloat = 17
+    static let h1Size: CGFloat = 28
+    static let h2Size: CGFloat = 22
+    static let h3Size: CGFloat = 19
+
     /// Serialize NSAttributedString to base64-encoded RTF
     static func serialize(_ attributedText: NSAttributedString) -> String? {
         guard attributedText.length > 0 else { return nil }
@@ -40,17 +48,17 @@ enum RichTextHelper {
     /// section deletion.
     static func bodyAttributes() -> [NSAttributedString.Key: Any] {
         [
-            .font: UIFont.preferredFont(forTextStyle: .body),
+            .font: UIFont.systemFont(ofSize: bodySize),
             .foregroundColor: UIColor.label
         ]
     }
 
     /// Rescale absolute font sizes so the most common ("body") size matches the
-    /// current iOS preferred body size. Preserves font weight, italic, and the
-    /// proportional ratio between body and headings (so H1 stays ~1.65x body).
+    /// unified body size. Preserves font weight, italic, and the proportional
+    /// ratio between body and headings (so H1 stays ~1.65x body).
     private static func normalizeFontSizes(_ attr: NSAttributedString) -> NSAttributedString {
         guard attr.length > 0 else { return attr }
-        let targetBody = UIFont.preferredFont(forTextStyle: .body).pointSize
+        let targetBody = bodySize
 
         // Find the most common font size (by character coverage) — that's the body.
         var sizeCoverage: [CGFloat: Int] = [:]
@@ -78,7 +86,7 @@ enum RichTextHelper {
     /// Reconstructs # headings, **bold**, and *italic* from font attributes.
     static func toMarkdown(_ base64String: String) -> String? {
         guard let attrText = deserialize(base64String) else { return nil }
-        let baseSize = UIFont.preferredFont(forTextStyle: .body).pointSize
+        let baseSize = bodySize
         let fullRange = NSRange(location: 0, length: attrText.length)
         var result = ""
         let plainText = attrText.string
@@ -162,8 +170,7 @@ enum RichTextHelper {
     /// Supports: # headings, ## subheadings, **bold**, *italic*
     static func fromMarkdown(_ text: String) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        let baseSize = UIFont.preferredFont(forTextStyle: .body).pointSize
-        let bodyFont = UIFont.systemFont(ofSize: baseSize)
+        let bodyFont = UIFont.systemFont(ofSize: bodySize)
         let bodyColor = UIColor.label
 
         let lines = text.components(separatedBy: "\n")
@@ -179,22 +186,22 @@ enum RichTextHelper {
                 ]))
             }
 
-            // Headings — scaled relative to dynamic body size
+            // Headings — absolute sizes shared with macOS.
             if trimmed.hasPrefix("### ") {
                 let content = String(trimmed.dropFirst(4))
-                let font = UIFont.systemFont(ofSize: baseSize * 1.12, weight: .semibold)
+                let font = UIFont.systemFont(ofSize: h3Size, weight: .semibold)
                 result.append(NSAttributedString(string: content, attributes: [
                     .font: font, .foregroundColor: bodyColor
                 ]))
             } else if trimmed.hasPrefix("## ") {
                 let content = String(trimmed.dropFirst(3))
-                let font = UIFont.systemFont(ofSize: baseSize * 1.3, weight: .bold)
+                let font = UIFont.systemFont(ofSize: h2Size, weight: .bold)
                 result.append(NSAttributedString(string: content, attributes: [
                     .font: font, .foregroundColor: bodyColor
                 ]))
             } else if trimmed.hasPrefix("# ") {
                 let content = String(trimmed.dropFirst(2))
-                let font = UIFont.systemFont(ofSize: baseSize * 1.65, weight: .bold)
+                let font = UIFont.systemFont(ofSize: h1Size, weight: .bold)
                 result.append(NSAttributedString(string: content, attributes: [
                     .font: font, .foregroundColor: bodyColor
                 ]))
@@ -251,6 +258,14 @@ enum RichTextHelper {
 #elseif os(macOS)
 /// macOS Rich Text Helper using NSFont
 enum RichTextHelper {
+    /// Unified type scale across iOS and macOS. Same constants as the iOS
+    /// branch so a heading authored on either platform renders at the same
+    /// absolute size after RTF round-trip.
+    static let bodySize: CGFloat = 17
+    static let h1Size: CGFloat = 28
+    static let h2Size: CGFloat = 22
+    static let h3Size: CGFloat = 19
+
     static func serialize(_ attributedText: NSAttributedString) -> String? {
         guard attributedText.length > 0 else { return nil }
         guard let data = try? attributedText.data(
@@ -276,19 +291,18 @@ enum RichTextHelper {
     /// section deletion.
     static func bodyAttributes() -> [NSAttributedString.Key: Any] {
         [
-            .font: NSFont.systemFont(ofSize: 17),
+            .font: NSFont.systemFont(ofSize: bodySize),
             .foregroundColor: NSColor.labelColor
         ]
     }
 
     /// Rescale absolute font sizes so the most common ("body") size matches the
-    /// macOS body size (17pt). iOS users with non-default Dynamic Type sizes can
-    /// produce RTF whose body font is e.g. 14pt or 19pt — without normalization
-    /// that lands on macOS as a visibly smaller (or larger) paragraph than
-    /// macOS-native body text. Preserves font weight/italic and heading ratios.
+    /// unified body size. Older RTF authored on iOS at non-default Dynamic Type
+    /// (e.g. 14pt or 19pt body) gets rescaled here so it lands at 17pt on disk
+    /// regardless of where it was originally written.
     private static func normalizeFontSizes(_ attr: NSAttributedString) -> NSAttributedString {
         guard attr.length > 0 else { return attr }
-        let targetBody: CGFloat = 17
+        let targetBody: CGFloat = bodySize
 
         // Find the most common font size (by character coverage) — that's the body.
         var sizeCoverage: [CGFloat: Int] = [:]
@@ -316,7 +330,7 @@ enum RichTextHelper {
     /// Convert base64-encoded RTF back to markdown text.
     static func toMarkdown(_ base64String: String) -> String? {
         guard let attrText = deserialize(base64String) else { return nil }
-        let baseSize: CGFloat = 17
+        let baseSize: CGFloat = bodySize
         let fullRange = NSRange(location: 0, length: attrText.length)
         var result = ""
         let plainText = attrText.string
@@ -372,7 +386,7 @@ enum RichTextHelper {
 
     static func fromMarkdown(_ text: String) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        let bodyFont = NSFont.systemFont(ofSize: 17)
+        let bodyFont = NSFont.systemFont(ofSize: bodySize)
         let bodyColor = NSColor.labelColor
 
         let lines = text.components(separatedBy: "\n")
@@ -390,19 +404,19 @@ enum RichTextHelper {
 
             if trimmed.hasPrefix("### ") {
                 let content = String(trimmed.dropFirst(4))
-                let font = NSFont.systemFont(ofSize: 19, weight: .semibold)
+                let font = NSFont.systemFont(ofSize: h3Size, weight: .semibold)
                 result.append(NSAttributedString(string: content, attributes: [
                     .font: font, .foregroundColor: bodyColor
                 ]))
             } else if trimmed.hasPrefix("## ") {
                 let content = String(trimmed.dropFirst(3))
-                let font = NSFont.systemFont(ofSize: 22, weight: .bold)
+                let font = NSFont.systemFont(ofSize: h2Size, weight: .bold)
                 result.append(NSAttributedString(string: content, attributes: [
                     .font: font, .foregroundColor: bodyColor
                 ]))
             } else if trimmed.hasPrefix("# ") {
                 let content = String(trimmed.dropFirst(2))
-                let font = NSFont.systemFont(ofSize: 28, weight: .bold)
+                let font = NSFont.systemFont(ofSize: h1Size, weight: .bold)
                 result.append(NSAttributedString(string: content, attributes: [
                     .font: font, .foregroundColor: bodyColor
                 ]))
@@ -1423,7 +1437,7 @@ struct SingleLineTextField: UIViewRepresentable {
     func makeUIView(context: Context) -> UITextField {
         let textField = UITextField()
         textField.delegate = context.coordinator
-        textField.font = UIFont.preferredFont(forTextStyle: .body)
+        textField.font = UIFont.systemFont(ofSize: RichTextHelper.bodySize)
         textField.backgroundColor = .clear
         textField.borderStyle = .none
         textField.returnKeyType = .done
@@ -1699,7 +1713,7 @@ class SelfSizingTextView: UITextView {
     }
 
     private func sanitize(_ source: NSAttributedString) -> NSAttributedString {
-        let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+        let bodyFont = UIFont.systemFont(ofSize: RichTextHelper.bodySize)
         let bodySize = bodyFont.pointSize
         let result = NSMutableAttributedString()
 
@@ -1867,13 +1881,8 @@ class KeyboardAccessoryToolbar: UIToolbar {
     private var isItalicActive = false
     private var isUnderlineActive = false
 
-    private var normalFontSize: CGFloat {
-        UIFont.preferredFont(forTextStyle: .body).pointSize
-    }
-
-    private var titleFontSize: CGFloat {
-        UIFont.preferredFont(forTextStyle: .body).pointSize * 1.65
-    }
+    private var normalFontSize: CGFloat { RichTextHelper.bodySize }
+    private var titleFontSize: CGFloat { RichTextHelper.h1Size }
 
     init(showIndentButtons: Bool = false, showStatusButton: Bool = false) {
         super.init(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 44))
@@ -2025,7 +2034,7 @@ class KeyboardAccessoryToolbar: UIToolbar {
         } else {
             attrs = textView.typingAttributes
         }
-        let font = (attrs[.font] as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+        let font = (attrs[.font] as? UIFont) ?? UIFont.systemFont(ofSize: RichTextHelper.bodySize)
         let traits = font.fontDescriptor.symbolicTraits
 
         isTitleActive = font.pointSize >= titleFontSize && traits.contains(.traitBold)
@@ -2049,7 +2058,7 @@ class KeyboardAccessoryToolbar: UIToolbar {
             // Apply to selected text
             let mutableAttrString = NSMutableAttributedString(attributedString: textView.attributedText)
             mutableAttrString.enumerateAttribute(.font, in: range, options: []) { value, subRange, _ in
-                let currentFont = (value as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+                let currentFont = (value as? UIFont) ?? UIFont.systemFont(ofSize: RichTextHelper.bodySize)
                 let size = isTitleActive ? titleFontSize : normalFontSize
                 var traits = currentFont.fontDescriptor.symbolicTraits
                 if isTitleActive { traits.insert(.traitBold) }
@@ -2064,7 +2073,7 @@ class KeyboardAccessoryToolbar: UIToolbar {
         } else {
             // Toggle for future typing
             var attrs = textView.typingAttributes
-            let currentFont = (attrs[.font] as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+            let currentFont = (attrs[.font] as? UIFont) ?? UIFont.systemFont(ofSize: RichTextHelper.bodySize)
             let size = isTitleActive ? titleFontSize : normalFontSize
             var traits = currentFont.fontDescriptor.symbolicTraits
             if isTitleActive { traits.insert(.traitBold) } else if !isBoldActive { traits.remove(.traitBold) }
@@ -2149,7 +2158,7 @@ class KeyboardAccessoryToolbar: UIToolbar {
         let mutableAttrString = NSMutableAttributedString(attributedString: textView.attributedText)
 
         mutableAttrString.enumerateAttribute(.font, in: range, options: []) { value, subRange, _ in
-            let currentFont = (value as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+            let currentFont = (value as? UIFont) ?? UIFont.systemFont(ofSize: RichTextHelper.bodySize)
             var newTraits = currentFont.fontDescriptor.symbolicTraits
 
             // Toggle the trait
@@ -2172,7 +2181,7 @@ class KeyboardAccessoryToolbar: UIToolbar {
 
     private func applyFontTraitToTyping(_ trait: UIFontDescriptor.SymbolicTraits, isActive: Bool, in textView: UITextView) {
         var attrs = textView.typingAttributes
-        let currentFont = (attrs[.font] as? UIFont) ?? UIFont.preferredFont(forTextStyle: .body)
+        let currentFont = (attrs[.font] as? UIFont) ?? UIFont.systemFont(ofSize: RichTextHelper.bodySize)
         var newTraits = currentFont.fontDescriptor.symbolicTraits
 
         if isActive {
@@ -2260,7 +2269,7 @@ struct EditableTextView: UIViewRepresentable {
         textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+        let bodyFont = UIFont.systemFont(ofSize: RichTextHelper.bodySize)
         textView.font = bodyFont
         textView.textColor = UIColor.label
 
@@ -2313,7 +2322,7 @@ struct EditableTextView: UIViewRepresentable {
                 // Reset typingAttributes to body defaults before setting .text —
                 // otherwise stale Title/Bold from the keyboard toolbar would
                 // repaint the whole section text.
-                let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+                let bodyFont = UIFont.systemFont(ofSize: RichTextHelper.bodySize)
                 textView.typingAttributes = [
                     .font: bodyFont,
                     .foregroundColor: UIColor.label
@@ -2424,7 +2433,7 @@ class PasteSanitizingTextView: NSTextView {
 
     override func paste(_ sender: Any?) {
         let pasteboard = NSPasteboard.general
-        let bodyFont = NSFont.systemFont(ofSize: 17)
+        let bodyFont = NSFont.systemFont(ofSize: RichTextHelper.bodySize)
         let bodySize = bodyFont.pointSize
 
         // Try to read rich text from pasteboard (RTF or HTML)
@@ -2542,7 +2551,7 @@ struct EditableTextView: NSViewRepresentable {
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.lineBreakMode = .byWordWrapping
         textView.textContainerInset = NSSize(width: 0, height: 4)
-        textView.font = NSFont.systemFont(ofSize: 17)
+        textView.font = NSFont.systemFont(ofSize: RichTextHelper.bodySize)
         textView.textColor = NSColor.labelColor
 
         // Disable all automatic text substitutions. NSTextView defaults to
@@ -2624,7 +2633,7 @@ struct EditableTextView: NSViewRepresentable {
                 // otherwise NSTextView paints the whole text with whatever style
                 // was last armed (e.g. a 28pt Title toggle still live from the
                 // formatting bar), making the body appear as "all big text".
-                let bodyFont = NSFont.systemFont(ofSize: 17)
+                let bodyFont = NSFont.systemFont(ofSize: RichTextHelper.bodySize)
                 textView.typingAttributes = [
                     .font: bodyFont,
                     .foregroundColor: NSColor.labelColor
@@ -2814,7 +2823,7 @@ struct EditableTextView: NSViewRepresentable {
         func syncFormattingState() {
             guard let textView = textView else { return }
             // Read formatting state from the text view
-            let bodySize = NSFont.systemFont(ofSize: 17).pointSize
+            let bodySize = NSFont.systemFont(ofSize: RichTextHelper.bodySize).pointSize
             let attrs: [NSAttributedString.Key: Any]
             let range = textView.selectedRange()
             // With a selection: read storage attrs. With a collapsed cursor:
@@ -2996,7 +3005,7 @@ final class MacFormattingState: ObservableObject {
         }
 
         var attrs = tv.typingAttributes
-        let currentFont = (attrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: 17)
+        let currentFont = (attrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: RichTextHelper.bodySize)
         let hasTrait = NSFontManager.shared.traits(of: currentFont).contains(trait)
         attrs[.font] = hasTrait
             ? NSFontManager.shared.convert(currentFont, toNotHaveTrait: trait)
@@ -3036,8 +3045,8 @@ final class MacFormattingState: ObservableObject {
 
     func applyTitle() {
         guard let tv = activeTextView, let storage = tv.textStorage else { return }
-        let bodySize = NSFont.systemFont(ofSize: 17).pointSize
-        let titleSize = bodySize * 1.65
+        let bodySize = RichTextHelper.bodySize
+        let titleSize = RichTextHelper.h1Size
         let range = effectiveRange
         let textLength = storage.length
 
@@ -3103,7 +3112,7 @@ final class MacFormattingState: ObservableObject {
 
     /// Read attributes from the text view and update published properties.
     func syncState(from tv: NSTextView) {
-        let bodySize = NSFont.systemFont(ofSize: 17).pointSize
+        let bodySize = NSFont.systemFont(ofSize: RichTextHelper.bodySize).pointSize
         let attrs: [NSAttributedString.Key: Any]
         let range = tv.selectedRange()
         // With a selection: read the first character's attributes (what the
@@ -3164,7 +3173,7 @@ struct TemplateProtectedTextView: UIViewRepresentable {
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         // Set typing attributes to regular font so new text isn't bold, with adaptive color
-        let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+        let bodyFont = UIFont.systemFont(ofSize: RichTextHelper.bodySize)
         textView.typingAttributes = [.font: bodyFont, .foregroundColor: UIColor.label]
 
         // Add keyboard accessory toolbar with all buttons
@@ -3247,7 +3256,7 @@ struct TemplateProtectedTextView: UIViewRepresentable {
     }
 
     private func updateAttributedText(_ textView: UITextView, with text: String) {
-        let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+        let bodyFont = UIFont.systemFont(ofSize: RichTextHelper.bodySize)
         let boldFont = UIFont.boldSystemFont(ofSize: bodyFont.pointSize)
         let textColor = UIColor.label  // Adapts to light/dark mode
 
