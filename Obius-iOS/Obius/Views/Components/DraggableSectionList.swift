@@ -424,299 +424,9 @@ struct InterstitialTextField: View {
 }
 
 #if os(iOS)
-/// Keyboard toolbar with formatting buttons and dismiss for interstitial text
-private class InterstitialKeyboardToolbar: UIToolbar {
-    weak var textView: UITextView?
-    var onDismiss: (() -> Void)?
-
-    private var titleButton: UIBarButtonItem?
-    private var boldButton: UIBarButtonItem?
-    private var italicButton: UIBarButtonItem?
-    private var underlineButton: UIBarButtonItem?
-
-    // Track active formatting states for typing
-    private var isTitleActive = false
-    private var isBoldActive = false
-    private var isItalicActive = false
-    private var isUnderlineActive = false
-
-    private var normalFontSize: CGFloat { RichTextHelper.bodySize }
-    private var titleFontSize: CGFloat { RichTextHelper.h1Size }
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        setupToolbar()
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        setupToolbar()
-    }
-
-    convenience init() {
-        self.init(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 44))
-    }
-
-    private func setupToolbar() {
-        barStyle = .default
-        isTranslucent = true
-        sizeToFit()
-
-        var items: [UIBarButtonItem] = []
-
-        // Indent/Outdent buttons (visual consistency, no action for interstitials)
-        let outdentButton = UIBarButtonItem(
-            image: UIImage(systemName: "decrease.indent"),
-            style: .plain,
-            target: nil,
-            action: nil
-        )
-        outdentButton.isEnabled = false
-        items.append(outdentButton)
-
-        let indentButton = UIBarButtonItem(
-            image: UIImage(systemName: "increase.indent"),
-            style: .plain,
-            target: nil,
-            action: nil
-        )
-        indentButton.isEnabled = false
-        items.append(indentButton)
-
-        let flexSpace = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
-        items.append(flexSpace)
-
-        // Title size button
-        let title = UIBarButtonItem(
-            image: UIImage(systemName: "textformat.size"),
-            style: .plain,
-            target: self,
-            action: #selector(titleTapped)
-        )
-        titleButton = title
-        items.append(title)
-
-        // Formatting buttons: Bold, Italic, Underline
-        let bold = UIBarButtonItem(
-            image: UIImage(systemName: "bold"),
-            style: .plain,
-            target: self,
-            action: #selector(boldTapped)
-        )
-        boldButton = bold
-        items.append(bold)
-
-        let italic = UIBarButtonItem(
-            image: UIImage(systemName: "italic"),
-            style: .plain,
-            target: self,
-            action: #selector(italicTapped)
-        )
-        italicButton = italic
-        items.append(italic)
-
-        let underline = UIBarButtonItem(
-            image: UIImage(systemName: "underline"),
-            style: .plain,
-            target: self,
-            action: #selector(underlineTapped)
-        )
-        underlineButton = underline
-        items.append(underline)
-
-        // Add spacing
-        let fixedSpace = UIBarButtonItem(barButtonSystemItem: .fixedSpace, target: nil, action: nil)
-        fixedSpace.width = 12
-        items.append(fixedSpace)
-
-        // Dismiss button (far right)
-        let dismissButton = UIBarButtonItem(
-            image: UIImage(systemName: "keyboard.chevron.compact.down"),
-            style: .plain,
-            target: self,
-            action: #selector(dismissTapped)
-        )
-        items.append(dismissButton)
-
-        setItems(items, animated: false)
-    }
-
-    private func updateButtonAppearance() {
-        titleButton?.tintColor = isTitleActive ? .systemPurple : nil
-        boldButton?.tintColor = isBoldActive ? .systemPurple : nil
-        italicButton?.tintColor = isItalicActive ? .systemPurple : nil
-        underlineButton?.tintColor = isUnderlineActive ? .systemPurple : nil
-    }
-
-    /// Sync button states with the text view's current typing attributes
-    func syncWithTypingAttributes() {
-        guard let textView = textView else { return }
-        let attrs = textView.typingAttributes
-        let font = (attrs[.font] as? UIFont) ?? UIFont.systemFont(ofSize: RichTextHelper.bodySize)
-        let traits = font.fontDescriptor.symbolicTraits
-
-        isTitleActive = font.pointSize >= titleFontSize && traits.contains(.traitBold)
-        isBoldActive = traits.contains(.traitBold) && !isTitleActive
-        isItalicActive = traits.contains(.traitItalic)
-        isUnderlineActive = (attrs[.underlineStyle] as? Int) != nil && (attrs[.underlineStyle] as? Int) != 0
-
-        updateButtonAppearance()
-    }
-
-    @objc private func titleTapped() {
-        guard let textView = textView else { return }
-        isTitleActive.toggle()
-        let range = textView.selectedRange
-
-        if range.length > 0 {
-            let mutableAttrString = NSMutableAttributedString(attributedString: textView.attributedText)
-            mutableAttrString.enumerateAttribute(.font, in: range, options: []) { value, subRange, _ in
-                let currentFont = (value as? UIFont) ?? UIFont.systemFont(ofSize: RichTextHelper.bodySize)
-                let size = isTitleActive ? titleFontSize : normalFontSize
-                var traits = currentFont.fontDescriptor.symbolicTraits
-                if isTitleActive { traits.insert(.traitBold) }
-                if let desc = currentFont.fontDescriptor.withSymbolicTraits(traits) {
-                    let newFont = UIFont(descriptor: desc, size: size)
-                    mutableAttrString.addAttribute(.font, value: newFont, range: subRange)
-                }
-            }
-            textView.attributedText = mutableAttrString
-            textView.selectedRange = range
-            notifyContentChanged()
-        } else {
-            var attrs = textView.typingAttributes
-            let currentFont = (attrs[.font] as? UIFont) ?? UIFont.systemFont(ofSize: RichTextHelper.bodySize)
-            let size = isTitleActive ? titleFontSize : normalFontSize
-            var traits = currentFont.fontDescriptor.symbolicTraits
-            if isTitleActive { traits.insert(.traitBold) } else if !isBoldActive { traits.remove(.traitBold) }
-            if let desc = currentFont.fontDescriptor.withSymbolicTraits(traits) {
-                attrs[.font] = UIFont(descriptor: desc, size: size)
-                textView.typingAttributes = attrs
-            }
-        }
-
-        updateButtonAppearance()
-    }
-
-    @objc private func boldTapped() {
-        guard let textView = textView else { return }
-        let range = textView.selectedRange
-
-        if range.length > 0 {
-            applyFontTraitToSelection(.traitBold, in: textView)
-        } else {
-            isBoldActive.toggle()
-            applyFontTraitToTyping(.traitBold, isActive: isBoldActive, in: textView)
-        }
-        updateButtonAppearance()
-    }
-
-    @objc private func italicTapped() {
-        guard let textView = textView else { return }
-        let range = textView.selectedRange
-
-        if range.length > 0 {
-            applyFontTraitToSelection(.traitItalic, in: textView)
-        } else {
-            isItalicActive.toggle()
-            applyFontTraitToTyping(.traitItalic, isActive: isItalicActive, in: textView)
-        }
-        updateButtonAppearance()
-    }
-
-    @objc private func underlineTapped() {
-        guard let textView = textView else { return }
-        let range = textView.selectedRange
-
-        if range.length > 0 {
-            let mutableAttrString = NSMutableAttributedString(attributedString: textView.attributedText)
-
-            var isUnderlined = false
-            mutableAttrString.enumerateAttribute(.underlineStyle, in: range, options: []) { value, _, _ in
-                if let style = value as? Int, style != 0 {
-                    isUnderlined = true
-                }
-            }
-
-            if isUnderlined {
-                mutableAttrString.removeAttribute(.underlineStyle, range: range)
-            } else {
-                mutableAttrString.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range)
-            }
-
-            textView.attributedText = mutableAttrString
-            textView.selectedRange = range
-            notifyContentChanged()
-        } else {
-            isUnderlineActive.toggle()
-            var attrs = textView.typingAttributes
-            if isUnderlineActive {
-                attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
-            } else {
-                attrs.removeValue(forKey: .underlineStyle)
-            }
-            textView.typingAttributes = attrs
-        }
-        updateButtonAppearance()
-    }
-
-    private func applyFontTraitToSelection(_ trait: UIFontDescriptor.SymbolicTraits, in textView: UITextView) {
-        let range = textView.selectedRange
-        guard range.length > 0 else { return }
-
-        let mutableAttrString = NSMutableAttributedString(attributedString: textView.attributedText)
-
-        mutableAttrString.enumerateAttribute(.font, in: range, options: []) { value, subRange, _ in
-            let currentFont = (value as? UIFont) ?? UIFont.systemFont(ofSize: RichTextHelper.bodySize)
-            var newTraits = currentFont.fontDescriptor.symbolicTraits
-
-            if newTraits.contains(trait) {
-                newTraits.remove(trait)
-            } else {
-                newTraits.insert(trait)
-            }
-
-            if let newDescriptor = currentFont.fontDescriptor.withSymbolicTraits(newTraits) {
-                let newFont = UIFont(descriptor: newDescriptor, size: currentFont.pointSize)
-                mutableAttrString.addAttribute(.font, value: newFont, range: subRange)
-            }
-        }
-
-        textView.attributedText = mutableAttrString
-        textView.selectedRange = range
-        notifyContentChanged()
-    }
-
-    private func applyFontTraitToTyping(_ trait: UIFontDescriptor.SymbolicTraits, isActive: Bool, in textView: UITextView) {
-        var attrs = textView.typingAttributes
-        let currentFont = (attrs[.font] as? UIFont) ?? UIFont.systemFont(ofSize: RichTextHelper.bodySize)
-        var newTraits = currentFont.fontDescriptor.symbolicTraits
-
-        if isActive {
-            newTraits.insert(trait)
-        } else {
-            newTraits.remove(trait)
-        }
-
-        if let newDescriptor = currentFont.fontDescriptor.withSymbolicTraits(newTraits) {
-            let newFont = UIFont(descriptor: newDescriptor, size: currentFont.pointSize)
-            attrs[.font] = newFont
-            textView.typingAttributes = attrs
-        }
-    }
-
-    /// Notify the delegate that content changed so rich text formatting is persisted.
-    /// UIKit does NOT call textViewDidChange when attributedText is set programmatically,
-    /// so we must trigger the save manually after formatting changes.
-    private func notifyContentChanged() {
-        guard let textView = textView else { return }
-        textView.delegate?.textViewDidChange?(textView)
-    }
-
-    @objc private func dismissTapped() {
-        onDismiss?()
-    }
-}
+// Note: the previous `InterstitialKeyboardToolbar` (UIToolbar subclass) was
+// removed in favour of the shared `BodyKeyboardToolbar` (plain UIView) so
+// iOS 26 stops auto-pilling each UIBarButtonItem into its own bubble.
 
 /// Custom UITextView wrapper with proper cursor positioning and tap handling
 struct InterstitialTextView: UIViewRepresentable {
@@ -746,8 +456,10 @@ struct InterstitialTextView: UIViewRepresentable {
         // Highlight any existing hashtags on load
         HashtagHelper.applyHighlighting(to: textView)
 
-        // Add keyboard accessory toolbar with formatting and dismiss buttons
-        let toolbar = InterstitialKeyboardToolbar()
+        // Add keyboard accessory toolbar with formatting and dismiss buttons.
+        // Uses BodyKeyboardToolbar (UIView, not UIToolbar) so iOS 26 doesn't
+        // auto-pill every button into its own bubble.
+        let toolbar = BodyKeyboardToolbar()
         toolbar.textView = textView
         toolbar.onDismiss = { [weak textView] in
             textView?.resignFirstResponder()
@@ -787,7 +499,7 @@ struct InterstitialTextView: UIViewRepresentable {
         func textViewDidBeginEditing(_ textView: UITextView) {
             parent.isFocused.wrappedValue = true
             // Sync toolbar button states with current typing attributes
-            if let toolbar = textView.inputAccessoryView as? InterstitialKeyboardToolbar {
+            if let toolbar = textView.inputAccessoryView as? BodyKeyboardToolbar {
                 toolbar.syncWithTypingAttributes()
             }
         }
@@ -801,7 +513,7 @@ struct InterstitialTextView: UIViewRepresentable {
 
         func textViewDidChangeSelection(_ textView: UITextView) {
             // Sync toolbar button states when cursor moves
-            if let toolbar = textView.inputAccessoryView as? InterstitialKeyboardToolbar {
+            if let toolbar = textView.inputAccessoryView as? BodyKeyboardToolbar {
                 toolbar.syncWithTypingAttributes()
             }
         }

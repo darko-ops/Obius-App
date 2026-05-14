@@ -890,22 +890,10 @@ private struct NoteEditorContent: View {
             primaryToolbarItems
         }
 
-        #if os(iOS)
-        // Single ToolbarItem (not ToolbarItemGroup) wrapping an HStack — on
-        // iOS 26 each ToolbarItemGroup child renders as a separate pill, so
-        // the seven controls below were overflowing the screen. Collapsed
-        // into one HStack they share a single bar.
-        ToolbarItem(placement: .keyboard) {
-            // Suppress while the AI workspace sheet is up — its chat input
-            // doesn't need page-editor controls and they were overlapping it.
-            if !showingAIWorkspace && !showWorkspaceSheet {
-                HStack(spacing: 14) {
-                    keyboardToolbarItems
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-        #endif
+        // The iOS keyboard accessory is now provided by `BodyKeyboardToolbar`
+        // (a UITextView inputAccessoryView) on both the body editor and the
+        // section editor, so we don't add a SwiftUI .keyboard toolbar — a
+        // second bar would push the inputAccessoryView out of view.
     }
 
     #if os(macOS)
@@ -1642,70 +1630,6 @@ private struct NoteEditorContent: View {
         }
     }
 
-    @ViewBuilder
-    private var keyboardToolbarItems: some View {
-        IntentTypeMenu(
-            currentIntent: getCurrentSectionIntent(),
-            onSelect: { intent in
-                if let id = focusedSectionId {
-                    Task { try? await viewModel.setSectionIntent(id, intent: intent) }
-                }
-            }
-        )
-
-        Button {
-            if let id = focusedSectionId {
-                Task { try? await viewModel.outdent(id) }
-            }
-        } label: {
-            Image(systemName: "decrease.indent")
-        }
-
-        Button {
-            if let id = focusedSectionId {
-                Task { try? await viewModel.indent(id) }
-            }
-        } label: {
-            Image(systemName: "increase.indent")
-        }
-
-        Spacer()
-
-        Button {
-            undoManager?.undo()
-        } label: {
-            Image(systemName: "arrow.uturn.backward")
-                .foregroundStyle(undoManager?.canUndo == true ? .primary : .tertiary)
-        }
-        .disabled(undoManager?.canUndo != true)
-
-        Button {
-            undoManager?.redo()
-        } label: {
-            Image(systemName: "arrow.uturn.forward")
-                .foregroundStyle(undoManager?.canRedo == true ? .primary : .tertiary)
-        }
-        .disabled(undoManager?.canRedo != true)
-
-        Button {
-            dismissKeyboard()
-        } label: {
-            Image(systemName: "keyboard.chevron.compact.down")
-        }
-    }
-
-    private func dismissKeyboard() {
-        // Clear SwiftUI focus states
-        focusedSectionId = nil
-        bodyFocused = false
-        titleFocused = false
-
-        // Also dismiss using UIKit for any UITextView instances
-        #if os(iOS)
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        #endif
-    }
-    
     // MARK: - Helper Methods
 
     /// Force re-sync local @State from the ViewModel after the workspace sheet dismisses.
@@ -1735,14 +1659,6 @@ private struct NoteEditorContent: View {
                 titleText = title
             }
         }
-    }
-
-    private func getCurrentSectionIntent() -> IntentType {
-        guard let id = focusedSectionId,
-              let section = viewModel.sections.first(where: { $0.id == id }) else {
-            return .idea
-        }
-        return section.intent
     }
 
     private func sharePageDirectly() async {
@@ -2601,10 +2517,26 @@ private struct NoteEditorContent: View {
 ///
 /// Plain UIView (not UIToolbar) so iOS 26 doesn't auto-pill every UIBarButtonItem
 /// into its own bubble — the formatting controls stay in one continuous bar.
+///
+/// History note: tried subclassing UIInputView for "official" keyboard
+/// accessory behavior, but UIInputView's `_UIKBAutolayoutHeightConstraint`
+/// got applied with height==0 when the bar was created lazily via an
+/// inputAccessoryView override, collapsing the body bar to invisible.
+/// Plain UIView + intrinsicContentSize works in every host hierarchy.
 class BodyKeyboardToolbar: UIView {
     weak var textView: UITextView?
     var onDismiss: (() -> Void)?
+    var onIndent: (() -> Void)?
+    var onOutdent: (() -> Void)?
+    var onStatusChange: ((IntentType) -> Void)?
+    var currentStatus: IntentType = .idea
 
+    private let showIndentButtons: Bool
+    private let showStatusButton: Bool
+
+    private var statusButton: UIButton?
+    private var outdentButton: UIButton?
+    private var indentButton: UIButton?
     private var titleButton: UIButton?
     private var boldButton: UIButton?
     private var italicButton: UIButton?
@@ -2619,22 +2551,99 @@ class BodyKeyboardToolbar: UIView {
     private var normalFontSize: CGFloat { RichTextHelper.bodySize }
     private var titleFontSize: CGFloat { RichTextHelper.h1Size }
 
+    init(showIndentButtons: Bool = false, showStatusButton: Bool = false) {
+        self.showIndentButtons = showIndentButtons
+        self.showStatusButton = showStatusButton
+        super.init(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 44))
+        commonInit()
+    }
+
     override init(frame: CGRect) {
+        self.showIndentButtons = false
+        self.showStatusButton = false
         super.init(frame: frame)
-        setupToolbar()
+        commonInit()
     }
 
     required init?(coder: NSCoder) {
+        self.showIndentButtons = false
+        self.showStatusButton = false
         super.init(coder: coder)
-        setupToolbar()
+        commonInit()
     }
 
-    convenience init() {
-        self.init(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 44))
+    private func commonInit() {
+        // .flexibleWidth lets the bar match the keyboard width as it docks /
+        // changes orientation.
+        autoresizingMask = .flexibleWidth
+        translatesAutoresizingMaskIntoConstraints = true
+        // Pin our own vertical layout priorities so Auto Layout can't compress
+        // the bar to satisfy the keyboard system's height==0 placeholder
+        // constraint.
+        setContentHuggingPriority(.required, for: .vertical)
+        setContentCompressionResistancePriority(.required, for: .vertical)
+        setupToolbar()
+        // Explicit height constraint with a higher-than-required priority so
+        // it overrides the keyboard system's _UIKBAutolayoutHeightConstraint
+        // (height==0). Without this, body editor's spacer-first layout
+        // collapses the bar to 0pt and it becomes invisible behind QuickType.
+        let heightConstraint = heightAnchor.constraint(equalToConstant: 44)
+        heightConstraint.priority = .required
+        heightConstraint.identifier = "ObiusToolbarHeight"
+        heightConstraint.isActive = true
     }
 
     override var intrinsicContentSize: CGSize {
         CGSize(width: UIView.noIntrinsicMetric, height: 44)
+    }
+
+    override func sizeThatFits(_ size: CGSize) -> CGSize {
+        CGSize(width: size.width > 0 ? size.width : UIScreen.main.bounds.width, height: 44)
+    }
+
+    /// When the keyboard host adds the bar to its container, it installs a
+    /// private `_UIKBAutolayoutHeightConstraint` on us with constant=0. For
+    /// the section bar this gets resolved to our intrinsic size automatically;
+    /// for the body bar it doesn't (spacer-first layout). Deactivate the
+    /// system's height-0 constraint defensively whenever it appears.
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        deactivateSystemHeightConstraint()
+    }
+
+    override func updateConstraints() {
+        deactivateSystemHeightConstraint()
+        super.updateConstraints()
+    }
+
+    private func deactivateSystemHeightConstraint() {
+        for c in constraints where c.identifier == "_UIKBAutolayoutHeightConstraint" && c.constant == 0 {
+            c.isActive = false
+        }
+    }
+
+    /// Diagnostic — dumps where iOS placed the toolbar relative to the
+    /// keyboard window. Used to figure out why the body bar dock below the
+    /// QuickType strip while the section bar docks above it.
+    static func logKeyboardGeometry(label: String, textView: UITextView) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            let bar = textView.inputAccessoryView
+            let win = bar?.window ?? textView.window
+            let barInWin = bar.flatMap { $0.superview?.convert($0.frame, to: win) } ?? .null
+            let tvInWin = textView.superview?.convert(textView.frame, to: win) ?? .null
+            let screen = UIScreen.main.bounds
+            print("""
+            🔍 [\(label)] keyboard geometry
+              bar class:        \(bar.map { String(describing: type(of: $0)) } ?? "nil")
+              bar.frame:        \(bar?.frame ?? .null)
+              bar in window:    \(barInWin)
+              bar.superview:    \(bar?.superview.map { String(describing: type(of: $0)) } ?? "nil")
+              bar.window:       \(bar?.window.map { String(describing: type(of: $0)) } ?? "nil")
+              textView in win:  \(tvInWin)
+              screen.bounds:    \(screen)
+              tv.isFirstResp:   \(textView.isFirstResponder)
+            """)
+        }
     }
 
     private func setupToolbar() {
@@ -2661,13 +2670,6 @@ class BodyKeyboardToolbar: UIView {
             separator.heightAnchor.constraint(equalToConstant: 0.5),
         ])
 
-        // Indent/Outdent (disabled for body — visual parity with section editor)
-        let outdent = makeButton(systemName: "decrease.indent")
-        outdent.isEnabled = false
-
-        let indent = makeButton(systemName: "increase.indent")
-        indent.isEnabled = false
-
         // Formatting controls
         let title = makeButton(systemName: "textformat.size", action: #selector(titleTapped))
         titleButton = title
@@ -2687,12 +2689,27 @@ class BodyKeyboardToolbar: UIView {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let stack = UIStackView(arrangedSubviews: [
-            outdent, indent, spacer,
-            title, bold, italic, underline, dismiss,
-        ])
+        var arranged: [UIView] = []
+        if showStatusButton {
+            let status = makeStatusButton()
+            statusButton = status
+            arranged.append(status)
+        }
+        if showIndentButtons {
+            // Indent/outdent only appear in the section editor — body text has
+            // nothing to indent so we keep the body bar minimal.
+            let outdent = makeButton(systemName: "decrease.indent", action: #selector(outdentTapped))
+            outdentButton = outdent
+            let indent = makeButton(systemName: "increase.indent", action: #selector(indentTapped))
+            indentButton = indent
+            arranged.append(contentsOf: [outdent, indent])
+        }
+        arranged.append(spacer)
+        arranged.append(contentsOf: [title, bold, italic, underline, dismiss])
+
+        let stack = UIStackView(arrangedSubviews: arranged)
         stack.axis = .horizontal
-        stack.spacing = 14
+        stack.spacing = 4
         stack.alignment = .center
         stack.distribution = .fill
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -2700,17 +2717,65 @@ class BodyKeyboardToolbar: UIView {
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: topAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
         ])
     }
 
-    private func makeButton(systemName: String, action: Selector? = nil) -> UIButton {
+    private func makeStatusButton() -> UIButton {
         var config = UIButton.Configuration.plain()
-        config.image = UIImage(systemName: systemName)
-        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 6, bottom: 6, trailing: 6)
+        config.image = UIImage(systemName: "circle.fill", withConfiguration: Self.buttonSymbolConfig)
+        config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)
         let btn = UIButton(configuration: config)
         btn.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            btn.widthAnchor.constraint(equalToConstant: Self.buttonSize),
+            btn.heightAnchor.constraint(equalToConstant: Self.buttonSize),
+        ])
+        btn.tintColor = currentStatus.uiColor
+        btn.showsMenuAsPrimaryAction = true
+        btn.menu = UIMenu(title: "Status", children: [
+            UIAction(title: "Blue",
+                     image: UIImage(systemName: "circle.fill")?.withTintColor(.systemBlue, renderingMode: .alwaysOriginal)) { [weak self] _ in
+                self?.onStatusChange?(.idea)
+            },
+            UIAction(title: "Yellow",
+                     image: UIImage(systemName: "circle.fill")?.withTintColor(.systemYellow, renderingMode: .alwaysOriginal)) { [weak self] _ in
+                self?.onStatusChange?(.question)
+            },
+            UIAction(title: "Green",
+                     image: UIImage(systemName: "circle.fill")?.withTintColor(.systemGreen, renderingMode: .alwaysOriginal)) { [weak self] _ in
+                self?.onStatusChange?(.task)
+            },
+            UIAction(title: "Purple",
+                     image: UIImage(systemName: "circle.fill")?.withTintColor(.systemPurple, renderingMode: .alwaysOriginal)) { [weak self] _ in
+                self?.onStatusChange?(.evidence)
+            },
+        ])
+        return btn
+    }
+
+    func updateStatusColor(_ status: IntentType) {
+        currentStatus = status
+        statusButton?.tintColor = status.uiColor
+    }
+
+    @objc private func indentTapped() { onIndent?() }
+    @objc private func outdentTapped() { onOutdent?() }
+
+    private static let buttonSymbolConfig = UIImage.SymbolConfiguration(pointSize: 16, weight: .regular)
+    private static let buttonSize: CGFloat = 36
+
+    private func makeButton(systemName: String, action: Selector? = nil) -> UIButton {
+        var config = UIButton.Configuration.plain()
+        config.image = UIImage(systemName: systemName, withConfiguration: Self.buttonSymbolConfig)
+        config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)
+        let btn = UIButton(configuration: config)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            btn.widthAnchor.constraint(equalToConstant: Self.buttonSize),
+            btn.heightAnchor.constraint(equalToConstant: Self.buttonSize),
+        ])
         if let action {
             btn.addTarget(self, action: action, for: .touchUpInside)
         }
@@ -2915,17 +2980,33 @@ struct BodyTextView: UIViewRepresentable {
     var insightHighlightRanges: [(NSRange, PlatformColor)] = []
 
     func makeUIView(context: Context) -> SelfSizingTextView {
-        // Use SelfSizingTextView which has proper single-tap handling
+        // Set up exactly like EditableTextView (sections) — same class, same
+        // property order, same accessory-view assignment via the property
+        // setter. Lazy override of inputAccessoryView caused the keyboard
+        // system to apply a height-0 constraint and collapse the bar.
         let textView = SelfSizingTextView()
         textView.delegate = context.coordinator
-        textView.font = UIFont.systemFont(ofSize: RichTextHelper.bodySize)
         textView.backgroundColor = .clear
+        textView.isScrollEnabled = false
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.isUserInteractionEnabled = true
         textView.textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
         textView.textContainer.lineFragmentPadding = 0
-        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        textView.setContentCompressionResistancePriority(.required, for: .vertical)
+        textView.textContainer.lineBreakMode = .byWordWrapping
+        textView.textContainer.widthTracksTextView = true
 
-        // Add keyboard accessory toolbar
+        textView.setContentHuggingPriority(.required, for: .vertical)
+        textView.setContentCompressionResistancePriority(.required, for: .vertical)
+        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let bodyFont = UIFont.systemFont(ofSize: RichTextHelper.bodySize)
+        textView.font = bodyFont
+        textView.textColor = UIColor.label
+
+        // Eagerly attach the keyboard toolbar via the property setter so it's
+        // a fully laid-out view by the time the keyboard system queries it.
         let toolbar = BodyKeyboardToolbar()
         toolbar.textView = textView
         toolbar.onDismiss = { [weak textView] in
@@ -3006,7 +3087,15 @@ struct BodyTextView: UIViewRepresentable {
         applyInsightHighlights(to: textView)
 
         if isFocused.wrappedValue && !textView.isFirstResponder {
-            textView.becomeFirstResponder()
+            // Defer to the next runloop tick so SwiftUI finishes laying out the
+            // text view first. Synchronously becoming first responder during
+            // the update pass causes iOS to register the inputAccessoryView at
+            // the wrong vertical position — the bar ends up rendering below
+            // the QuickType strip instead of above it. Mirrors the section
+            // editor (EditableTextView), which already does this.
+            DispatchQueue.main.async {
+                textView.becomeFirstResponder()
+            }
         }
     }
 
@@ -3054,6 +3143,7 @@ struct BodyTextView: UIViewRepresentable {
             if let toolbar = textView.inputAccessoryView as? BodyKeyboardToolbar {
                 toolbar.syncWithTypingAttributes()
             }
+            BodyKeyboardToolbar.logKeyboardGeometry(label: "BODY", textView: textView)
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
