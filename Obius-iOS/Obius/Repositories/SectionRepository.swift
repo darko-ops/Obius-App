@@ -404,8 +404,8 @@ final class SectionRepository: ObservableObject {
     // MARK: - Delete
 
     func deleteSection(_ sectionId: String) async throws {
-        try await database.write { db in
-            guard var section = try Section.fetchOne(db, key: sectionId) else { return }
+        let didDelete = try await database.write { db -> Bool in
+            guard var section = try Section.fetchOne(db, key: sectionId) else { return false }
             let noteId = section.noteId
             section.softDelete()
             try section.update(db)
@@ -416,6 +416,131 @@ final class SectionRepository: ObservableObject {
                 try note.update(db)
             }
             try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
+            return true
+        }
+        if didDelete {
+            syncLogger?.logSectionDelete(sectionId)
+        }
+    }
+
+    /// Atomic merge-and-delete: in a single DB transaction, merge the deleted
+    /// section's orphaned interstitial into the previous section's interstitial
+    /// (or the note body), reparent direct children to the deleted section's
+    /// parent, soft-delete the section, and recompute the engagement score.
+    ///
+    /// Doing this atomically eliminates the race that lost content when an
+    /// interstitial NSTextView's debounced write landed between the view
+    /// model's fresh read and its merge-write.
+    func mergeInterstitialsAndDeleteSection(noteId: String, sectionId: String) async throws {
+        let didDelete = try await database.write { db -> Bool in
+            guard let section = try Section.fetchOne(db, key: sectionId) else { return false }
+
+            let siblings = try Section
+                .filter(Section.Columns.noteId == noteId)
+                .filter(Section.Columns.deletedAt == nil)
+                .order(Section.Columns.orderKey)
+                .fetchAll(db)
+
+            guard let index = siblings.firstIndex(where: { $0.id == sectionId }) else {
+                // Already removed from the live list; just ensure the row is soft-deleted.
+                var s = section
+                s.softDelete()
+                try s.update(db)
+                try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
+                return true
+            }
+
+            guard var note = try Note.fetchOne(db, key: noteId) else {
+                // No note row to merge into; just soft-delete the section.
+                var s = section
+                s.softDelete()
+                try s.update(db)
+                try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
+                return true
+            }
+
+            // Reparent direct children to the deleted section's parent so they
+            // move up instead of being deleted with the node.
+            let directChildren = try Section
+                .filter(Section.Columns.parentSectionId == sectionId)
+                .filter(Section.Columns.deletedAt == nil)
+                .fetchAll(db)
+
+            let newParentIndent: Int
+            if let parentId = section.parentSectionId,
+               let parent = try Section.fetchOne(db, key: parentId) {
+                newParentIndent = parent.indentLevel + 1
+            } else {
+                newParentIndent = 0
+            }
+            for var child in directChildren {
+                child.parentSectionId = section.parentSectionId
+                let delta = newParentIndent - child.indentLevel
+                child.indentLevel = newParentIndent
+                child.touch()
+                try child.update(db)
+                try Self.updateDescendantIndentLevels(db: db, parentId: child.id, indentDelta: delta)
+            }
+
+            // Merge the orphaned interstitial into the previous slot.
+            let deletedKey = "after_\(sectionId)"
+            let orphanedText = note.interstitialContent[deletedKey] ?? ""
+            let orphanedRich = note.interstitialRichContent[deletedKey]
+
+            if !orphanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if index > 0 {
+                    let prevId = siblings[index - 1].id
+                    let prevKey = "after_\(prevId)"
+                    let existingText = note.interstitialContent[prevKey] ?? ""
+                    let existingRich = note.interstitialRichContent[prevKey]
+                    let merged = existingText.isEmpty ? orphanedText : existingText + "\n" + orphanedText
+                    let mergedRich = existingText.isEmpty
+                        ? orphanedRich
+                        : TextMergeUtilities.appendPlainToRichText(
+                            base: existingRich,
+                            basePlain: existingText,
+                            appendedPlain: orphanedText,
+                            appendedRich: orphanedRich
+                        )
+                    note.interstitialContent[prevKey] = merged
+                    if let mergedRich = mergedRich {
+                        note.interstitialRichContent[prevKey] = mergedRich
+                    } else {
+                        note.interstitialRichContent.removeValue(forKey: prevKey)
+                    }
+                } else {
+                    let existingBody = note.body
+                    let merged = existingBody.isEmpty ? orphanedText : existingBody + "\n" + orphanedText
+                    let mergedRich = TextMergeUtilities.appendPlainToRichText(
+                        base: note.bodyRichText,
+                        basePlain: existingBody,
+                        appendedPlain: orphanedText,
+                        appendedRich: orphanedRich
+                    )
+                    note.body = merged
+                    note.bodyRichText = mergedRich
+                }
+            }
+
+            // Drop the now-orphaned interstitial keys.
+            note.interstitialContent.removeValue(forKey: deletedKey)
+            note.interstitialRichContent.removeValue(forKey: deletedKey)
+
+            // Soft-delete the section row.
+            var s = section
+            s.softDelete()
+            try s.update(db)
+
+            // Touch the note so observers refresh after the delete.
+            note.touch()
+            try note.update(db)
+
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
+            return true
+        }
+
+        if didDelete {
+            syncLogger?.logSectionDelete(sectionId)
         }
     }
 

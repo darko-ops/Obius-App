@@ -293,11 +293,8 @@ final class NoteEditorViewModel: ObservableObject {
         scheduleSyncLog()
     }
 
-    /// Serializes consecutive deleteSection calls. On macOS, holding backspace
-    /// fires deletions faster than the Combine observation pipeline can update
-    /// the @Published `note`/`sections`, so two overlapping merges would both
-    /// read the same stale interstitial state, compute their merge, and the
-    /// later write would clobber the earlier — silently dropping a line.
+    /// Serializes consecutive deleteSection calls so each repository merge
+    /// observes the previous one's committed state before running.
     private var pendingDeletion: Task<Void, Never>?
 
     func deleteSection(_ sectionId: String) async throws {
@@ -311,75 +308,13 @@ final class NoteEditorViewModel: ObservableObject {
     }
 
     private func performDeleteSection(_ sectionId: String) async {
-        // Read fresh state from the DB instead of trusting the @Published
-        // `note`/`sections` — the observation pipeline can lag one or more
-        // committed deletes behind. Merging against a stale snapshot would
-        // overwrite the prior delete's committed merge.
-        let freshNote = (try? await noteRepository.getNote(id: noteId)) ?? note
-        let freshSections = (try? await sectionRepository.getSections(noteId: noteId)) ?? sections
-
-        guard let index = freshSections.firstIndex(where: { $0.id == sectionId }) else {
-            try? await sectionRepository.deleteSection(sectionId)
-            return
-        }
-        let section = freshSections[index]
-
-        // 1. Reparent direct children to the deleted section's parent
-        //    so they move up instead of being deleted with the node.
-        let directChildren = freshSections.filter { $0.parentSectionId == sectionId }
-        for child in directChildren {
-            try? await sectionRepository.reparentSection(child.id, newParentId: section.parentSectionId)
-        }
-
-        // 2. Preserve interstitial content after the deleted section.
-        let deletedKey = "after_\(sectionId)"
-        let orphanedText = freshNote?.interstitialContent[deletedKey] ?? ""
-        let orphanedRich = freshNote?.interstitialRichContent[deletedKey]
-
-        if !orphanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            if index > 0 {
-                let prevId = freshSections[index - 1].id
-                let prevKey = "after_\(prevId)"
-                let existingText = freshNote?.interstitialContent[prevKey] ?? ""
-                let existingRich = freshNote?.interstitialRichContent[prevKey]
-                let merged = existingText.isEmpty ? orphanedText : existingText + "\n" + orphanedText
-                let mergedRich = existingText.isEmpty
-                    ? orphanedRich
-                    : Self.appendPlainToRichText(
-                        base: existingRich,
-                        basePlain: existingText,
-                        appendedPlain: orphanedText,
-                        appendedRich: orphanedRich
-                    )
-                try? await noteRepository.updateInterstitialContent(
-                    noteId,
-                    afterSectionId: prevId,
-                    content: merged,
-                    richText: mergedRich
-                )
-            } else {
-                let existingBody = freshNote?.body ?? ""
-                let merged = existingBody.isEmpty ? orphanedText : existingBody + "\n" + orphanedText
-                let mergedRich = Self.appendPlainToRichText(
-                    base: freshNote?.bodyRichText,
-                    basePlain: existingBody,
-                    appendedPlain: orphanedText,
-                    appendedRich: orphanedRich
-                )
-                try? await noteRepository.updateNoteBody(
-                    noteId,
-                    body: merged,
-                    richText: mergedRich,
-                    clearRichText: mergedRich == nil
-                )
-            }
-        }
-
-        // 3. Clean up the orphaned interstitial key
-        try? await noteRepository.updateInterstitialContent(noteId, afterSectionId: sectionId, content: "")
-
-        // 4. Delete only this section (children have been reparented)
-        try? await sectionRepository.deleteSection(sectionId)
+        // The repository merges the orphaned interstitial, reparents children,
+        // and soft-deletes the section in a single DB transaction — preventing
+        // a concurrent interstitial write from clobbering the merged value.
+        try? await sectionRepository.mergeInterstitialsAndDeleteSection(
+            noteId: noteId,
+            sectionId: sectionId
+        )
     }
     
     /// Check whether a section is "dangling" — empty with no content anywhere after it.
@@ -1005,46 +940,6 @@ final class NoteEditorViewModel: ObservableObject {
 
     func dismissEntity(_ entity: ExtractedEntity) {
         suggestedEntities.removeAll { $0.name == entity.name }
-    }
-
-    /// Concatenate an orphaned interstitial onto the body's rich text without
-    /// losing the body's existing per-character formatting. Used during section
-    /// deletion where the orphan's content is being merged into the body.
-    ///
-    /// Returns nil when the base has no rich text AND the appended chunk has no
-    /// rich text — callers interpret nil as "no rich text; store plain text only".
-    private static func appendPlainToRichText(
-        base: String?,
-        basePlain: String,
-        appendedPlain: String,
-        appendedRich: String?
-    ) -> String? {
-        // No existing rich text and nothing rich to append → skip rich entirely.
-        if base == nil && appendedRich == nil { return nil }
-
-        let bodyAttrs = RichTextHelper.bodyAttributes()
-        let result = NSMutableAttributedString()
-        if let base = base, let baseAttr = RichTextHelper.deserialize(base) {
-            result.append(baseAttr)
-        } else if !basePlain.isEmpty {
-            result.append(NSAttributedString(string: basePlain, attributes: bodyAttrs))
-        }
-        // Inherit the trailing run's attributes for the separator and any plain
-        // appended text; otherwise RTF round-trip renders them in a default
-        // serif font at the wrong size and in black.
-        let trailingAttrs: [NSAttributedString.Key: Any] = result.length > 0
-            ? result.attributes(at: result.length - 1, effectiveRange: nil)
-            : bodyAttrs
-        if result.length > 0 {
-            result.append(NSAttributedString(string: "\n", attributes: trailingAttrs))
-        }
-        if let appendedRich = appendedRich,
-           let appendedAttr = RichTextHelper.deserialize(appendedRich) {
-            result.append(appendedAttr)
-        } else {
-            result.append(NSAttributedString(string: appendedPlain, attributes: trailingAttrs))
-        }
-        return RichTextHelper.serialize(result)
     }
 
     /// Create a new section linked to an existing handle

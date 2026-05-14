@@ -29,6 +29,7 @@
 		B8A1D0010000000000000015 /* SyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000015 /* SyncEngine.swift */; };
 		B8A1D0010000000000000016 /* SyncOperationLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000016 /* SyncOperationLogger.swift */; };
 		B8A1D0010000000000000017 /* Debouncer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000017 /* Debouncer.swift */; };
+		B8A1D00A0000000000000010 /* TextMergeUtilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F00A0000000000000010 /* TextMergeUtilities.swift */; };
 		B8A1D0010000000000000018 /* ErrorHandling.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000018 /* ErrorHandling.swift */; };
 		B8A1D0010000000000000019 /* FractionalIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000019 /* FractionalIndex.swift */; };
 		B8A1D0010000000000000020 /* Commit.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000020 /* Commit.swift */; };
@@ -179,6 +180,7 @@
 		B8A1F0010000000000000015 /* SyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncEngine.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000016 /* SyncOperationLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncOperationLogger.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000017 /* Debouncer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Debouncer.swift; sourceTree = "<group>"; };
+		B8A1F00A0000000000000010 /* TextMergeUtilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextMergeUtilities.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000018 /* ErrorHandling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorHandling.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000019 /* FractionalIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FractionalIndex.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000020 /* Commit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Commit.swift; sourceTree = "<group>"; };
@@ -425,6 +427,7 @@
 				B8A1F0010000000000000017 /* Debouncer.swift */,
 				B8A1F0010000000000000018 /* ErrorHandling.swift */,
 				B8A1F0010000000000000019 /* FractionalIndex.swift */,
+				B8A1F00A0000000000000010 /* TextMergeUtilities.swift */,
 				B8A1F00A0000000000000003 /* ClipboardHelper.swift */,
 				B8A1F0010000000000000103 /* HashtagHelper.swift */,
 				B8A1F0010000000000000102 /* InterFont.swift */,
@@ -777,6 +780,7 @@
 				B8A1D0010000000000000017 /* Debouncer.swift in Sources */,
 				B8A1D0010000000000000018 /* ErrorHandling.swift in Sources */,
 				B8A1D0010000000000000019 /* FractionalIndex.swift in Sources */,
+				B8A1D00A0000000000000010 /* TextMergeUtilities.swift in Sources */,
 				B8A1D0010000000000000020 /* Commit.swift in Sources */,
 				B8A1D0010000000000000021 /* Handle.swift in Sources */,
 				B8A1D0010000000000000022 /* IntentType.swift in Sources */,
