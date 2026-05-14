@@ -66,7 +66,6 @@ final class NoteEditorViewModel: ObservableObject {
                 return Just(nil)
             }
             .sink { [weak self] noteWithSections in
-                print("[DEBUG] VM observation fired: note=\(noteWithSections?.note.id.prefix(8) ?? "nil") sections=\(noteWithSections?.sections.count ?? 0)")
                 self?.isLoading = false
                 self?.note = noteWithSections?.note
                 self?.sections = noteWithSections?.sections ?? []

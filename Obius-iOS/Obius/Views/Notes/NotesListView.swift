@@ -320,7 +320,6 @@ private struct NotesListContent: View {
         .onChange(of: selectedNote) { _, newValue in
             let newId = newValue?.id
             guard macSelectedNoteId != newId else { return }
-            print("[DEBUG] NotesListView .onChange(selectedNote): \(newId?.prefix(8) ?? "nil")")
             DispatchQueue.main.async {
                 macIsInEditor = newValue != nil
                 macSelectedNoteId = newId

@@ -291,7 +291,6 @@ struct MainTabView: View {
                         .environmentObject(appState)
                     case 0:
                         if let noteId = macSelectedNoteId {
-                            let _ = print("[DEBUG] ContentView rendering NoteEditorView for: \(noteId.prefix(8))")
                             NoteEditorView(noteId: noteId)
                                 .id(noteId)
                                 .toolbar {

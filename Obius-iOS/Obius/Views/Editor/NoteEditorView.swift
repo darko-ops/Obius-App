@@ -180,7 +180,6 @@ private struct NoteEditorContent: View {
             #endif
             .onChange(of: viewModel.focusedSectionId) { _, newValue in
                 guard focusedSectionId != newValue else { return }
-                print("[DEBUG] focusedSectionId: vm → local: \(newValue?.prefix(8) ?? "nil")")
                 DispatchQueue.main.async { focusedSectionId = newValue }
             }
             .onChange(of: focusedSectionId) { oldValue, newValue in
@@ -192,7 +191,6 @@ private struct NoteEditorContent: View {
                         biometricManager.revokeAuthentication(for: oldId)
                     }
                     if let newValue = newValue, viewModel.focusedSectionId != newValue {
-                        print("[DEBUG] focusedSectionId: local → vm: \(newValue.prefix(8))")
                         viewModel.focusedSectionId = newValue
                     }
                 }
@@ -212,7 +210,6 @@ private struct NoteEditorContent: View {
             }
             .onChange(of: viewModel.isLoading) { _, isLoading in
                 if !isLoading, let body = viewModel.note?.body, body != bodyText {
-                    print("[DEBUG] isLoading → false, syncing bodyText")
                     DispatchQueue.main.async { bodyText = body }
                 }
             }
@@ -2263,7 +2260,6 @@ private struct NoteEditorContent: View {
             // happens on blur.
             guard !bodyFocused else { return }
             if let body = note?.body, body != bodyText {
-                print("[DEBUG] .onReceive(note) body changed: \(body.prefix(50))")
                 DispatchQueue.main.async {
                     isExternalBodyUpdate = true
                     bodyText = body
@@ -2283,11 +2279,7 @@ private struct NoteEditorContent: View {
             onContentChange: { newValue, richText in
                 // Don't write to DB while workspace is open or during external updates
                 guard !showWorkspaceSheet && !showingAIWorkspace else { return }
-                guard !isExternalBodyUpdate else {
-                    print("[DEBUG] onContentChange SKIPPED (external update)")
-                    return
-                }
-                print("[DEBUG] onContentChange → updateBody: \(newValue.prefix(50))")
+                guard !isExternalBodyUpdate else { return }
                 Task {
                     try? await viewModel.updateBody(newValue, richText: richText)
                 }
@@ -2334,7 +2326,6 @@ private struct NoteEditorContent: View {
             // reconciled on blur (see .onChange of bodyFocused above).
             guard !bodyFocused else { return }
             if let newBody = newBody, newBody != bodyText {
-                print("[DEBUG] .onChange(note.body) → bodyText: \(newBody.prefix(50))")
                 isExternalBodyUpdate = true
                 DispatchQueue.main.async {
                     bodyText = newBody

@@ -5,6 +5,7 @@ import Combine
 @MainActor
 final class SectionRepository: ObservableObject {
     private let database: DatabaseManager
+    var syncLogger: SyncOperationLogger?
 
     init(database: DatabaseManager) {
         self.database = database
@@ -187,29 +188,53 @@ final class SectionRepository: ObservableObject {
     }
 
     func setIntent(_ sectionId: String, intent: IntentType) async throws {
-        try await database.write { db in
-            guard var section = try Section.fetchOne(db, key: sectionId) else { return }
+        let updated = try await database.write { db -> Section? in
+            guard var section = try Section.fetchOne(db, key: sectionId) else { return nil }
             section.intent = intent
             section.touch()
             try section.update(db)
+            return section
+        }
+        if let section = updated {
+            if section.serverVersion == nil {
+                syncLogger?.logSectionCreate(section)
+            } else {
+                syncLogger?.logSectionUpdate(section)
+            }
         }
     }
-    
+
     func toggleLock(_ sectionId: String) async throws {
-        try await database.write { db in
-            guard var section = try Section.fetchOne(db, key: sectionId) else { return }
+        let updated = try await database.write { db -> Section? in
+            guard var section = try Section.fetchOne(db, key: sectionId) else { return nil }
             section.isLocked.toggle()
             section.touch()
             try section.update(db)
+            return section
+        }
+        if let section = updated {
+            if section.serverVersion == nil {
+                syncLogger?.logSectionCreate(section)
+            } else {
+                syncLogger?.logSectionUpdate(section)
+            }
         }
     }
-    
+
     func setTitle(_ sectionId: String, title: String?) async throws {
-        try await database.write { db in
-            guard var section = try Section.fetchOne(db, key: sectionId) else { return }
+        let updated = try await database.write { db -> Section? in
+            guard var section = try Section.fetchOne(db, key: sectionId) else { return nil }
             section.title = title
             section.touch()
             try section.update(db)
+            return section
+        }
+        if let section = updated {
+            if section.serverVersion == nil {
+                syncLogger?.logSectionCreate(section)
+            } else {
+                syncLogger?.logSectionUpdate(section)
+            }
         }
     }
     
