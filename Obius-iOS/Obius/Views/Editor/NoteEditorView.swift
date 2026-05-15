@@ -2236,7 +2236,11 @@ private struct NoteEditorContent: View {
             },
             insightHighlightRanges: bodyInsightHighlightRanges
         )
-        .frame(minHeight: isPageEmpty ? 100 : 44)
+        .frame(minHeight: isPageEmpty ? 100 : 44, alignment: .top)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if !bodyFocused { bodyFocused = true }
+        }
         .animation(nil, value: bodyText) // Prevent ambient animations from animating height changes
         .padding(.horizontal, 10)
         .overlay(alignment: .topLeading) {

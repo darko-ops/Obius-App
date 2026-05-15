@@ -6,6 +6,7 @@ import Combine
 final class NoteRepository: ObservableObject {
     private let database: DatabaseManager
     private var cancellables = Set<AnyCancellable>()
+    var syncLogger: SyncOperationLogger?
 
     @Published private(set) var notes: [Note] = []
     /// Section-aware display titles keyed by note ID.
@@ -160,6 +161,127 @@ final class NoteRepository: ObservableObject {
             note.touch()
             try note.update(db)
             try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
+        }
+    }
+
+    // MARK: - Atomic Section Delete + Interstitial Merge
+
+    /// Soft-deletes a section while atomically merging its interstitial slot
+    /// into the previous section's slot (or note body when it's the first
+    /// section). The whole operation runs in one `database.write` so a
+    /// concurrent interstitial-typing debounce can't race the merge: GRDB
+    /// serializes writes, so any competing write either commits before our
+    /// transaction reads the note or queues behind our merge.
+    ///
+    /// Behaviour matches the previous multi-step path in NoteEditorViewModel:
+    /// reparents direct children to the deleted section's parent (recomputing
+    /// indent levels), preserves interstitial content (plain + rich), clears
+    /// the orphan slot, and recomputes the engagement score.
+    func deleteSectionAndMergeInterstitials(noteId: String, sectionId: String) async throws {
+        let didDelete = try await database.write { db -> Bool in
+            guard var note = try Note.fetchOne(db, key: noteId) else { return false }
+            let liveSections = try Section
+                .filter(Section.Columns.noteId == noteId)
+                .filter(Section.Columns.deletedAt == nil)
+                .order(Section.Columns.orderKey)
+                .fetchAll(db)
+
+            guard let index = liveSections.firstIndex(where: { $0.id == sectionId }) else {
+                // Already deleted concurrently — nothing left to merge.
+                return false
+            }
+            let section = liveSections[index]
+
+            // Reparent direct children to the deleted section's parent.
+            // Indent levels (and grandchildren's) shift relative to the new parent.
+            let directChildren = liveSections.filter { $0.parentSectionId == sectionId }
+            for var child in directChildren {
+                let newParentId = section.parentSectionId
+                let newIndent: Int
+                if let parentId = newParentId,
+                   let parent = try Section.fetchOne(db, key: parentId) {
+                    newIndent = parent.indentLevel + 1
+                } else {
+                    newIndent = 0
+                }
+                let indentDelta = newIndent - child.indentLevel
+                child.parentSectionId = newParentId
+                child.indentLevel = newIndent
+                child.touch()
+                try child.update(db)
+                if indentDelta != 0 {
+                    try SectionRepository.updateDescendantIndentLevels(
+                        db: db,
+                        parentId: child.id,
+                        indentDelta: indentDelta
+                    )
+                }
+            }
+
+            // Merge the orphaned interstitial into the previous section's slot
+            // (or note body when the deleted section is the first one).
+            let deletedKey = "after_\(sectionId)"
+            let orphanedText = note.interstitialContent[deletedKey] ?? ""
+            let orphanedRich = note.interstitialRichContent[deletedKey]
+            var noteChanged = false
+
+            if !orphanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if index > 0 {
+                    let prevId = liveSections[index - 1].id
+                    let prevKey = "after_\(prevId)"
+                    let existingText = note.interstitialContent[prevKey] ?? ""
+                    let existingRich = note.interstitialRichContent[prevKey]
+                    let merged = TextMergeUtilities.mergePlain(base: existingText, appended: orphanedText)
+                    let mergedRich = existingText.isEmpty
+                        ? orphanedRich
+                        : TextMergeUtilities.appendPlainToRichText(
+                            base: existingRich,
+                            basePlain: existingText,
+                            appendedPlain: orphanedText,
+                            appendedRich: orphanedRich
+                        )
+                    note.interstitialContent[prevKey] = merged
+                    if let mergedRich = mergedRich {
+                        note.interstitialRichContent[prevKey] = mergedRich
+                    } else {
+                        note.interstitialRichContent.removeValue(forKey: prevKey)
+                    }
+                } else {
+                    let existingBody = note.body ?? ""
+                    let merged = TextMergeUtilities.mergePlain(base: existingBody, appended: orphanedText)
+                    let mergedRich = TextMergeUtilities.appendPlainToRichText(
+                        base: note.bodyRichText,
+                        basePlain: existingBody,
+                        appendedPlain: orphanedText,
+                        appendedRich: orphanedRich
+                    )
+                    note.body = merged
+                    note.bodyRichText = mergedRich
+                }
+                noteChanged = true
+            }
+
+            // Always drop the orphaned slot — the section it referred to is going away.
+            if note.interstitialContent.removeValue(forKey: deletedKey) != nil { noteChanged = true }
+            if note.interstitialRichContent.removeValue(forKey: deletedKey) != nil { noteChanged = true }
+
+            if noteChanged {
+                note.touch()
+                try note.update(db)
+            }
+
+            // Soft-delete the section in the same transaction.
+            if var fresh = try Section.fetchOne(db, key: sectionId) {
+                fresh.softDelete()
+                try fresh.update(db)
+            }
+
+            try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
+            return true
+        }
+
+        if didDelete {
+            syncLogger?.logSectionDelete(sectionId)
         }
     }
 

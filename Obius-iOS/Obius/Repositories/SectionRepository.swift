@@ -331,7 +331,7 @@ final class SectionRepository: ObservableObject {
     }
     
     /// Recursively update indent levels of all descendants
-    private static func updateDescendantIndentLevels(db: Database, parentId: String, indentDelta: Int) throws {
+    static func updateDescendantIndentLevels(db: Database, parentId: String, indentDelta: Int) throws {
         let children = try Section
             .filter(Section.Columns.parentSectionId == parentId)
             .filter(Section.Columns.deletedAt == nil)
@@ -404,8 +404,8 @@ final class SectionRepository: ObservableObject {
     // MARK: - Delete
 
     func deleteSection(_ sectionId: String) async throws {
-        try await database.write { db in
-            guard var section = try Section.fetchOne(db, key: sectionId) else { return }
+        let didDelete = try await database.write { db -> Bool in
+            guard var section = try Section.fetchOne(db, key: sectionId) else { return false }
             let noteId = section.noteId
             section.softDelete()
             try section.update(db)
@@ -416,6 +416,10 @@ final class SectionRepository: ObservableObject {
                 try note.update(db)
             }
             try DatabaseManager.recomputeEngagementScore(noteId: noteId, in: db)
+            return true
+        }
+        if didDelete {
+            syncLogger?.logSectionDelete(sectionId)
         }
     }
 

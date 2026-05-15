@@ -253,6 +253,7 @@ class AppState: ObservableObject {
         echoRepository.syncLogger = syncLogger
         moduleRepository.syncLogger = syncLogger
         sectionRepository.syncLogger = syncLogger
+        noteRepository.syncLogger = syncLogger
 
         let commitRepository = CommitRepository(database: database)
         let mediaRepository = MediaRepository(database: database, coldStore: coldStore)
