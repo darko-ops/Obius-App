@@ -57,9 +57,12 @@ interface RCWebhookPayload {
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const ENTITLEMENT_ID = 'Obius Pro';
-/// Power Add-on entitlement: independent +1,000 Credits/month at $9.99/mo.
-/// Configure as a separate entitlement in RevenueCat with its own product.
-const POWER_ADDON_ENTITLEMENT_ID = 'Obius Power';
+/// Power Pack consumable IAP. Each NON_RENEWING_PURCHASE event for this
+/// product grants +1,000 Credits to the user's current monthly cycle via
+/// the `grant_power_pack_credits` RPC. Not an entitlement — there is no
+/// "active state", just a balance that resets each UTC month.
+const POWER_PACK_PRODUCT_ID = 'credits_pack_10';
+const POWER_PACK_CREDITS_PER_PURCHASE = 1_000;
 const REVENUECAT_API_KEY = Deno.env.get('REVENUECAT_API_KEY')!;
 const WEBHOOK_SECRET = Deno.env.get('REVENUECAT_WEBHOOK_SECRET');
 
@@ -117,13 +120,17 @@ serve(async (req: Request) => {
     return jsonResponse({ ok: true, message: 'Test event received' });
   }
 
-  // Process events that affect the main "Obius Pro" entitlement OR the
-  // independently-sold "Obius Power" add-on entitlement.
+  // Process events that affect either:
+  //   - the main "Obius Pro" entitlement, OR
+  //   - the Power Pack consumable IAP (`credits_pack_10`)
+  //
+  // Consumables don't carry an entitlement, so we route them by product ID.
   const ids = event.entitlement_ids ?? [];
   const noEntitlementsListed = ids.length === 0;
   const affectsPro = noEntitlementsListed || ids.includes(ENTITLEMENT_ID);
-  const affectsPower = ids.includes(POWER_ADDON_ENTITLEMENT_ID);
-  const affectsEntitlement = affectsPro || affectsPower;
+  const isPowerPackPurchase =
+    event.type === 'NON_RENEWING_PURCHASE' && event.product_id === POWER_PACK_PRODUCT_ID;
+  const affectsEntitlement = affectsPro || isPowerPackPurchase;
 
   if (!affectsEntitlement) {
     return jsonResponse({ ok: true, message: 'Ignored — unrelated entitlement' });
@@ -180,11 +187,11 @@ serve(async (req: Request) => {
 // ── Process event ───────────────────────────────────────────────────────────
 
 async function processEvent(supabase: any, userId: string, event: RCEvent): Promise<Response> {
-  const isPowerAddonEvent = isAddonEvent(event);
-
-  // Power Add-on lifecycle is independent of the main Pro entitlement.
-  if (isPowerAddonEvent) {
-    return await processPowerAddonEvent(supabase, userId, event);
+  // Power Pack consumable purchase — independent of the main Pro entitlement
+  // and idempotent at the SQL level (the RPC stamps the current cycle key).
+  // We dedupe per-transaction in `processPowerPackPurchase`.
+  if (event.type === 'NON_RENEWING_PURCHASE' && event.product_id === POWER_PACK_PRODUCT_ID) {
+    return await processPowerPackPurchase(supabase, userId, event);
   }
 
   if (GRANT_EVENTS.includes(event.type)) {
@@ -311,40 +318,70 @@ async function processEvent(supabase: any, userId: string, event: RCEvent): Prom
   return jsonResponse({ ok: true, message: `${event.type} acknowledged` });
 }
 
-// ── Power Add-on ─────────────────────────────────────────────────────────────
+// ── Power Pack (Consumable) ──────────────────────────────────────────────────
 
-function isAddonEvent(event: RCEvent): boolean {
-  // Trust the entitlement_ids list when present; fall back to product ID heuristics.
-  if (event.entitlement_ids?.includes(POWER_ADDON_ENTITLEMENT_ID)) return true;
-  const id = (event.product_id ?? '').toLowerCase();
-  return id.includes('power_addon') || id.includes('power-addon');
-}
+/**
+ * Record a consumable Power Pack purchase. Dedupes per RC event ID via the
+ * `subscription_events` table (event.id is unique per RC delivery), then
+ * calls the `grant_power_pack_credits` SQL function which atomically:
+ *   1) resets the cycle to 0 if `bonus_credits_month_key` is stale
+ *   2) adds POWER_PACK_CREDITS_PER_PURCHASE to `bonus_credits_this_month`
+ *   3) stamps the current UTC month-key
+ */
+async function processPowerPackPurchase(
+  supabase: any,
+  userId: string,
+  event: RCEvent,
+): Promise<Response> {
+  // Dedup: RevenueCat may redeliver an event on retry. We use the
+  // subscription_events table as our idempotency log — if a row with this
+  // event id already exists, skip the SQL grant.
+  const eventId = event.id;
+  const { data: existing } = await supabase
+    .from('subscription_events')
+    .select('id')
+    .eq('metadata->>rc_event_id', eventId)
+    .maybeSingle();
 
-async function processPowerAddonEvent(supabase: any, userId: string, event: RCEvent): Promise<Response> {
-  const grant = GRANT_EVENTS.includes(event.type);
-  const revoke = REVOKE_EVENTS.includes(event.type);
-
-  if (!grant && !revoke) {
-    console.log(`[RC Webhook] Power add-on: no action for ${event.type}`);
-    return jsonResponse({ ok: true, message: `${event.type} acknowledged (add-on)` });
+  if (existing) {
+    console.log(`[RC Webhook] Power Pack: duplicate event ${eventId} — already credited`);
+    return jsonResponse({ ok: true, message: 'Already processed' });
   }
 
-  const { error } = await supabase
-    .from('user_profiles')
-    .update({
-      has_power_addon: grant,
-      rc_app_user_id: event.app_user_id,
-      updated_at: new Date().toISOString(),
+  const { data: rpcResult, error: rpcError } = await supabase.rpc('grant_power_pack_credits', {
+    p_user_id: userId,
+    p_amount: POWER_PACK_CREDITS_PER_PURCHASE,
+  });
+
+  if (rpcError) {
+    console.error(`[RC Webhook] Power Pack grant failed for ${userId}: ${rpcError.message}`);
+    return errorResponse('db_error', rpcError.message, 500);
+  }
+
+  const newBalance = typeof rpcResult === 'number' ? rpcResult : POWER_PACK_CREDITS_PER_PURCHASE;
+
+  // Log the purchase for analytics + future dedup lookups.
+  await supabase
+    .from('subscription_events')
+    .insert({
+      user_id: userId,
+      event: 'power_pack_purchased',
+      product_id: event.product_id,
+      tier_before: null,
+      tier_after: null,
+      metadata: {
+        rc_event_id: eventId,
+        amount: POWER_PACK_CREDITS_PER_PURCHASE,
+        new_balance: newBalance,
+        store: event.store,
+        environment: event.environment,
+        purchased_at_ms: event.purchased_at_ms,
+      },
     })
-    .eq('id', userId);
+    .then(() => {}, () => {}); // fire-and-forget
 
-  if (error) {
-    console.error(`[RC Webhook] Failed to ${grant ? 'grant' : 'revoke'} add-on: ${error.message}`);
-    return errorResponse('db_error', error.message, 500);
-  }
-
-  console.log(`[RC Webhook] Power add-on ${grant ? 'granted' : 'revoked'} for ${userId}`);
-  return jsonResponse({ ok: true, has_power_addon: grant });
+  console.log(`[RC Webhook] Power Pack granted: +${POWER_PACK_CREDITS_PER_PURCHASE} Credits → balance ${newBalance} for ${userId}`);
+  return jsonResponse({ ok: true, granted: POWER_PACK_CREDITS_PER_PURCHASE, balance: newBalance });
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

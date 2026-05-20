@@ -33,7 +33,7 @@ enum Credits {
 struct TierLimits {
     let maxNotes: Int?              // nil = unlimited
     let maxSectionsPerNote: Int?
-    let baseCreditsPerMonth: Int    // does NOT include Power Add-on
+    let baseCreditsPerMonth: Int    // does NOT include any consumable Power Pack top-ups
     let cloudSync: Bool
     let commits: Bool
     let shareLinks: Bool
@@ -155,14 +155,24 @@ final class TierManager: ObservableObject {
     /// Total founders spots available (raised from 200 to 300 at unit-economics rework)
     static let foundersSpotsCap = 300
 
-    /// Power Add-on grants this many additional Credits/month on top of the base tier.
-    static let powerAddonCredits = 1_000
+    /// Each consumable Power Pack purchase (`credits_pack_10`) grants this many
+    /// extra Credits to the current monthly cycle.
+    static let powerPackCreditsPerPurchase = 1_000
 
     @Published private(set) var currentTier: Tier = .free
     @Published private(set) var proPeriod: ProPeriod? = nil
-    @Published private(set) var hasPowerAddon: Bool = false
+    /// Bonus Credits granted this monthly cycle via consumable Power Pack
+    /// purchases. Resets to 0 on the 1st of each UTC month alongside
+    /// `creditsUsedThisMonth`. May be incremented multiple times per cycle.
+    @Published private(set) var bonusCreditsThisMonth: Int = 0
     @Published var showPaywall = false
     @Published var paywallFeature: GatedFeature?
+    /// Dedicated paywall for the Power Pack (`credits_pack_10`) consumable.
+    /// Triggered from Settings → Subscription's "Buy" button, and from
+    /// `requireAI()` once a Pro/Founder user has burned through their monthly
+    /// Credits (Free users still see the standard plans paywall — they need a
+    /// base plan first).
+    @Published var showPowerPackPaywall = false
     @Published private(set) var creditsUsedThisMonth: Int = 0
     @Published var isFoundingMember: Bool = false
     @Published private(set) var foundersSpotsTaken: Int = 0
@@ -184,9 +194,10 @@ final class TierManager: ObservableObject {
         }
     }
 
-    /// Effective monthly credit cap, including the Power Add-on if active.
+    /// Effective monthly credit cap = base tier allotment + this cycle's bonus
+    /// from any Power Pack purchases.
     var maxCreditsPerMonth: Int {
-        limits.baseCreditsPerMonth + (hasPowerAddon ? Self.powerAddonCredits : 0)
+        limits.baseCreditsPerMonth + bonusCreditsThisMonth
     }
 
     // MARK: - UserDefaults Keys
@@ -194,7 +205,8 @@ final class TierManager: ObservableObject {
     private enum Keys {
         static let tier = "obius_tier"
         static let proPeriod = "obius_pro_period"
-        static let hasPowerAddon = "obius_has_power_addon"
+        static let bonusCredits = "obius_bonus_credits_this_month"
+        static let bonusCreditsMonth = "obius_bonus_credits_month_key"
         static let isFoundingMember = "obius_is_founding_member"
         static let creditsThisMonth = "obius_credits_this_month"
         static let creditsMonth = "obius_credits_month_key"
@@ -238,7 +250,7 @@ final class TierManager: ObservableObject {
     func logout() {
         currentTier = .free
         proPeriod = nil
-        hasPowerAddon = false
+        bonusCreditsThisMonth = 0
         isFoundingMember = false
         creditsUsedThisMonth = 0
         foundersSpotsTaken = 0
@@ -247,7 +259,8 @@ final class TierManager: ObservableObject {
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: Keys.tier)
         defaults.removeObject(forKey: Keys.proPeriod)
-        defaults.removeObject(forKey: Keys.hasPowerAddon)
+        defaults.removeObject(forKey: Keys.bonusCredits)
+        defaults.removeObject(forKey: Keys.bonusCreditsMonth)
         defaults.removeObject(forKey: Keys.isFoundingMember)
         defaults.removeObject(forKey: Keys.creditsThisMonth)
         defaults.removeObject(forKey: Keys.creditsMonth)
@@ -262,7 +275,14 @@ final class TierManager: ObservableObject {
            let period = ProPeriod(rawValue: rawPeriod) {
             proPeriod = period
         }
-        hasPowerAddon = UserDefaults.standard.bool(forKey: Keys.hasPowerAddon)
+        // Bonus Credits are scoped to the current cycle — only honor the stored
+        // value if it was written during the same UTC month we're in now.
+        let storedBonusMonth = UserDefaults.standard.string(forKey: Keys.bonusCreditsMonth) ?? ""
+        if storedBonusMonth == Self.currentMonthKey() {
+            bonusCreditsThisMonth = UserDefaults.standard.integer(forKey: Keys.bonusCredits)
+        } else {
+            bonusCreditsThisMonth = 0
+        }
         isFoundingMember = UserDefaults.standard.bool(forKey: Keys.isFoundingMember)
         creditsUsedThisMonth = UserDefaults.standard.integer(forKey: Keys.creditsThisMonth)
     }
@@ -280,9 +300,27 @@ final class TierManager: ObservableObject {
         }
     }
 
-    func updatePowerAddon(_ active: Bool) {
-        hasPowerAddon = active
-        UserDefaults.standard.set(active, forKey: Keys.hasPowerAddon)
+    /// Grant a Power Pack top-up to the current cycle. Idempotency is the
+    /// caller's responsibility — `StoreManager` tracks processed RevenueCat
+    /// transaction IDs so a restore or re-launch won't double-credit.
+    func addBonusCredits(_ amount: Int) {
+        guard amount > 0 else { return }
+        resetIfNewMonth()
+        bonusCreditsThisMonth += amount
+        UserDefaults.standard.set(bonusCreditsThisMonth, forKey: Keys.bonusCredits)
+        UserDefaults.standard.set(Self.currentMonthKey(), forKey: Keys.bonusCreditsMonth)
+    }
+
+    /// Server-authoritative refresh of the cycle's bonus balance. Called after
+    /// `checkFoundingMemberStatus` reads `user_profiles.bonus_credits_this_month`.
+    /// If the server's month key matches the current cycle, replaces local
+    /// state; otherwise treats the value as expired and zeros it locally.
+    func applyServerBonusCredits(amount: Int, monthKey: String?) {
+        let now = Self.currentMonthKey()
+        let cycleAmount = (monthKey == now) ? max(0, amount) : 0
+        bonusCreditsThisMonth = cycleAmount
+        UserDefaults.standard.set(cycleAmount, forKey: Keys.bonusCredits)
+        UserDefaults.standard.set(now, forKey: Keys.bonusCreditsMonth)
     }
 
     // MARK: - Founding Member
@@ -298,7 +336,8 @@ final class TierManager: ObservableObject {
                 let is_founding_member: Bool?
                 let subscription_tier: String?
                 let subscription_period: String?
-                let has_power_addon: Bool?
+                let bonus_credits_this_month: Int?
+                let bonus_credits_month_key: String?
             }
 
             guard let userId = SupabaseManager.shared.currentUser?.id.uuidString.lowercased() else {
@@ -310,7 +349,7 @@ final class TierManager: ObservableObject {
 
             let profiles: [ProfileRow] = try await SupabaseManager.shared.client
                 .from("user_profiles")
-                .select("is_founding_member, subscription_tier, subscription_period, has_power_addon")
+                .select("is_founding_member, subscription_tier, subscription_period, bonus_credits_this_month, bonus_credits_month_key")
                 .eq("id", value: userId)
                 .limit(1)
                 .execute()
@@ -321,7 +360,7 @@ final class TierManager: ObservableObject {
                 return
             }
 
-            print("[TierManager] Server tier: \(profile.subscription_tier ?? "nil"), period: \(profile.subscription_period ?? "nil"), founding: \(profile.is_founding_member ?? false), power: \(profile.has_power_addon ?? false)")
+            print("[TierManager] Server tier: \(profile.subscription_tier ?? "nil"), period: \(profile.subscription_period ?? "nil"), founding: \(profile.is_founding_member ?? false), bonus: \(profile.bonus_credits_this_month ?? 0) (month \(profile.bonus_credits_month_key ?? "nil"))")
 
             if profile.is_founding_member == true {
                 isFoundingMember = true
@@ -340,7 +379,10 @@ final class TierManager: ObservableObject {
                 print("[TierManager] Server tier is free or nil — no upgrade")
             }
 
-            updatePowerAddon(profile.has_power_addon ?? false)
+            applyServerBonusCredits(
+                amount: profile.bonus_credits_this_month ?? 0,
+                monthKey: profile.bonus_credits_month_key
+            )
         } catch {
             print("[TierManager] Failed to check subscription status: \(error)")
         }
@@ -409,8 +451,15 @@ final class TierManager: ObservableObject {
     @discardableResult
     func requireAI() -> Bool {
         if canUseAI() { return true }
-        paywallFeature = .aiActions
-        showPaywall = true
+        // Pro/Founder users with a live plan don't need a plan upsell — route
+        // them straight to the Power Pack consumable. Free users still need to
+        // pick a base plan, so fall through to the standard paywall.
+        if currentTier != .free {
+            showPowerPackPaywall = true
+        } else {
+            paywallFeature = .aiActions
+            showPaywall = true
+        }
         return false
     }
 
@@ -428,8 +477,10 @@ final class TierManager: ObservableObject {
     }
 
     /// Returns the canonical "month key" for the current calendar month in UTC
-    /// (e.g. `"2026-04"`). Resets fire when this key changes.
-    private static func currentMonthKey(for date: Date = Date()) -> String {
+    /// (e.g. `"2026-04"`). Resets fire when this key changes. Exposed via
+    /// `currentMonthKeyForBonus()` so the server-sync code can stamp the same
+    /// key it would have read locally.
+    static func currentMonthKey(for date: Date = Date()) -> String {
         let cal = Calendar(identifier: .gregorian)
         var c = cal
         c.timeZone = TimeZone(identifier: "UTC") ?? .current
@@ -439,6 +490,11 @@ final class TierManager: ObservableObject {
         return String(format: "%04d-%02d", y, m)
     }
 
+    /// Public accessor for the bonus-credits cycle key. `StoreManager.syncBonusCreditsToServer`
+    /// writes this alongside the bonus integer so the server can decide whether
+    /// the stored value still applies to the current cycle.
+    static func currentMonthKeyForBonus() -> String { currentMonthKey() }
+
     func resetIfNewMonth() {
         let nowKey = Self.currentMonthKey()
         let storedKey = UserDefaults.standard.string(forKey: Keys.creditsMonth) ?? ""
@@ -446,6 +502,13 @@ final class TierManager: ObservableObject {
             creditsUsedThisMonth = 0
             UserDefaults.standard.set(0, forKey: Keys.creditsThisMonth)
             UserDefaults.standard.set(nowKey, forKey: Keys.creditsMonth)
+        }
+        // Power Pack top-ups are bound to the same monthly cycle.
+        let storedBonusKey = UserDefaults.standard.string(forKey: Keys.bonusCreditsMonth) ?? ""
+        if storedBonusKey != nowKey {
+            bonusCreditsThisMonth = 0
+            UserDefaults.standard.set(0, forKey: Keys.bonusCredits)
+            UserDefaults.standard.set(nowKey, forKey: Keys.bonusCreditsMonth)
         }
     }
 

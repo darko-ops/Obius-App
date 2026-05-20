@@ -1,11 +1,14 @@
 // Server-side entitlement checks
-// Uses the subscription_tier (+ subscription_period, has_power_addon) columns set by the
-// RevenueCat webhook (and the iOS client as a fallback).
+// Uses the subscription_tier, subscription_period, and bonus_credits_this_month
+// columns set by the RevenueCat webhook (and the iOS client as a fallback).
 //
 // Unit Economics (post-rework):
 //   1 Credit = 1,000 tokens (input + output combined). Caps reset on the 1st of
-//   each calendar month, UTC. The Power Add-on grants +1,000 Credits/month on top
-//   of the base tier and is independent of Pro/Founders.
+//   each calendar month, UTC. The Power Pack (`credits_pack_10`) is a
+//   *consumable* IAP — each purchase adds 1,000 Credits to the current cycle
+//   via `grant_power_pack_credits()`. Users may buy multiple packs per month.
+//   The cycle bonus expires when `bonus_credits_month_key` no longer matches
+//   the current UTC month.
 
 import { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { errorResponse } from './supabase-client.ts';
@@ -16,7 +19,8 @@ export type SubscriptionPeriod = 'monthly' | 'annual' | null;
 interface UserTierInfo {
   tier: SubscriptionTier;
   period: SubscriptionPeriod;
-  hasPowerAddon: boolean;
+  /** Power Pack top-ups granted this cycle (already cycle-key validated). */
+  bonusCreditsThisMonth: number;
   isFoundingMember: boolean;
   expiresAt: string | null;
 }
@@ -35,8 +39,8 @@ export const AI_CREDIT_LIMITS = {
   founding: 200,
 } as const;
 
-// Power Add-on: +1,000 Credits/month on top of the user's base tier
-export const POWER_ADDON_CREDITS = 1_000;
+// Power Pack: each consumable purchase adds this many Credits to the cycle.
+export const POWER_PACK_CREDITS_PER_PURCHASE = 1_000;
 
 // Per-tier entity limits (null = unlimited, must match iOS TierLimits)
 interface TierLimits {
@@ -83,11 +87,23 @@ export function baseCreditCap(tier: SubscriptionTier, period: SubscriptionPeriod
 }
 
 export function effectiveCreditCap(info: UserTierInfo): number {
-  return baseCreditCap(info.tier, info.period) + (info.hasPowerAddon ? POWER_ADDON_CREDITS : 0);
+  return baseCreditCap(info.tier, info.period) + info.bonusCreditsThisMonth;
+}
+
+/** 'YYYY-MM' in UTC — must match the iOS `currentMonthKey()` format. */
+export function currentMonthKey(): string {
+  const d = new Date();
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  return `${y}-${m}`;
 }
 
 /**
- * Get the subscription tier (+ period + add-on) for a user from the database.
+ * Get the subscription tier (+ period + cycle bonus) for a user from the
+ * database. The bonus is cycle-key validated: if the stored
+ * `bonus_credits_month_key` doesn't match the current UTC month, the bonus
+ * is reported as 0 (the cycle rolled over and the next webhook write or
+ * client purchase will reset both fields together).
  */
 export async function getUserTier(
   supabase: SupabaseClient,
@@ -95,13 +111,13 @@ export async function getUserTier(
 ): Promise<UserTierInfo> {
   const { data, error } = await supabase
     .from('user_profiles')
-    .select('subscription_tier, subscription_period, has_power_addon, is_founding_member, subscription_expires_at')
+    .select('subscription_tier, subscription_period, bonus_credits_this_month, bonus_credits_month_key, is_founding_member, subscription_expires_at')
     .eq('id', userId)
     .single();
 
   if (error || !data) {
     console.warn(`[Entitlements] Could not fetch tier for ${userId}: ${error?.message}`);
-    return { tier: 'free', period: null, hasPowerAddon: false, isFoundingMember: false, expiresAt: null };
+    return { tier: 'free', period: null, bonusCreditsThisMonth: 0, isFoundingMember: false, expiresAt: null };
   }
 
   let tier = data.subscription_tier as SubscriptionTier;
@@ -120,10 +136,14 @@ export async function getUserTier(
 
   if (tier !== 'pro') period = null;
 
+  const storedKey = (data.bonus_credits_month_key ?? null) as string | null;
+  const rawBonus = Number(data.bonus_credits_this_month ?? 0);
+  const cycleBonus = storedKey === currentMonthKey() ? Math.max(0, rawBonus) : 0;
+
   return {
     tier,
     period,
-    hasPowerAddon: data.has_power_addon === true,
+    bonusCreditsThisMonth: cycleBonus,
     isFoundingMember: data.is_founding_member ?? false,
     expiresAt: data.subscription_expires_at,
   };
@@ -192,9 +212,7 @@ export async function requireAIAction(
     const upgradeHint =
       info.tier === 'free'
         ? 'Upgrade to Pro for 200 Credits/month.'
-        : info.hasPowerAddon
-          ? 'Limit resets on the 1st of next month.'
-          : 'Add the Power Pack for +1,000 Credits/month, or wait for the 1st-of-month refill.';
+        : 'Grab a Power Pack for +1,000 Credits, or wait for the 1st-of-month refill.';
 
     return errorResponse(
       'AI_LIMIT_REACHED',

@@ -47,6 +47,9 @@ struct ObiusApp: App {
                 .sheet(isPresented: $tierManager.showPaywall) {
                     PaywallSheet()
                 }
+                .sheet(isPresented: $tierManager.showPowerPackPaywall) {
+                    PowerPackPaywall()
+                }
                 .onChange(of: scenePhase) { phase in
                     if phase == .active {
                         Task {

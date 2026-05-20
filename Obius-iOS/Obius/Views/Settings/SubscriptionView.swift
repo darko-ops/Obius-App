@@ -11,6 +11,7 @@ struct SubscriptionView: View {
     @ObservedObject private var storeManager = StoreManager.shared
     @State private var showingCustomerCenter = false
     @State private var showingPaywall = false
+    @State private var showingPowerPackPaywall = false
     @State private var showingCancelConfirm = false
     @State private var cancelError: String?
     @State private var isRestoring = false
@@ -82,12 +83,17 @@ struct SubscriptionView: View {
                     .foregroundStyle(.secondary)
             }
 
-            // Power Add-on row — visible to anyone (active or upsell)
-            if tierManager.currentTier != .free || tierManager.hasPowerAddon {
+            // Power Pack row — Pro/Founder only. Consumable top-up; always
+            // purchasable, even after a prior purchase this month.
+            if tierManager.currentTier != .free {
                 SwiftUI.Section {
                     powerAddonRow
                 } header: {
-                    Text("Add-Ons")
+                    Text("Top-Ups")
+                } footer: {
+                    Text("Each Power Pack adds 1,000 Credits to this month. It's a one-time purchase, not a subscription — buy as many as you need.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -160,6 +166,9 @@ struct SubscriptionView: View {
         .sheet(isPresented: $showingPaywall) {
             PaywallSheet()
         }
+        .sheet(isPresented: $showingPowerPackPaywall) {
+            PowerPackPaywall()
+        }
         .alert("Cancel Subscription?", isPresented: $showingCancelConfirm) {
             Button("Keep Subscription", role: .cancel) {}
             Button("Continue to Cancel", role: .destructive) {
@@ -183,6 +192,11 @@ struct SubscriptionView: View {
             await storeManager.refreshCustomerInfo()
         }
         .onChange(of: showingPaywall) { isShowing in
+            if !isShowing {
+                Task { await storeManager.refreshCustomerInfo() }
+            }
+        }
+        .onChange(of: showingPowerPackPaywall) { isShowing in
             if !isShowing {
                 Task { await storeManager.refreshCustomerInfo() }
             }
@@ -361,32 +375,31 @@ struct SubscriptionView: View {
 
     @ViewBuilder
     private var powerAddonRow: some View {
+        let bonus = tierManager.bonusCreditsThisMonth
+        let purchased = bonus > 0
         HStack(spacing: 12) {
             Image(systemName: "bolt.fill")
-                .foregroundStyle(tierManager.hasPowerAddon ? .yellow : .secondary)
+                .foregroundStyle(purchased ? .yellow : .secondary)
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Power Pack")
                     .font(.subheadline.weight(.semibold))
-                Text(tierManager.hasPowerAddon
-                     ? "Active · +1,000 Credits/month"
-                     : "+1,000 Credits/month for $9.99/mo")
+                Text(purchased
+                     ? "+\(TierManager.formatCreditCount(bonus)) Credits added this month"
+                     : "Top up +1,000 Credits when you need them")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             Spacer()
 
-            if tierManager.hasPowerAddon {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-            } else {
-                Button("Add") { showingPaywall = true }
-                    .font(.caption.weight(.semibold))
-                    .buttonStyle(.borderedProminent)
-                    .tint(.yellow)
+            Button(purchased ? "Buy Another" : "Buy") {
+                showingPowerPackPaywall = true
             }
+            .font(.caption.weight(.semibold))
+            .buttonStyle(.borderedProminent)
+            .tint(.yellow)
         }
         .padding(.vertical, 2)
     }

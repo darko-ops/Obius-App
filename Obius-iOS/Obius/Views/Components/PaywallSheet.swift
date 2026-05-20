@@ -115,51 +115,53 @@ struct PaywallSheet: View {
                 )
             }
 
-            // Power Add-on — $9.99/mo, only relevant once user has Pro/Founders
-            if tierManager.currentTier != .free, let power = storeManager.powerAddonPackage {
-                powerAddonCard(package: power)
+            // Power Add-on — $9.99 one-time, only relevant once user has Pro/Founders
+            if tierManager.currentTier != .free, let powerProduct = storeManager.powerAddonStoreProduct {
+                powerAddonCard(product: powerProduct)
             }
         }
     }
 
     @ViewBuilder
-    private func powerAddonCard(package: Package) -> some View {
-        let active = tierManager.hasPowerAddon
+    private func powerAddonCard(product: StoreProduct) -> some View {
+        let bonus = tierManager.bonusCreditsThisMonth
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "bolt.fill")
                     .foregroundStyle(.yellow)
-                Text("Power Add-on")
+                Text("Power Pack")
                     .font(.subheadline.weight(.semibold))
-                if active {
-                    Text("ACTIVE")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.green))
-                }
+                Text("ONE-TIME")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.yellow))
             }
-            Text("\(package.storeProduct.localizedPriceString)/mo · +1,000 Credits/month")
+            Text("\(product.localizedPriceString) · +1,000 Credits this month")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("For users hammering the AI Workspace. Stacks on top of your plan.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            if !active {
-                Button {
-                    purchasePackage(package)
-                } label: {
-                    Text("Add Power Pack")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.black)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(Color.yellow))
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 4)
+            if bonus > 0 {
+                Text("You've already topped up \(TierManager.formatCreditCount(bonus)) Credits this month — buy another any time.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Doesn't auto-renew. Top up whenever you need more.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
+            Button {
+                purchasePowerPack()
+            } label: {
+                Text(bonus > 0 ? "Buy Another Pack" : "Buy Power Pack")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(Color.yellow))
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
@@ -421,6 +423,20 @@ struct PaywallSheet: View {
         Task {
             do {
                 _ = try await storeManager.purchase(package)
+                dismiss()
+            } catch {
+                purchaseError = error.localizedDescription
+            }
+            isPurchasing = false
+        }
+    }
+
+    private func purchasePowerPack() {
+        isPurchasing = true
+        purchaseError = nil
+        Task {
+            do {
+                _ = try await storeManager.purchasePowerPack()
                 dismiss()
             } catch {
                 purchaseError = error.localizedDescription

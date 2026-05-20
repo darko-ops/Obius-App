@@ -11,6 +11,7 @@
 		B8A1D0200000000000000091 /* StoreManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0200000000000000091 /* StoreManager.swift */; };
 		B8A1D0200000000000000094 /* SubscriptionAnalytics.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0200000000000000094 /* SubscriptionAnalytics.swift */; };
 		B8A1D0200000000000000092 /* PaywallSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0200000000000000092 /* PaywallSheet.swift */; };
+		B8A1D0200000000000000192 /* PowerPackPaywall.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0200000000000000192 /* PowerPackPaywall.swift */; };
 		B8A1D0200000000000000093 /* SubscriptionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0200000000000000093 /* SubscriptionView.swift */; };
 		B8A1D0010000000000000001 /* ObiusApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000001 /* ObiusApp.swift */; };
 		B8A1D0010000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000002 /* ContentView.swift */; };
@@ -151,6 +152,7 @@
 		B8A1F0200000000000000091 /* StoreManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreManager.swift; sourceTree = "<group>"; };
 		B8A1F0200000000000000094 /* SubscriptionAnalytics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionAnalytics.swift; sourceTree = "<group>"; };
 		B8A1F0200000000000000092 /* PaywallSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaywallSheet.swift; sourceTree = "<group>"; };
+		B8A1F0200000000000000192 /* PowerPackPaywall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerPackPaywall.swift; sourceTree = "<group>"; };
 		B8A1F0200000000000000093 /* SubscriptionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionView.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000001 /* ObiusApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObiusApp.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -543,6 +545,7 @@
 				B8A1F0010000000000000302 /* MacSidebarProjectList.swift */,
 				B8A1F0010000000000000303 /* MacWelcomeView.swift */,
 				B8A1F0200000000000000092 /* PaywallSheet.swift */,
+				B8A1F0200000000000000192 /* PowerPackPaywall.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -757,6 +760,7 @@
 				B8A1D0200000000000000091 /* StoreManager.swift in Sources */,
 				B8A1D0200000000000000094 /* SubscriptionAnalytics.swift in Sources */,
 				B8A1D0200000000000000092 /* PaywallSheet.swift in Sources */,
+				B8A1D0200000000000000192 /* PowerPackPaywall.swift in Sources */,
 				B8A1D0200000000000000093 /* SubscriptionView.swift in Sources */,
 				B8A1D0010000000000000093 /* ProfileImageManager.swift in Sources */,
 				B8A1D0010000000000000095 /* AutoCommitManager.swift in Sources */,
