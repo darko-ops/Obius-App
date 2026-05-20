@@ -14,11 +14,13 @@ struct LibraryView: View {
 
     enum LibrarySection: String, CaseIterable {
         case loops = "Loops"
+        case nodes = "Nodes"
         case commits = "Versions"
 
         var icon: String {
             switch self {
             case .loops: return "link"
+            case .nodes: return "square.stack.3d.up"
             case .commits: return "clock.arrow.circlepath"
             }
         }
@@ -66,6 +68,8 @@ struct LibraryView: View {
                 switch selectedSection {
                 case .loops:
                     LoopsListView(searchQuery: searchQuery)
+                case .nodes:
+                    NodesListView(searchQuery: searchQuery)
                 case .commits:
                     CommitsListView(searchQuery: searchQuery)
                 }
@@ -222,17 +226,19 @@ struct LibraryView: View {
 
 enum LoopFilter: String, CaseIterable {
     case all
-    case idea
-    case question
-    case task
-    case evidence
+    case idea       // Open    (Blue)
+    case question   // Waiting (Yellow)
+    case evidence   // Active  (Purple)
+    case issue      // Issue   (Red)
+    case task       // Done    (Green)
 
     var tint: Color {
         switch self {
         case .all:      return .white
         case .idea:     return IntentType.idea.color
-        case .question: return IntentType.question.color
         case .task:     return IntentType.task.color
+        case .question: return IntentType.question.color
+        case .issue:    return IntentType.issue.color
         case .evidence: return IntentType.evidence.color
         }
     }
@@ -241,11 +247,18 @@ enum LoopFilter: String, CaseIterable {
         switch self {
         case .all:      return nil
         case .idea:     return .idea
-        case .question: return .question
         case .task:     return .task
+        case .question: return .question
+        case .issue:    return .issue
         case .evidence: return .evidence
         }
     }
+}
+
+struct LoopEditorTarget: Identifiable, Hashable {
+    let noteId: String
+    let sectionId: String
+    var id: String { "\(noteId)|\(sectionId)" }
 }
 
 struct LoopsListView: View {
@@ -253,6 +266,8 @@ struct LoopsListView: View {
     @StateObject private var handleManager = HandleManager.shared
     @State private var showingCreateSheet = false
     @State private var selectedHandle: Handle?
+    @State private var pendingEditorTarget: LoopEditorTarget?
+    @State private var editorTarget: LoopEditorTarget?
     @State private var selectedFilter: LoopFilter = .all
     var searchQuery: String = ""
 
@@ -313,8 +328,24 @@ struct LoopsListView: View {
         .sheet(isPresented: $showingCreateSheet) {
             CreateLoopSheet()
         }
-        .sheet(item: $selectedHandle) { handle in
-            LoopDetailSheet(handle: handle)
+        .sheet(item: $selectedHandle, onDismiss: {
+            // If the user tapped an "Appears In" reference inside the loop sheet,
+            // we stored the target before dismissing. Push the real page editor
+            // onto the Library's NavigationStack now that the sheet is gone.
+            if let target = pendingEditorTarget {
+                pendingEditorTarget = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    editorTarget = target
+                }
+            }
+        }) { handle in
+            LoopDetailSheet(handle: handle) { note, section in
+                pendingEditorTarget = LoopEditorTarget(noteId: note.id, sectionId: section.id)
+            }
+        }
+        .navigationDestination(item: $editorTarget) { target in
+            NoteEditorView(noteId: target.noteId, targetSectionId: target.sectionId)
+                .environmentObject(appState)
         }
     }
 
@@ -542,14 +573,19 @@ struct LoopDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var appState: AppState
     let handle: Handle
+    /// Called when the user taps an "Appears In" reference. The caller is
+    /// responsible for navigating to the page editor *after* this sheet
+    /// dismisses — we just hand the target up and `dismiss()` the sheet.
+    let onSelectReference: ((Note, Section) -> Void)?
 
     @StateObject private var handleManager = HandleManager.shared
     @State private var content: String
     @State private var intent: IntentType
     @State private var references: [(note: Note, section: Section)] = []
 
-    init(handle: Handle) {
+    init(handle: Handle, onSelectReference: ((Note, Section) -> Void)? = nil) {
         self.handle = handle
+        self.onSelectReference = onSelectReference
         _content = State(initialValue: handle.content)
         _intent = State(initialValue: handle.intent)
     }
@@ -584,12 +620,19 @@ struct LoopDetailSheet: View {
                             .foregroundStyle(.tertiary)
                     } else {
                         ForEach(references, id: \.section.id) { ref in
-                            NavigationLink {
-                                NoteEditorView(noteId: ref.note.id, targetSectionId: ref.section.id)
-                                    .environmentObject(appState)
+                            Button {
+                                onSelectReference?(ref.note, ref.section)
+                                dismiss()
                             } label: {
-                                loopReferenceRow(note: ref.note, section: ref.section)
+                                HStack {
+                                    loopReferenceRow(note: ref.note, section: ref.section)
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                }
                             }
+                            .buttonStyle(.plain)
+                            .contentShape(Rectangle())
                         }
                     }
                 }
@@ -692,6 +735,364 @@ struct LoopDetailSheet: View {
             try? await handleManager.deleteHandle(id: handle.id)
             dismiss()
         }
+    }
+}
+
+// MARK: - Nodes List View
+
+struct NodesListView: View {
+    @EnvironmentObject var appState: AppState
+    @AppStorage("selectedModuleId") private var selectedModuleId: String?
+    @State private var sectionsByNote: [String: [Section]] = [:]
+    @State private var collapsedNoteIds: Set<String> = []
+    @State private var selectedFilter: LoopFilter = .all
+    @State private var isLoading = true
+    @State private var selectedTarget: NodeTarget?
+    var searchQuery: String = ""
+
+    struct NodeTarget: Identifiable, Hashable {
+        let noteId: String
+        let sectionId: String
+        var id: String { "\(noteId)|\(sectionId)" }
+    }
+
+    /// Order pages the same way the Pages tab does: pinned first, then unpinned,
+    /// each ordered by `updatedAt.desc` (which is the natural order of
+    /// `noteRepository.notes`). Scoped to the currently selected module so the
+    /// list mirrors what's visible in the Pages tab. Pages with zero matching
+    /// nodes are dropped.
+    private var pageGroups: [(note: Note, sections: [Section])] {
+        let notes = appState.noteRepository.notes
+            .filter { $0.moduleId == selectedModuleId }
+        let pinned = notes.filter { $0.isPinned }
+        let unpinned = notes.filter { !$0.isPinned }
+        let ordered = pinned + unpinned
+
+        return ordered.compactMap { note in
+            let raw = (sectionsByNote[note.id] ?? []).filter { $0.sectionType == .fold }
+            let filtered = filterSections(raw, noteTitle: appState.noteRepository.resolvedTitle(for: note))
+            guard !filtered.isEmpty else { return nil }
+            return (note: note, sections: filtered)
+        }
+    }
+
+    private func filterSections(_ sections: [Section], noteTitle: String) -> [Section] {
+        var result = sections
+        if let intent = selectedFilter.intent {
+            result = result.filter { $0.intent == intent }
+        }
+        if !searchQuery.isEmpty {
+            // If the page title matches, keep all of its nodes after the intent filter.
+            if noteTitle.localizedCaseInsensitiveContains(searchQuery) {
+                return result
+            }
+            result = result.filter { section in
+                section.content.localizedCaseInsensitiveContains(searchQuery) ||
+                (section.title ?? "").localizedCaseInsensitiveContains(searchQuery)
+            }
+        }
+        return result
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            nodeFilterBar
+
+            if isLoading {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 32)
+            } else if pageGroups.isEmpty {
+                if searchQuery.isEmpty && selectedFilter == .all {
+                    emptyState
+                } else {
+                    ContentUnavailableView.search(text: searchQuery)
+                }
+            } else {
+                nodesList
+            }
+        }
+        .task {
+            await loadAllSections()
+        }
+        .onReceive(appState.noteRepository.$notes) { _ in
+            Task { await loadAllSections() }
+        }
+        .onChange(of: selectedModuleId) { _, _ in
+            Task { await loadAllSections() }
+        }
+        .sheet(item: $selectedTarget) { target in
+            NavigationStack {
+                NoteEditorView(noteId: target.noteId, targetSectionId: target.sectionId)
+                    .environmentObject(appState)
+            }
+        }
+    }
+
+    private var nodeFilterBar: some View {
+        HStack(spacing: 4) {
+            ForEach(LoopFilter.allCases, id: \.self) { filter in
+                let isSelected = selectedFilter == filter
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selectedFilter = filter
+                    }
+                } label: {
+                    Group {
+                        if filter == .all {
+                            Text("All")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(isSelected ? Color.primary : .secondary)
+                                .padding(.horizontal, isSelected ? 10 : 8)
+                                .padding(.vertical, 5)
+                        } else {
+                            Capsule()
+                                .fill(filter.tint)
+                                .frame(width: 22, height: 8)
+                                .opacity(isSelected ? 1 : 0.55)
+                                .padding(.horizontal, isSelected ? 8 : 6)
+                                .padding(.vertical, 6)
+                        }
+                    }
+                    .contentShape(Capsule())
+                    .background(
+                        Capsule()
+                            .fill(isSelected ? filter.tint.opacity(0.12) : Color.clear)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "square.stack.3d.up")
+                .font(.largeTitle)
+                .foregroundStyle(.secondary)
+            Text("No Nodes")
+                .font(.headline)
+            Text("Nodes appear inside the pages you create")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 32)
+    }
+
+    private var nodesList: some View {
+        LazyVStack(alignment: .leading, spacing: 14) {
+            ForEach(pageGroups, id: \.note.id) { group in
+                PageNodesGroup(
+                    note: group.note,
+                    title: appState.noteRepository.resolvedTitle(for: group.note),
+                    sections: group.sections,
+                    isCollapsed: collapsedNoteIds.contains(group.note.id),
+                    onToggle: { toggleGroup(group.note.id) },
+                    onSelectSection: { section in
+                        selectedTarget = NodeTarget(noteId: group.note.id, sectionId: section.id)
+                    }
+                )
+            }
+        }
+        .padding(.horizontal)
+    }
+
+    private func toggleGroup(_ noteId: String) {
+        withAnimation(.easeInOut(duration: 0.18)) {
+            if collapsedNoteIds.contains(noteId) {
+                collapsedNoteIds.remove(noteId)
+            } else {
+                collapsedNoteIds.insert(noteId)
+            }
+        }
+    }
+
+    private func loadAllSections() async {
+        var newMap: [String: [Section]] = [:]
+        let scoped = appState.noteRepository.notes.filter { $0.moduleId == selectedModuleId }
+        for note in scoped {
+            if let secs = try? await appState.sectionRepository.getSections(noteId: note.id) {
+                newMap[note.id] = secs
+            }
+        }
+        await MainActor.run {
+            sectionsByNote = newMap
+            isLoading = false
+        }
+    }
+}
+
+// MARK: - Page Nodes Group
+
+struct PageNodesGroup: View {
+    let note: Note
+    let title: String
+    let sections: [Section]
+    let isCollapsed: Bool
+    let onToggle: () -> Void
+    let onSelectSection: (Section) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button(action: onToggle) {
+                HStack(spacing: 8) {
+                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 12)
+
+                    // Page intent dot for quick scanning
+                    Circle()
+                        .fill(note.intent.color)
+                        .frame(width: 7, height: 7)
+
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    Text("\(sections.count)")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .background(Color.secondarySystemBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            if !isCollapsed {
+                VStack(spacing: 6) {
+                    ForEach(sections) { section in
+                        NodeRowView(section: section)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.systemBackground)
+                            .cornerRadius(10)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                onSelectSection(section)
+                            }
+                    }
+                }
+                .padding(.leading, 8)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+}
+
+// MARK: - Node Row View
+
+struct NodeRowView: View {
+    let section: Section
+
+    private var relativeTime: String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        let date = Date(timeIntervalSince1970: Double(section.updatedAt) / 1000)
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private var displayPreview: String {
+        switch section.contentType {
+        case .image:
+            return "Image"
+        case .audio:
+            return "Audio"
+        case .text, .checklist, .code, .quote:
+            let preview = section.preview
+            return preview.isEmpty ? "(empty)" : preview
+        }
+    }
+
+    private var contentTypeIcon: String? {
+        switch section.contentType {
+        case .image: return "photo"
+        case .audio: return "waveform"
+        case .checklist: return "checklist"
+        case .code: return "chevron.left.forwardslash.chevron.right"
+        case .quote: return "quote.opening"
+        case .text: return nil
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            // Status spine: 4px wide, intent-colored — primary status indicator
+            RoundedRectangle(cornerRadius: 2)
+                .fill(section.intent.color)
+                .frame(width: 4)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    if let icon = contentTypeIcon {
+                        Image(systemName: icon)
+                            .font(.system(size: 9))
+                            .foregroundStyle(section.intent.color)
+                    }
+
+                    Text(displayPreview)
+                        .font(.subheadline)
+                        .foregroundStyle(displayPreview == "(empty)" ? .tertiary : .primary)
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    Text(relativeTime)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                // Indent + intent label hint
+                HStack(spacing: 4) {
+                    if section.indentLevel > 0 {
+                        Image(systemName: "arrow.turn.down.right")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.tertiary)
+                        Text("L\(section.indentLevel)")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    Text(section.intent.label)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(section.intent.color)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(section.intent.color.opacity(0.12)))
+
+                    if section.isPortal {
+                        HStack(spacing: 2) {
+                            Image(systemName: "link")
+                                .font(.system(size: 8))
+                            Text("loop")
+                                .font(.system(size: 9, weight: .medium))
+                        }
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.orange.opacity(0.12)))
+                    }
+
+                    if section.isLocked {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+            .padding(.leading, 10)
+        }
+        .padding(.vertical, 4)
     }
 }
 

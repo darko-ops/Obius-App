@@ -1943,8 +1943,9 @@ extension IntentType {
     var uiColor: UIColor {
         switch self {
         case .idea:     return .systemBlue
-        case .question: return .systemYellow
         case .task:     return .systemGreen
+        case .question: return .systemYellow
+        case .issue:    return .systemRed
         case .evidence: return .systemPurple
         }
     }
