@@ -995,10 +995,28 @@ struct LoopsSheetView: View {
     let handles: [Handle]
 
     @State private var selectedHandle: Handle?
+    @State private var selectedFilter: LoopFilter = .all
+    @State private var showingCreateSheet = false
+
+    private var filteredHandles: [Handle] {
+        guard let intent = selectedFilter.intent else { return handles }
+        return handles.filter { $0.intent == intent }
+    }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                // Centered intent filter bar
+                if !handles.isEmpty {
+                    HStack {
+                        Spacer()
+                        loopFilterBar
+                        Spacer()
+                    }
+                    .padding(.top, 8)
+                    .padding(.bottom, 4)
+                }
+
                 if handles.isEmpty {
                     Spacer()
                     VStack(spacing: 12) {
@@ -1012,10 +1030,21 @@ struct LoopsSheetView: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
+                } else if filteredHandles.isEmpty {
+                    Spacer()
+                    VStack(spacing: 8) {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                        Text("No loops match this filter")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 8) {
-                            ForEach(handles) { handle in
+                            ForEach(filteredHandles) { handle in
                                 LoopRowView(handle: handle)
                                     .padding(.horizontal)
                                     .padding(.vertical, 6)
@@ -1026,7 +1055,7 @@ struct LoopsSheetView: View {
                             }
                         }
                         .padding(.horizontal)
-                        .padding(.top, 8)
+                        .padding(.top, 4)
                     }
                 }
             }
@@ -1041,9 +1070,53 @@ struct LoopsSheetView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    Button("+ New") {
+                        showingCreateSheet = true
+                    }
+                }
             }
             .sheet(item: $selectedHandle) { handle in
                 LoopDetailSheet(handle: handle)
+            }
+            .sheet(isPresented: $showingCreateSheet) {
+                CreateLoopSheet()
+            }
+        }
+    }
+
+    private var loopFilterBar: some View {
+        HStack(spacing: 4) {
+            ForEach(LoopFilter.allCases, id: \.self) { filter in
+                let isSelected = selectedFilter == filter
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selectedFilter = filter
+                    }
+                } label: {
+                    Group {
+                        if filter == .all {
+                            Text("All")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(isSelected ? Color.primary : .secondary)
+                                .padding(.horizontal, isSelected ? 10 : 8)
+                                .padding(.vertical, 5)
+                        } else {
+                            Capsule()
+                                .fill(filter.tint)
+                                .frame(width: 22, height: 8)
+                                .opacity(isSelected ? 1 : 0.55)
+                                .padding(.horizontal, isSelected ? 8 : 6)
+                                .padding(.vertical, 6)
+                        }
+                    }
+                    .contentShape(Capsule())
+                    .background(
+                        Capsule()
+                            .fill(isSelected ? filter.tint.opacity(0.12) : Color.clear)
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
     }

@@ -220,47 +220,86 @@ struct LibraryView: View {
 
 // MARK: - Loops List View
 
+enum LoopFilter: String, CaseIterable {
+    case all
+    case idea
+    case question
+    case task
+    case evidence
+
+    var tint: Color {
+        switch self {
+        case .all:      return .white
+        case .idea:     return IntentType.idea.color
+        case .question: return IntentType.question.color
+        case .task:     return IntentType.task.color
+        case .evidence: return IntentType.evidence.color
+        }
+    }
+
+    var intent: IntentType? {
+        switch self {
+        case .all:      return nil
+        case .idea:     return .idea
+        case .question: return .question
+        case .task:     return .task
+        case .evidence: return .evidence
+        }
+    }
+}
+
 struct LoopsListView: View {
     @EnvironmentObject var appState: AppState
     @StateObject private var handleManager = HandleManager.shared
     @State private var showingCreateSheet = false
     @State private var selectedHandle: Handle?
+    @State private var selectedFilter: LoopFilter = .all
     var searchQuery: String = ""
 
     private var filteredHandles: [Handle] {
-        if searchQuery.isEmpty {
-            return handleManager.handles
+        var handles = handleManager.handles
+
+        if let intent = selectedFilter.intent {
+            handles = handles.filter { $0.intent == intent }
         }
-        return handleManager.handles.filter {
-            $0.name.localizedCaseInsensitiveContains(searchQuery) ||
-            $0.preview.localizedCaseInsensitiveContains(searchQuery)
+
+        if !searchQuery.isEmpty {
+            handles = handles.filter {
+                $0.name.localizedCaseInsensitiveContains(searchQuery) ||
+                $0.preview.localizedCaseInsensitiveContains(searchQuery)
+            }
         }
+
+        return handles
     }
 
     var body: some View {
         VStack(spacing: 12) {
-            // Create loop pill (matches commit filter bar style)
-            HStack(spacing: 4) {
-                Button {
-                    showingCreateSheet = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text("New Loop")
-                            .font(.system(size: 10, weight: .medium))
-                    }
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        Capsule()
-                            .fill(Color.orange.opacity(0.12))
-                    )
-                }
-                .buttonStyle(.plain)
+            // Intent filter bar (centered) + create button on the right
+            ZStack {
+                loopFilterBar
 
-                Spacer()
+                HStack {
+                    Spacer()
+                    Button {
+                        showingCreateSheet = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 9, weight: .semibold))
+                            Text("New")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule()
+                                .fill(Color.orange.opacity(0.12))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
             }
 
             if handleManager.handles.isEmpty {
@@ -292,6 +331,42 @@ struct LoopsListView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 32)
+    }
+
+    private var loopFilterBar: some View {
+        HStack(spacing: 4) {
+            ForEach(LoopFilter.allCases, id: \.self) { filter in
+                let isSelected = selectedFilter == filter
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selectedFilter = filter
+                    }
+                } label: {
+                    Group {
+                        if filter == .all {
+                            Text("All")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(isSelected ? Color.primary : .secondary)
+                                .padding(.horizontal, isSelected ? 10 : 8)
+                                .padding(.vertical, 5)
+                        } else {
+                            Capsule()
+                                .fill(filter.tint)
+                                .frame(width: 22, height: 8)
+                                .opacity(isSelected ? 1 : 0.55)
+                                .padding(.horizontal, isSelected ? 8 : 6)
+                                .padding(.vertical, 6)
+                        }
+                    }
+                    .contentShape(Capsule())
+                    .background(
+                        Capsule()
+                            .fill(isSelected ? filter.tint.opacity(0.12) : Color.clear)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     private var loopsList: some View {

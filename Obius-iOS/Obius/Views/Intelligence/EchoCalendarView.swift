@@ -9,7 +9,11 @@ struct EchoCalendarView: View {
         case week = "Week"
     }
 
+    #if os(macOS)
     @State private var mode: CalendarMode = .month
+    #else
+    @State private var mode: CalendarMode = .week
+    #endif
     @State private var displayedMonth: Date = {
         let cal = Calendar.current
         return cal.date(from: cal.dateComponents([.year, .month], from: Date())) ?? Date()
