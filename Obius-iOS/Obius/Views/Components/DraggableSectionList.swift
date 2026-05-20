@@ -121,9 +121,11 @@ struct DraggableSectionList: View {
     }
 
     private func startDragging(_ section: Section) {
-        withAnimation(.easeInOut(duration: 0.2)) {
-            draggingSection = section
-        }
+        // Setting draggingSection without withAnimation: the row's own
+        // .animation(.easeInOut, value: isDragging) handles the scale/opacity
+        // transition. A withAnimation here propagates a transaction into the
+        // child views that bled into the row's offset updates as flicker.
+        draggingSection = section
         HapticFeedback.impact(.medium)
     }
 
@@ -242,51 +244,68 @@ struct DraggableSectionRow: View {
                 )
                 .padding(.trailing, 8)
             }
+
+            dragHandle
         }
         .background(rowBackground)
         .overlay(insightHighlightOverlay)
         .overlay(dropIndicator)
-        .clipped()  // Prevent gesture recognizers from extending beyond row bounds
-        .contentShape(Rectangle())  // Constrain hit-testing to the row's frame
+        .clipped()
         .offset(y: isDragging ? dragAmount.height : 0)
+        // Offset must track the finger 1:1 — every implicit animation here
+        // shows up as visible jitter because dragAmount updates ~60×/s and
+        // any interpolation lasting more than a frame falls behind. Keep
+        // the scale/opacity animation below; it only fires when isDragging
+        // toggles, not when dragAmount changes.
+        .animation(nil, value: dragAmount)
         .scaleEffect(isDragging ? 1.02 : 1.0)
         .opacity(isDragging ? 0.9 : 1.0)
         .animation(.easeInOut(duration: 0.15), value: isDragging)
-        // Use simultaneousGesture so the parent ScrollView's scroll gesture
-        // isn't blocked. The long press (0.3s) naturally fails during a scroll
-        // because the finger moves, so only a deliberate hold activates reorder.
-        .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.3)
-                .sequenced(before: DragGesture())
-                .onChanged { value in
-                    switch value {
-                    case .first(true):
-                        break
-                    case .second(true, let drag):
-                        if !isDragging {
-                            onDragStart()
-                            HapticFeedback.impact(.medium)
-                        }
-                        if let drag = drag {
-                            dragAmount = drag.translation
-                            onDragChanged(drag.translation)
-                        }
-                    default:
-                        break
-                    }
-                }
-                .onEnded { value in
-                    dragAmount = .zero
-                    if isDragging {
-                        onDragEnd()
-                    }
-                }
-        )
         .transaction { transaction in
             if !isDragging {
                 transaction.animation = nil
             }
         }
+    }
+
+    /// Dedicated leading-edge drag affordance. The reorder gesture lives only
+    /// here, not on the row body — so finger-down anywhere on the section
+    /// content passes straight through to the parent ScrollView's pan and
+    /// scroll (including on collapsed rows) is unimpeded.
+    private var dragHandle: some View {
+        Image(systemName: "line.3.horizontal")
+            .font(.caption.weight(.medium))
+            .foregroundStyle(isDragging ? Color.accentColor : Color.secondary.opacity(0.55))
+            .frame(width: 22)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                LongPressGesture(minimumDuration: 0.3)
+                    .sequenced(before: DragGesture(minimumDistance: 0))
+                    .onChanged { value in
+                        switch value {
+                        case .first(true):
+                            break
+                        case .second(true, let drag):
+                            if !isDragging {
+                                onDragStart()
+                                HapticFeedback.impact(.medium)
+                            }
+                            if let drag = drag {
+                                dragAmount = drag.translation
+                                onDragChanged(drag.translation)
+                            }
+                        default:
+                            break
+                        }
+                    }
+                    .onEnded { _ in
+                        dragAmount = .zero
+                        if isDragging {
+                            onDragEnd()
+                        }
+                    }
+            )
     }
 
     private var rowBackground: some View {

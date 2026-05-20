@@ -1497,13 +1497,30 @@ struct SingleLineTextField: View {
 class SelfSizingTextView: UITextView {
     private var lastWidth: CGFloat = 0
 
-    // Peer pan for driving the enclosing ScrollView's contentOffset while
-    // focused. Attached directly to self. Disabled when not first-responder
-    // so it never fires during normal scroll-to-here-to-focus flow. See
-    // `handleScrollAssistPan(_:)` for details.
+    // Peer pan for driving the enclosing ScrollView's contentOffset. Attached
+    // directly to self. UITextInteraction's recognizers absorb touches on
+    // glyphs and otherwise prevent the parent's pan from beginning; this peer
+    // pan with `cancelsTouchesInView = true` cancels their pipeline on a clear
+    // vertical drag, then drives `scrollView.contentOffset` directly. On
+    // gesture end we project the touch velocity through UIScrollView's
+    // standard deceleration curve and animate to the final offset so the user
+    // gets native-feeling fling/momentum.
     private let scrollAssistDelegate = ScrollAssistAllowingDelegate()
     private var scrollAssistPan: VerticalOnlyPan?
     private var scrollAssistOffsetAtBegin: CGPoint = .zero
+
+    // CADisplayLink-driven deceleration for the fling animation after a
+    // scroll-assist pan ends. Using a display link instead of UIView.animate
+    // avoids leaking implicit Core Animation onto the scroll view's layer —
+    // which on long-text nodes was fighting subsequent drag updates and
+    // showing up as visible jitter / "glitchy" scroll. The link writes
+    // contentOffset exactly once per refresh, exponentially decaying the
+    // velocity at UIScrollView's standard rate. Touching the screen again
+    // invalidates the link instantly, so the next drag starts clean.
+    private var decelDisplayLink: CADisplayLink?
+    private weak var decelScrollView: UIScrollView?
+    private var decelVelocityY: CGFloat = 0
+    private var decelLastTickTime: CFTimeInterval = 0
 
     override var canBecomeFirstResponder: Bool { true }
 
@@ -1590,25 +1607,94 @@ class SelfSizingTextView: UITextView {
         guard let scrollView = enclosingScrollView else { return }
         switch recognizer.state {
         case .began:
+            // Halt any in-flight fling so the new drag starts from the
+            // currently-visible offset, not a stale animation target.
+            stopDeceleration()
             scrollAssistOffsetAtBegin = scrollView.contentOffset
         case .changed:
             let translation = recognizer.translation(in: scrollView)
-            let minY = -scrollView.adjustedContentInset.top
-            let maxY = max(
-                minY,
-                scrollView.contentSize.height
-                    - scrollView.bounds.height
-                    + scrollView.adjustedContentInset.bottom
-            )
             let proposedY = scrollAssistOffsetAtBegin.y - translation.y
-            let clampedY = min(max(proposedY, minY), maxY)
             scrollView.contentOffset = CGPoint(
                 x: scrollAssistOffsetAtBegin.x,
-                y: clampedY
+                y: clampedOffsetY(proposedY, in: scrollView)
             )
+        case .ended, .cancelled:
+            // Pan velocity is the *finger's* velocity; contentOffset moves
+            // the opposite direction, hence the negation.
+            let velocityY = -recognizer.velocity(in: scrollView).y
+            startDeceleration(velocityY: velocityY, in: scrollView)
         default:
             break
         }
+    }
+
+    // MARK: - Deceleration (fling)
+
+    /// Begin exponential-decay deceleration driven by CADisplayLink. Each tick
+    /// writes contentOffset once, synced to the display refresh rate. No
+    /// Core Animation involvement — so a subsequent drag's manual contentOffset
+    /// writes aren't fighting an in-flight CA animation on the layer (which
+    /// was the source of the long-text glitch).
+    private func startDeceleration(velocityY: CGFloat, in scrollView: UIScrollView) {
+        stopDeceleration()
+        // Below ~120 pts/s isn't a real flick — leave the offset where the
+        // finger left it (matches native UIScrollView feel on slow release).
+        guard abs(velocityY) > 120 else { return }
+        decelScrollView = scrollView
+        decelVelocityY = velocityY
+        decelLastTickTime = CACurrentMediaTime()
+        let link = CADisplayLink(target: self, selector: #selector(decelTick))
+        link.add(to: .main, forMode: .common)
+        decelDisplayLink = link
+    }
+
+    private func stopDeceleration() {
+        decelDisplayLink?.invalidate()
+        decelDisplayLink = nil
+        decelScrollView = nil
+        decelVelocityY = 0
+    }
+
+    @objc private func decelTick() {
+        guard let scrollView = decelScrollView else {
+            stopDeceleration()
+            return
+        }
+        let now = CACurrentMediaTime()
+        let dt = CGFloat(now - decelLastTickTime)
+        decelLastTickTime = now
+        guard dt > 0, dt < 0.1 else {
+            // Skip pathological frame intervals (e.g., after backgrounding)
+            // but keep the link alive — the next tick will resume correctly.
+            return
+        }
+
+        // Distance traveled in this frame at current velocity, then decay.
+        // UIScrollView's standard deceleration rate is expressed per-ms;
+        // raising it to (dt * 1000) gives the per-frame decay factor.
+        let dy = decelVelocityY * dt
+        let decayFactor = pow(UIScrollView.DecelerationRate.normal.rawValue, dt * 1000)
+        decelVelocityY *= decayFactor
+
+        let proposedY = scrollView.contentOffset.y + dy
+        let clampedY = clampedOffsetY(proposedY, in: scrollView)
+        scrollView.contentOffset = CGPoint(x: scrollView.contentOffset.x, y: clampedY)
+
+        // Stop when the velocity tails off or we've hit a content edge.
+        if abs(decelVelocityY) < 5 || clampedY != proposedY {
+            stopDeceleration()
+        }
+    }
+
+    private func clampedOffsetY(_ proposed: CGFloat, in scrollView: UIScrollView) -> CGFloat {
+        let minY = -scrollView.adjustedContentInset.top
+        let maxY = max(
+            minY,
+            scrollView.contentSize.height
+                - scrollView.bounds.height
+                + scrollView.adjustedContentInset.bottom
+        )
+        return min(max(proposed, minY), maxY)
     }
 
     private var enclosingScrollView: UIScrollView? {
