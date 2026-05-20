@@ -1131,29 +1131,17 @@ struct SectionView: View {
         .contentShape(Rectangle())
     }
 
-    /// Calculate estimated height based on content
+    /// Lower-bound height tracking literal newline count. Acts as a floor for
+    /// the SwiftUI frame; the text view's intrinsicContentSize drives the
+    /// actual height when content wraps. Counts trailing \n so pressing Return
+    /// on the last line stays in sync with intrinsic size (no flicker frame).
+    /// Avoids guessing wrapped-line counts from char widths — that estimate
+    /// overshoots on long pasted lines and leaves blank space below the text.
     private var estimatedHeight: CGFloat {
-        // Use content as-is (including trailing newlines) so the minHeight
-        // matches the text view's intrinsic size. Trimming trailing \n caused
-        // a one-frame height mismatch → visible flicker when pressing Return
-        // on the last line of the page.
-        let lines = content.components(separatedBy: "\n")
-        let lineCount = max(1, lines.count)
-        #if os(macOS)
-        let avgCharsPerLine: CGFloat = 80
-        #else
-        let avgCharsPerLine: CGFloat = 35
-        #endif
-        // Count wrapped lines per paragraph for a more accurate estimate
-        var visualLines: CGFloat = 0
-        for line in lines {
-            let charCount = CGFloat(line.count)
-            visualLines += max(1, ceil(charCount / avgCharsPerLine))
-        }
+        let lineCount = max(1, content.components(separatedBy: "\n").count)
         let lineHeight: CGFloat = 22
         let padding: CGFloat = 16
-        let result = visualLines * lineHeight + padding
-        return result
+        return CGFloat(lineCount) * lineHeight + padding
     }
 
     private var contentEditor: some View {
