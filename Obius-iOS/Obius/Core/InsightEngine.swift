@@ -1352,10 +1352,20 @@ final class InsightEngine {
         dateOnlyFormatter.dateStyle = .medium
         dateOnlyFormatter.timeStyle = .none
 
+        // Tolerance window for filtering matches that coincide with the
+        // note's own createdAt/updatedAt — those are auto-stamps leaked into
+        // visible text (imports, share extensions, AI inserts), not dates the
+        // user authored as intent. ±10 minutes covers minute-precise wall-clock
+        // timestamps without rejecting genuine authored times.
+        let metadataToleranceSeconds: TimeInterval = 10 * 60
+
         for note in notes {
             let sections = sectionsByNote[note.id] ?? []
             let text = Self.allText(for: note, sections: sections)
             guard !text.isEmpty else { continue }
+
+            let createdDate = Date(timeIntervalSince1970: TimeInterval(note.createdAt) / 1000)
+            let updatedDate = Date(timeIntervalSince1970: TimeInterval(note.updatedAt) / 1000)
 
             let range = NSRange(text.startIndex..., in: text)
             let matches = detector.matches(in: text, options: [], range: range)
@@ -1372,6 +1382,11 @@ final class InsightEngine {
 
                 // Don't surface dates more than 1 year out — likely false positives
                 guard matchDate < now.addingTimeInterval(365 * 24 * 3600) else { continue }
+
+                // Skip matches that restate the note's own create/update
+                // timestamp — those are metadata stamps, not authored dates.
+                if abs(matchDate.timeIntervalSince(createdDate)) <= metadataToleranceSeconds { continue }
+                if abs(matchDate.timeIntervalSince(updatedDate)) <= metadataToleranceSeconds { continue }
 
                 // Extract the matched text for context
                 guard let matchRange = Range(match.range, in: text) else { continue }
