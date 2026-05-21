@@ -2729,24 +2729,18 @@ class BodyKeyboardToolbar: UIView {
         ])
         btn.tintColor = currentStatus.uiColor
         btn.showsMenuAsPrimaryAction = true
-        btn.menu = UIMenu(title: "Status", children: [
-            UIAction(title: "Blue",
-                     image: UIImage(systemName: "circle.fill")?.withTintColor(.systemBlue, renderingMode: .alwaysOriginal)) { [weak self] _ in
-                self?.onStatusChange?(.idea)
-            },
-            UIAction(title: "Yellow",
-                     image: UIImage(systemName: "circle.fill")?.withTintColor(.systemYellow, renderingMode: .alwaysOriginal)) { [weak self] _ in
-                self?.onStatusChange?(.question)
-            },
-            UIAction(title: "Green",
-                     image: UIImage(systemName: "circle.fill")?.withTintColor(.systemGreen, renderingMode: .alwaysOriginal)) { [weak self] _ in
-                self?.onStatusChange?(.task)
-            },
-            UIAction(title: "Purple",
-                     image: UIImage(systemName: "circle.fill")?.withTintColor(.systemPurple, renderingMode: .alwaysOriginal)) { [weak self] _ in
-                self?.onStatusChange?(.evidence)
-            },
-        ])
+        // Data-driven off IntentType.allCases so new intent values (e.g. the
+        // Red "Issue" status) appear in the menu automatically, and the
+        // labels stay in sync with IntentType.label.
+        btn.menu = UIMenu(title: "Status", children: IntentType.allCases.map { intent in
+            UIAction(
+                title: intent.label,
+                image: UIImage(systemName: "circle.fill")?
+                    .withTintColor(intent.uiColor, renderingMode: .alwaysOriginal)
+            ) { [weak self] _ in
+                self?.onStatusChange?(intent)
+            }
+        })
         return btn
     }
 

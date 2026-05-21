@@ -551,6 +551,17 @@ struct CreateLoopSheet: View {
                     }
                     .disabled(!isValid)
                 }
+
+                #if os(iOS)
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button {
+                        KeyboardHelper.dismiss()
+                    } label: {
+                        Image(systemName: "keyboard.chevron.compact.down")
+                    }
+                }
+                #endif
             }
         }
     }
@@ -660,6 +671,17 @@ struct LoopDetailSheet: View {
                         saveChanges()
                     }
                 }
+
+                #if os(iOS)
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button {
+                        KeyboardHelper.dismiss()
+                    } label: {
+                        Image(systemName: "keyboard.chevron.compact.down")
+                    }
+                }
+                #endif
             }
             .task {
                 await loadReferences()

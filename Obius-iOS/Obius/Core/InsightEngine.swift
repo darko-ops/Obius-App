@@ -1391,6 +1391,17 @@ final class InsightEngine {
                 // Extract the matched text for context
                 guard let matchRange = Range(match.range, in: text) else { continue }
 
+                // Skip purely numeric N/N-style matches (e.g. "10/10" from a
+                // rating, "5/4" from a score) that NSDataDetector happily
+                // resolves to a calendar date. Keep them only when the match
+                // is long enough to look like a full MM/DD/YYYY or
+                // YYYY-MM-DD form. Real dates with letters ("Oct 10",
+                // "Friday at 3pm", "tomorrow", "next week") are always kept.
+                let matchedText = String(text[matchRange])
+                let hasLetter = matchedText.contains { $0.isLetter }
+                let looksLikeFullDate = matchedText.count >= 8
+                if !hasLetter && !looksLikeFullDate { continue }
+
                 // Get surrounding context (up to 60 chars on each side)
                 let contextStart = text.index(matchRange.lowerBound, offsetBy: -60, limitedBy: text.startIndex) ?? text.startIndex
                 let contextEnd = text.index(matchRange.upperBound, offsetBy: 60, limitedBy: text.endIndex) ?? text.endIndex
@@ -1403,10 +1414,19 @@ final class InsightEngine {
                 let fireMs = Int64(matchDate.timeIntervalSince1970 * 1000)
                 let noteTitle = note.displayTitle
 
+                // Body includes the *exact* matched substring so the user can
+                // see what NSDataDetector latched onto. The trimmed surrounding
+                // context goes after, in parentheses, so the source location
+                // is still obvious. Previously only the context was shown,
+                // which obscured matches sitting at section/interstitial
+                // boundaries.
+                let trimmedMatch = matchedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                let body = "\(formattedDate) — matched “\(trimmedMatch)” in “\(context)”"
+
                 insights.append(Insight(
                     insightType: .schedule,
                     title: "Date found in \(noteTitle)",
-                    body: "\(formattedDate) — \"\(context)\"",
+                    body: body,
                     sourceNoteId: note.id,
                     sourceSectionId: "schedule",
                     relatedNoteId: String(fireMs)
