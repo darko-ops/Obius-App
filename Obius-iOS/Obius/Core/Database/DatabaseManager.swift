@@ -5,7 +5,7 @@ import Combine
 final class DatabaseManager {
     private let migrator: DatabaseMigrator
 
-    static let schemaVersion = 39
+    static let schemaVersion = 40
 
     /// The user this database is scoped to. `nil` means anonymous (signed-out).
     let userId: String?
@@ -1071,6 +1071,17 @@ final class DatabaseManager {
             try db.create(index: "idx_note_index_handle", on: "note_index", columns: ["handleId"])
 
             try db.execute(sql: "UPDATE syncMetadata SET schemaVersion = 39")
+        }
+
+        migrator.registerMigration("v40_sync_op_retry_count") { db in
+            // Per-op retry counter so a sync push that fails server-side
+            // validation (e.g. CHECK constraint) can't loop forever.
+            try db.alter(table: "syncOperations") { t in
+                t.add(column: "retryCount", .integer).notNull().defaults(to: 0)
+                t.add(column: "lastFailedAt", .integer)
+            }
+
+            try db.execute(sql: "UPDATE syncMetadata SET schemaVersion = 40")
         }
 
         self.migrator = migrator

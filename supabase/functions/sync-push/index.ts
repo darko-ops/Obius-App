@@ -15,6 +15,7 @@ import type {
   SyncOperation,
   ConflictInfo,
   AcceptedOp,
+  RejectedOp,
   Note,
   Section,
   Handle,
@@ -64,6 +65,7 @@ serve(async (req: Request) => {
 
     const accepted: AcceptedOp[] = [];
     const conflicts: ConflictInfo[] = [];
+    const rejected: RejectedOp[] = [];
 
     // Process each operation
     for (const op of operations) {
@@ -79,10 +81,27 @@ serve(async (req: Request) => {
           });
         } else if (result.conflict) {
           conflicts.push(result.conflict);
+        } else {
+          // Permanent rejection (CHECK constraint, RLS, unknown entity, etc.).
+          // Surface the underlying Postgres error so the client can stop
+          // retrying instead of looping on a payload that will never succeed.
+          rejected.push({
+            operation_id: op.operation_id,
+            entity_id: op.entity_id,
+            entity_type: op.entity_type,
+            code: result.rejected_code ?? 'INTERNAL_ERROR',
+            message: result.rejected_message ?? 'Operation rejected by server',
+          });
         }
       } catch (error) {
         console.error(`Error processing operation ${op.operation_id}:`, error);
-        // Continue processing other operations
+        rejected.push({
+          operation_id: op.operation_id,
+          entity_id: op.entity_id,
+          entity_type: op.entity_type,
+          code: 'INTERNAL_ERROR',
+          message: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -95,6 +114,7 @@ serve(async (req: Request) => {
     const response: SyncPushResponse = {
       accepted,
       conflicts,
+      rejected,
       server_timestamp: new Date().toISOString(),
     };
 
@@ -114,6 +134,11 @@ interface ProcessResult {
   success: boolean;
   conflict?: ConflictInfo;
   new_version?: number;
+  /// Set when `success === false` and the failure is permanent (not a
+  /// conflict). Forwarded to the client as a RejectedOp so it can mark the
+  /// op done with a logged reason instead of retrying indefinitely.
+  rejected_code?: string;
+  rejected_message?: string;
 }
 
 async function processOperation(
@@ -162,8 +187,11 @@ async function processOperation(
       const noteId = op.entity_type === 'section' ? (op.payload.note_id as string) : undefined;
       const limitCheck = await requireEntityCreate(supabase, userId, op.entity_type, noteId);
       if (limitCheck) {
-        // Return as a conflict with the limit error
-        return { success: false };
+        return {
+          success: false,
+          rejected_code: 'TIER_LIMIT',
+          rejected_message: `Free-tier limit reached for ${op.entity_type}`,
+        };
       }
     }
 
@@ -206,7 +234,11 @@ async function processOperation(
 
             if (updateError) {
               console.error(`[sync-push] Calendar memo update failed:`, updateError.message);
-              return { success: false };
+              return {
+                success: false,
+                rejected_code: updateError.code ?? 'INTERNAL_ERROR',
+                rejected_message: updateError.message ?? 'Calendar memo update failed',
+              };
             }
             await logOperation(supabase, userId, deviceId, op, existing.version, existing.version + 1);
             return { success: true, new_version: existing.version + 1 };
@@ -227,10 +259,18 @@ async function processOperation(
         if (op.entity_type === 'section') {
           return { success: true, new_version: 1 };
         }
-        return { success: false };
+        return {
+          success: false,
+          rejected_code: '23503',
+          rejected_message: error.message,
+        };
       }
       console.error(`[sync-push] Create FAILED for ${op.entity_type} ${op.entity_id}:`, error.code, error.message, 'payload keys:', Object.keys(insertData));
-      return { success: false };
+      return {
+        success: false,
+        rejected_code: error.code ?? 'INTERNAL_ERROR',
+        rejected_message: error.message ?? 'Create failed',
+      };
     }
 
     console.log(`[sync-push] Created ${op.entity_type} ${op.entity_id} successfully`);
@@ -282,7 +322,11 @@ async function processOperation(
 
         if (updateError) {
           console.error(`Update error for ${op.entity_id}:`, updateError);
-          return { success: false };
+          return {
+            success: false,
+            rejected_code: updateError.code ?? 'INTERNAL_ERROR',
+            rejected_message: updateError.message ?? 'Update failed (LWW client-wins path)',
+          };
         }
 
         await logOperation(supabase, userId, deviceId, op, existing.version, existing.version + 1);
@@ -335,7 +379,11 @@ async function processOperation(
 
     if (updateError) {
       console.error(`Update error for ${op.entity_id}:`, updateError);
-      return { success: false };
+      return {
+        success: false,
+        rejected_code: updateError.code ?? 'INTERNAL_ERROR',
+        rejected_message: updateError.message ?? 'Update failed',
+      };
     }
 
     await logOperation(supabase, userId, deviceId, op, existing.version, existing.version + 1);
@@ -370,7 +418,11 @@ async function processOperation(
 
     if (deleteError) {
       console.error(`Delete error for ${op.entity_id}:`, deleteError);
-      return { success: false };
+      return {
+        success: false,
+        rejected_code: deleteError.code ?? 'INTERNAL_ERROR',
+        rejected_message: deleteError.message ?? 'Delete failed',
+      };
     }
 
     await logOperation(supabase, userId, deviceId, op, existing.version, existing.version + 1);
@@ -378,7 +430,11 @@ async function processOperation(
     return { success: true, new_version: existing.version + 1 };
   }
 
-  return { success: false };
+  return {
+    success: false,
+    rejected_code: 'UNKNOWN_OPERATION',
+    rejected_message: `Unknown operation type '${op.operation}' for entity '${op.entity_type}'`,
+  };
 }
 
 async function logOperation(

@@ -178,9 +178,21 @@ export interface AcceptedOp {
   new_version: number;
 }
 
+/// An operation the server permanently refused (CHECK constraint, RLS,
+/// invalid payload, etc.). The client should mark these synced and log the
+/// reason — retrying won't help because the input shape itself is wrong.
+export interface RejectedOp {
+  operation_id: string;
+  entity_id: string;
+  entity_type: string;
+  code: string;       // Postgres error code or 'INTERNAL_ERROR'
+  message: string;
+}
+
 export interface SyncPushResponse {
   accepted: AcceptedOp[];
   conflicts: ConflictInfo[];
+  rejected?: RejectedOp[]; // optional for back-compat with older clients
   server_timestamp: string;
 }
 

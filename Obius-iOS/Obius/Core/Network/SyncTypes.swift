@@ -88,11 +88,29 @@ struct AcceptedOp: Decodable {
 struct SyncPushResponse: Decodable {
     let accepted: [AcceptedOp]
     let conflicts: [ConflictInfo]
+    /// Ops the server permanently refused (CHECK constraint, RLS, invalid
+    /// payload, etc.). Optional — older server builds don't send this key.
+    let rejected: [RejectedOp]?
     let serverTimestamp: String
 
     enum CodingKeys: String, CodingKey {
-        case accepted, conflicts
+        case accepted, conflicts, rejected
         case serverTimestamp = "server_timestamp"
+    }
+}
+
+struct RejectedOp: Decodable {
+    let operationId: String
+    let entityId: String
+    let entityType: String
+    let code: String
+    let message: String
+
+    enum CodingKeys: String, CodingKey {
+        case operationId = "operation_id"
+        case entityId = "entity_id"
+        case entityType = "entity_type"
+        case code, message
     }
 }
 

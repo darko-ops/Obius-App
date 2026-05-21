@@ -14,6 +14,9 @@ struct SettingsView: View {
     @State private var isDeletingAccount = false
     @State private var deleteAccountError: String?
     @State private var settingsPath: [SettingsDestination] = []
+    #if DEBUG
+    @AppStorage("debugForceSyncEnabled") private var debugForceSyncEnabled = false
+    #endif
 
     enum SettingsDestination: Hashable {
         case subscription
@@ -119,6 +122,27 @@ struct SettingsView: View {
                     Label("Retention", systemImage: "clock.arrow.circlepath")
                 }
             }
+
+            #if DEBUG
+            SwiftUI.Section {
+                Toggle(isOn: $debugForceSyncEnabled) {
+                    Label("Force Cloud Sync", systemImage: "icloud.and.arrow.up.fill")
+                }
+                .onChange(of: debugForceSyncEnabled) { _, newValue in
+                    // Kick a sync immediately when flipped on so the user
+                    // doesn't have to relaunch to see remote state pull in.
+                    if newValue {
+                        Task { await appState.triggerSync() }
+                    }
+                }
+
+                Text("Debug builds only. Bypasses the tier gate so cloud sync runs regardless of subscription. Release builds ignore this flag.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Debug")
+            }
+            #endif
 
             // About Section
             SwiftUI.Section("About") {

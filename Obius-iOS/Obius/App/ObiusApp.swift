@@ -56,7 +56,7 @@ struct ObiusApp: App {
                             await EchoManager.shared.checkForFiredEchoes()
                             await appState.autoCommitManager.checkAndAutoCommit()
                             // Sync on every foreground (only if already initialized)
-                            if appState.isInitialized && AuthManager.shared.isAuthenticated && TierManager.shared.limits.cloudSync {
+                            if appState.isInitialized && AuthManager.shared.isAuthenticated && (TierManager.shared.limits.cloudSync || AppState.debugForceSyncEnabled) {
                                 await appState.triggerSync()
                                 await appState.syncEngine.subscribeRealtime()
                             }
@@ -503,8 +503,8 @@ class AppState: ObservableObject {
 
         // Auto-sync if authenticated and tier allows it
         let isAuthed = AuthManager.shared.isAuthenticated
-        let canSync = TierManager.shared.limits.cloudSync
-        print("[AppState] Sync gate: authenticated=\(isAuthed), cloudSync=\(canSync), tier=\(TierManager.shared.currentTier.rawValue)")
+        let canSync = TierManager.shared.limits.cloudSync || AppState.debugForceSyncEnabled
+        print("[AppState] Sync gate: authenticated=\(isAuthed), cloudSync=\(canSync), tier=\(TierManager.shared.currentTier.rawValue)\(AppState.debugForceSyncEnabled ? " [DEBUG override]" : "")")
         if isAuthed && canSync {
             await syncEngine.sync()
             await syncEngine.subscribeRealtime()
@@ -516,7 +516,7 @@ class AppState: ObservableObject {
         }
 
         // Upload existing local media to cloud for cross-device sync (one-time)
-        if AuthManager.shared.isAuthenticated && TierManager.shared.limits.cloudSync {
+        if AuthManager.shared.isAuthenticated && canSync {
             Task { await mediaRepository.syncExistingMediaToCloud() }
         }
 
@@ -570,8 +570,19 @@ class AppState: ObservableObject {
     }
 
     func triggerSync() async {
-        guard TierManager.shared.limits.cloudSync else { return }
+        guard TierManager.shared.limits.cloudSync || AppState.debugForceSyncEnabled else { return }
         await syncEngine.sync()
+    }
+
+    /// Debug-only override that lets a developer bypass the tier gate for
+    /// cloud sync. Reads `debugForceSyncEnabled` from `UserDefaults`. Always
+    /// returns `false` in release builds — the production gate stays intact.
+    static var debugForceSyncEnabled: Bool {
+        #if DEBUG
+        return UserDefaults.standard.bool(forKey: "debugForceSyncEnabled")
+        #else
+        return false
+        #endif
     }
 
     #if os(iOS)

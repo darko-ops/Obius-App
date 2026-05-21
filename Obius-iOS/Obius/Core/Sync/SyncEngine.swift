@@ -1021,14 +1021,17 @@ actor SyncEngine {
             throw SyncError.notInitialized
         }
 
-        // Get pending operations — notes first, then sections, so FK constraints are satisfied
+        // Get pending operations — notes first, then sections, so FK constraints are satisfied.
+        // Skip ops that have already failed `maxPushRetries` times so a single
+        // bad op (e.g. a CHECK constraint violation server-side) doesn't
+        // block the whole queue.
         let operations = try await database.read { db in
             try SyncOperationRecord.fetchAll(db, sql: """
                 SELECT * FROM syncOperations
-                WHERE synced = 0
+                WHERE synced = 0 AND retryCount < ?
                 ORDER BY CASE entityType WHEN 'note' THEN 0 WHEN 'handle' THEN 1 WHEN 'echo' THEN 2 WHEN 'calendar_memo' THEN 3 ELSE 4 END, timestamp
                 LIMIT 10
-            """)
+            """, arguments: [maxPushRetries])
         }
 
         guard !operations.isEmpty else {
@@ -1092,7 +1095,8 @@ actor SyncEngine {
         }
         let response: SyncPushResponse = try await supabase.invokeFunction("sync-push", body: request)
         let acceptedTypes = Dictionary(grouping: response.accepted, by: { $0.entityType }).mapValues(\.count)
-        print("[Sync] Push result: \(response.accepted.count) accepted \(acceptedTypes), \(response.conflicts.count) conflicts")
+        let rejectedCount = response.rejected?.count ?? 0
+        print("[Sync] Push result: \(response.accepted.count) accepted \(acceptedTypes), \(response.conflicts.count) conflicts, \(rejectedCount) rejected")
         if !response.accepted.isEmpty {
             lastPushTime = Date()
         }
@@ -1137,9 +1141,74 @@ actor SyncEngine {
             }
         }
 
-        // If there are more pending operations, push again
+        // The server may now return explicit `rejected` entries with a
+        // Postgres error code/message. Mark those as done immediately so
+        // they don't sit in the queue — retrying won't help when the
+        // payload itself is the problem.
+        if let rejected = response.rejected, !rejected.isEmpty {
+            try await database.write { db in
+                for r in rejected {
+                    try db.execute(sql: """
+                        UPDATE syncOperations SET synced = 1
+                        WHERE operationId = ?
+                    """, arguments: [r.operationId])
+                }
+            }
+            for r in rejected {
+                print("[Sync] Op \(r.operationId.prefix(8)) (\(r.entityType)) rejected by server: [\(r.code)] \(r.message)")
+            }
+        }
+
+        // Per-op retry guard for the case where the server *didn't* send a
+        // structured rejection (older deployment, or a transient failure).
+        // Any op in this batch that the server didn't accept, conflict, or
+        // explicitly reject gets its retryCount bumped. After
+        // `maxPushRetries` bumps we mark it synced=1 (with a warning) so
+        // the queue can move on. This is the safety net that stopped the
+        // infinite loop we hit when the server silently rejected a row.
+        let rejectedIds = Set(response.rejected?.map(\.operationId) ?? [])
+        let resolvedOpIds = Set(response.accepted.map(\.operationId))
+            .union(response.conflicts.map(\.operationId))
+            .union(rejectedIds)
+        let unresolvedOps = operations.filter { !resolvedOpIds.contains($0.operationId) }
+        if !unresolvedOps.isEmpty {
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            try await database.write { db in
+                for op in unresolvedOps {
+                    let nextCount = op.retryCount + 1
+                    if nextCount >= maxPushRetries {
+                        try db.execute(sql: """
+                            UPDATE syncOperations
+                            SET synced = 1, retryCount = ?, lastFailedAt = ?
+                            WHERE operationId = ?
+                        """, arguments: [nextCount, now, op.operationId])
+                        print("[Sync] Op \(op.operationId.prefix(8)) (\(op.entityType)/\(op.operationType)) silently rejected by server \(nextCount) times — abandoning. Check server logs for CHECK / RLS errors.")
+                    } else {
+                        try db.execute(sql: """
+                            UPDATE syncOperations
+                            SET retryCount = ?, lastFailedAt = ?
+                            WHERE operationId = ?
+                        """, arguments: [nextCount, now, op.operationId])
+                    }
+                }
+            }
+        }
+
+        // Only recurse if this batch actually made progress (any op was
+        // accepted, conflicted, or explicitly rejected). If every op was
+        // unresolved (silent fail from an older server) recursing would
+        // just re-run the same set and burn CPU/network until we hit
+        // `maxPushRetries`.
+        let madeProgress = !response.accepted.isEmpty
+            || !response.conflicts.isEmpty
+            || !(response.rejected?.isEmpty ?? true)
+        guard madeProgress else { return }
+
         let remainingCount = try await database.read { db in
-            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM syncOperations WHERE synced = 0") ?? 0
+            try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM syncOperations
+                WHERE synced = 0 AND retryCount < ?
+            """, arguments: [maxPushRetries]) ?? 0
         }
 
         if remainingCount > 0 {
@@ -1612,7 +1681,7 @@ enum SyncError: LocalizedError {
 
 struct SyncOperationRecord: Decodable, FetchableRecord, TableRecord {
     static let databaseTableName = "syncOperations"
-    
+
     let id: Int64?
     let operationId: String
     let entityType: String
@@ -1621,12 +1690,21 @@ struct SyncOperationRecord: Decodable, FetchableRecord, TableRecord {
     let payload: String
     let timestamp: Int64
     let synced: Bool
-    
+    let retryCount: Int
+    let lastFailedAt: Int64?
+
     enum Columns: String, ColumnExpression {
         case id, operationId, entityType, entityId
         case operationType, payload, timestamp, synced
+        case retryCount, lastFailedAt
     }
 }
+
+/// Sync ops that were neither accepted nor conflicted N times in a row are
+/// almost certainly being rejected by server-side validation (CHECK
+/// constraint, RLS, etc.). After this many failed attempts we mark the op
+/// as `synced = 1` with a warning log so it stops blocking the queue.
+private let maxPushRetries = 5
 
 // Extension to enable filtering
 extension SyncOperationRecord {
