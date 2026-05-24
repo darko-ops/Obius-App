@@ -37,7 +37,10 @@ final class SharedContentViewModel: ObservableObject {
 
             shareLinkId = response.shareLinkId
             note = response.note
-            sections = response.sections
+            // Sort client-side by orderKey using Swift's byte-wise String comparison
+            // so preview order matches the sharer's SQLite BINARY ordering regardless
+            // of the server's TEXT collation.
+            sections = response.sections?.sorted { $0.orderKey < $1.orderKey }
             commitContent = response.commitContent
             commitName = response.commitName
             commitHash = response.commitHash
@@ -100,7 +103,7 @@ final class SharedContentViewModel: ObservableObject {
     // MARK: - Realtime
 
     private func setupRealtime(noteId: String, slug: String) {
-        let subscriber = RealtimeShareSubscriber(noteId: noteId)
+        let subscriber = RealtimeShareSubscriber(noteId: noteId, slug: slug)
 
         subscriber.$note
             .compactMap { $0 }
@@ -115,7 +118,7 @@ final class SharedContentViewModel: ObservableObject {
             .compactMap { $0 }
             .receive(on: DispatchQueue.main)
             .sink { [weak self] updatedSections in
-                self?.sections = updatedSections
+                self?.sections = updatedSections.sorted { $0.orderKey < $1.orderKey }
             }
             .store(in: &cancellables)
 
@@ -210,7 +213,9 @@ final class SharedContentViewModel: ObservableObject {
     }
 
     /// Creates a local note from the shared content and adds it to Artifacts.
-    func addToArtifacts(coldStore: ColdStore, commitRepository: CommitRepository, noteRepository: NoteRepository, sectionRepository: SectionRepository) async {
+    /// `moduleId` scopes the imported note to the recipient's currently-selected project
+    /// so it appears in the project they were viewing when they tapped Add.
+    func addToArtifacts(coldStore: ColdStore, commitRepository: CommitRepository, noteRepository: NoteRepository, sectionRepository: SectionRepository, moduleId: String? = nil) async {
         guard let sharedNote = note else { return }
 
         isArchiving = true
@@ -220,13 +225,17 @@ final class SharedContentViewModel: ObservableObject {
             let now = Int64(Date().timeIntervalSince1970 * 1000)
             let noteTitle = title ?? sharedNote.title
 
-            // Create the note locally so it appears on the Artifacts page
+            // Create the note locally so it appears on the Artifacts page.
+            // interstitialContent carries the free-form text between/after fold nodes —
+            // without it the imported page renders as bare nodes with no connecting prose.
             let localNote = Note(
                 id: sharedNote.id,
                 title: noteTitle,
                 body: sharedNote.body,
+                interstitialContent: sharedNote.interstitialContent,
                 createdAt: now,
-                updatedAt: now
+                updatedAt: now,
+                moduleId: moduleId
             )
 
             // Insert or update the note locally
@@ -240,6 +249,7 @@ final class SharedContentViewModel: ObservableObject {
                         noteId: sharedNote.id,
                         content: section.content,
                         contentType: section.contentType,
+                        sectionType: section.sectionType,
                         orderKey: section.orderKey,
                         indentLevel: section.indentLevel,
                         intent: section.colorIntent

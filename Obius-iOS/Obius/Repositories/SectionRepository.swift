@@ -20,11 +20,15 @@ final class SectionRepository: ObservableObject {
     // MARK: - Create from Shared Content
 
     /// Inserts a section from shared content, skipping if it already exists.
+    /// `sectionType` preserves the fold/line distinction from the sharer — line
+    /// sections render as plain text between fold nodes, so dropping the type
+    /// turns interstitial lines into boxed nodes.
     func createSectionFromShared(
         id: String,
         noteId: String,
         content: String,
         contentType: String,
+        sectionType: String = "fold",
         orderKey: String,
         indentLevel: Int,
         intent: String?
@@ -38,7 +42,7 @@ final class SectionRepository: ObservableObject {
                 noteId: noteId,
                 content: content,
                 contentType: ContentType(rawValue: contentType) ?? .text,
-                sectionType: .fold,
+                sectionType: SectionType(rawValue: sectionType) ?? .fold,
                 orderKey: orderKey,
                 indentLevel: indentLevel,
                 intent: IntentType.fromLegacy(intent)

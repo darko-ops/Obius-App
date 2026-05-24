@@ -11,11 +11,13 @@ final class RealtimeShareSubscriber: ObservableObject {
     @Published var comments: [SharedComment] = []
 
     private let noteId: String
+    private let slug: String
     private let supabase = SupabaseManager.shared
     private var channel: RealtimeChannelV2?
 
-    init(noteId: String) {
+    init(noteId: String, slug: String) {
         self.noteId = noteId
+        self.slug = slug
     }
 
     func subscribe() {
@@ -87,12 +89,13 @@ final class RealtimeShareSubscriber: ObservableObject {
     }
 
     private func handleSectionChange(_ change: AnyAction) {
-        // Re-fetch all sections for the note to maintain ordering
-        // Individual change tracking would require more complex merge logic
+        // Re-fetch all sections for the note to maintain ordering.
+        // Pass the share slug explicitly — passing an empty string here silently
+        // returned no rows, so reorders/edits from the sharer never reached the viewer.
         Task { [weak self] in
             guard let self else { return }
             do {
-                let response = try await ShareManager.shared.fetchSharedContent(slug: "")
+                let response = try await ShareManager.shared.fetchSharedContent(slug: self.slug)
                 if let updatedSections = response.sections {
                     self.sections = updatedSections
                 }

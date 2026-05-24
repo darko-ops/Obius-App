@@ -5,6 +5,10 @@ struct SharedContentView: View {
     @EnvironmentObject var appState: AppState
     @StateObject private var viewModel = SharedContentViewModel()
 
+    // Mirrors the project the recipient is currently viewing in the main app.
+    // Used so "Add" imports the shared page into that project rather than the default bucket.
+    @AppStorage("selectedModuleId") private var selectedModuleId: String?
+
     let slug: String
     @State private var copiedField: String?
 
@@ -292,7 +296,8 @@ struct SharedContentView: View {
                     coldStore: appState.coldStore,
                     commitRepository: appState.commitRepository,
                     noteRepository: appState.noteRepository,
-                    sectionRepository: appState.sectionRepository
+                    sectionRepository: appState.sectionRepository,
+                    moduleId: selectedModuleId
                 )
             }
         } label: {

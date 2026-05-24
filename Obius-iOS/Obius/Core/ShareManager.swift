@@ -78,14 +78,21 @@ final class ShareManager: ObservableObject {
         // Ensure user_profiles row exists (FK target for notes.user_id)
         try await ensureUserProfile(userId: userId)
 
-        // Push note to Supabase so viewers can read it
+        // Push note to Supabase so viewers can read it.
+        // interstitial_content / interstitial_rich_content are JSON-encoded
+        // [String: String] dicts. Omitting them here lets the share land before
+        // the main SyncEngine has pushed them — viewers then see a page with no
+        // text between/after nodes until the next sync round-trip.
         let noteRow: [String: String?] = [
             "id": note.id,
             "user_id": userId,
             "title": note.title,
             "body": note.body,
+            "body_rich_text": note.bodyRichText,
             "is_pinned": String(note.isPinned),
             "color_intent": note.intent.legacyValue,
+            "interstitial_content": encodeJSONDict(note.interstitialContent),
+            "interstitial_rich_content": encodeJSONDict(note.interstitialRichContent),
             "created_at": formatTimestamp(note.createdAt),
             "updated_at": formatTimestamp(note.updatedAt)
         ]
@@ -95,7 +102,9 @@ final class ShareManager: ObservableObject {
             .upsert(noteRow)
             .execute()
 
-        // Push sections to Supabase
+        // Push sections to Supabase.
+        // section_type preserves fold-vs-line; without it line sections render
+        // as boxed nodes in the preview until the main SyncEngine catches up.
         if !sections.isEmpty {
             let sectionRows: [[String: String?]] = sections.map { section in
                 var row: [String: String?] = [
@@ -104,10 +113,12 @@ final class ShareManager: ObservableObject {
                     "user_id": userId,
                     "content": section.content,
                     "content_type": section.contentType.rawValue,
+                    "section_type": section.sectionType.rawValue,
                     "order_key": section.orderKey,
                     "indent_level": String(section.indentLevel),
                     "is_collapsed": String(section.isCollapsed),
                     "color_intent": section.intent.legacyValue,
+                    "handle_id": section.handleId,
                     "created_at": formatTimestamp(section.createdAt),
                     "updated_at": formatTimestamp(section.updatedAt)
                 ]
@@ -171,6 +182,17 @@ final class ShareManager: ObservableObject {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.string(from: date)
+    }
+
+    /// Encodes a [String: String] dict to the JSON-string shape the Supabase
+    /// `notes.interstitial_content` / `interstitial_rich_content` columns expect.
+    /// Empty dicts become "{}" so the column is never NULL.
+    private func encodeJSONDict(_ dict: [String: String]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return json
     }
 
     // MARK: - Create Commit Share
