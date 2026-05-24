@@ -325,6 +325,7 @@ final class SyncOperationLogger {
             "note_id": section.noteId,
             "content": section.content,
             "content_type": section.contentType.rawValue,
+            "section_type": section.sectionType.rawValue,
             "order_key": section.orderKey,
             "indent_level": section.indentLevel,
             "is_collapsed": section.isCollapsed,

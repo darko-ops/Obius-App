@@ -178,9 +178,24 @@ struct SharedContentView: View {
         }
 
         if let sections = viewModel.sections {
+            let interstitial = viewModel.note?.interstitialContent ?? [:]
             ForEach(sections) { section in
                 sharedSectionView(section)
+                interstitialView(interstitial["after_\(section.id)"])
             }
+            interstitialView(interstitial["end"])
+        }
+    }
+
+    @ViewBuilder
+    private func interstitialView(_ text: String?) -> some View {
+        if let text, !text.isEmpty {
+            Text(text)
+                .font(.body)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
         }
     }
 
@@ -400,6 +415,20 @@ struct SharedContentView: View {
                 sectionType: "node",
                 mediaRepository: appState.mediaRepository
             )
+        } else if section.sectionType == "line" {
+            // Plain text line between nodes — no intent rail or background, matches editor's lineView
+            HStack(alignment: .top, spacing: 0) {
+                if section.indentLevel > 0 {
+                    Spacer()
+                        .frame(width: CGFloat(section.indentLevel) * 20)
+                }
+                Text(section.content)
+                    .font(section.contentType == "code" ? .system(.body, design: .monospaced) : .body)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+            }
         } else {
             let intent = section.intent
 

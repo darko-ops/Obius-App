@@ -474,7 +474,10 @@ private struct NoteEditorContent: View {
             }
             #if os(iOS)
             .overlay {
-                WorkspaceFAB { showWorkspaceSheet = true }
+                WorkspaceFAB {
+                    guard TierManager.shared.requireFeature(.aiWorkspace) else { return }
+                    showWorkspaceSheet = true
+                }
             }
             .sheet(isPresented: $showWorkspaceSheet, onDismiss: resyncFromViewModel) {
                 WorkspaceSheet(handles: handleManager.handles, preselectedPageId: noteId)
@@ -492,6 +495,7 @@ private struct NoteEditorContent: View {
             .overlay(alignment: .bottomTrailing) {
                 if !showWorkspacePanel {
                     WorkspaceFAB {
+                        guard TierManager.shared.requireFeature(.aiWorkspace) else { return }
                         withAnimation(.easeInOut(duration: 0.25)) {
                             showWorkspacePanel = true
                         }
@@ -798,6 +802,7 @@ private struct NoteEditorContent: View {
                 }
             },
             onEditWithAI: { sectionId in
+                guard TierManager.shared.requireFeature(.aiWorkspace) else { return }
                 aiEditSectionId = sectionId
                 showingAIWorkspace = true
             },

@@ -324,21 +324,34 @@ final class ShareManager: ObservableObject {
                 let id: String
                 let title: String?
                 let body: String?
+                let interstitial_content: String?
             }
             let notes: [NoteRow] = try await supabase.client
                 .from("notes")
-                .select("id,title,body")
+                .select("id,title,body,interstitial_content")
                 .eq("id", value: noteId)
                 .limit(1)
                 .execute()
                 .value
 
-            let note = notes.first.map { SharedNote(id: $0.id, title: $0.title, body: $0.body ?? "") }
+            let note = notes.first.map { row -> SharedNote in
+                // interstitial_content is stored as a JSON string of [String: String]
+                // keyed by "after_<sectionId>" or "end". Keys were written using the
+                // local UUID string (uppercase), but Postgres returns section IDs in
+                // lowercase, so we normalize keys to lowercase for consistent lookup.
+                var parsed: [String: String] = [:]
+                if let raw = row.interstitial_content,
+                   let data = raw.data(using: .utf8),
+                   let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+                    parsed = Dictionary(uniqueKeysWithValues: decoded.map { ($0.key.lowercased(), $0.value) })
+                }
+                return SharedNote(id: row.id, title: row.title, body: row.body ?? "", interstitialContent: parsed)
+            }
 
             // Fetch sections
             let sections: [SharedSection] = try await supabase.client
                 .from("sections")
-                .select("id,content,content_type,order_key,indent_level,color_intent,is_collapsed,parent_section_id")
+                .select("id,content,content_type,section_type,order_key,indent_level,color_intent,is_collapsed,parent_section_id")
                 .eq("note_id", value: noteId)
                 .is("deleted_at", value: nil)
                 .order("order_key")

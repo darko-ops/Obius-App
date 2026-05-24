@@ -42,12 +42,23 @@ struct SharedNote: Decodable, Identifiable {
     let id: String
     let title: String?
     let body: String
+    /// Free-form text rendered between sections in the editor. Keys are
+    /// "after_<sectionId>" or "end". Empty when the note has no interstitial text.
+    let interstitialContent: [String: String]
+
+    init(id: String, title: String?, body: String, interstitialContent: [String: String] = [:]) {
+        self.id = id
+        self.title = title
+        self.body = body
+        self.interstitialContent = interstitialContent
+    }
 }
 
 struct SharedSection: Decodable, Identifiable {
     let id: String
     let content: String
     let contentType: String
+    let sectionType: String
     let orderKey: String
     let indentLevel: Int
     let handleId: String?
@@ -58,6 +69,7 @@ struct SharedSection: Decodable, Identifiable {
         case id
         case content
         case contentType = "content_type"
+        case sectionType = "section_type"
         case orderKey = "order_key"
         case indentLevel = "indent_level"
         case handleId = "handle_id"
@@ -65,10 +77,11 @@ struct SharedSection: Decodable, Identifiable {
         case isCollapsed = "is_collapsed"
     }
 
-    init(id: String, content: String, contentType: String, orderKey: String, indentLevel: Int, handleId: String?, colorIntent: String? = nil, isCollapsed: Bool = false) {
+    init(id: String, content: String, contentType: String, sectionType: String = "fold", orderKey: String, indentLevel: Int, handleId: String?, colorIntent: String? = nil, isCollapsed: Bool = false) {
         self.id = id
         self.content = content
         self.contentType = contentType
+        self.sectionType = sectionType
         self.orderKey = orderKey
         self.indentLevel = indentLevel
         self.handleId = handleId
@@ -81,6 +94,7 @@ struct SharedSection: Decodable, Identifiable {
         id = try container.decode(String.self, forKey: .id)
         content = try container.decode(String.self, forKey: .content)
         contentType = try container.decode(String.self, forKey: .contentType)
+        sectionType = (try? container.decode(String.self, forKey: .sectionType)) ?? "fold"
         orderKey = try container.decode(String.self, forKey: .orderKey)
         indentLevel = try container.decode(Int.self, forKey: .indentLevel)
         handleId = try container.decodeIfPresent(String.self, forKey: .handleId)

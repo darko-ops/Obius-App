@@ -5,7 +5,7 @@ import Combine
 final class DatabaseManager {
     private let migrator: DatabaseMigrator
 
-    static let schemaVersion = 40
+    static let schemaVersion = 42
 
     /// The user this database is scoped to. `nil` means anonymous (signed-out).
     let userId: String?
@@ -1082,6 +1082,35 @@ final class DatabaseManager {
             }
 
             try db.execute(sql: "UPDATE syncMetadata SET schemaVersion = 40")
+        }
+
+        migrator.registerMigration("v41_resync_line_sections") { db in
+            // Supabase `sections` table now has a section_type column. Existing
+            // line-type sections were synced before the column existed and
+            // default to 'fold' on the server, which makes them render as
+            // boxed nodes in shared-page previews. Mark them pending so the
+            // next push re-uploads them with section_type='line'.
+            try db.execute(sql: """
+                UPDATE sections SET syncStatus = 'pending'
+                WHERE sectionType = 'line' AND deletedAt IS NULL
+            """)
+
+            try db.execute(sql: "UPDATE syncMetadata SET schemaVersion = 41")
+        }
+
+        migrator.registerMigration("v42_resync_line_sections_after_function_deploy") { db in
+            // v41 ran before the sync-push edge function was redeployed with
+            // section_type in its allowed-field whitelist, so the field got
+            // silently stripped from the push payload. Sections came back
+            // marked `synced` with section_type='fold' (the server default).
+            // Re-mark line sections as pending so they push again now that
+            // both the column and the edge function are up to date.
+            try db.execute(sql: """
+                UPDATE sections SET syncStatus = 'pending'
+                WHERE sectionType = 'line' AND deletedAt IS NULL
+            """)
+
+            try db.execute(sql: "UPDATE syncMetadata SET schemaVersion = 42")
         }
 
         self.migrator = migrator

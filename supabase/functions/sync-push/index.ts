@@ -168,7 +168,7 @@ async function processOperation(
 
   // Strip fields that don't exist in Supabase tables to prevent insert errors
   const noteFields = new Set(['title', 'ai_title', 'ai_summary', 'body', 'body_rich_text', 'interstitial_content', 'interstitial_rich_content', 'is_pinned', 'color_intent', 'module_id', 'module_name', 'module_icon', 'group_name', 'created_at', 'updated_at', 'deleted_at']);
-  const sectionFields = new Set(['note_id', 'content', 'content_type', 'parent_section_id', 'order_key', 'indent_level', 'is_collapsed', 'color_intent', 'handle_id', 'created_at', 'updated_at', 'deleted_at']);
+  const sectionFields = new Set(['note_id', 'content', 'content_type', 'section_type', 'parent_section_id', 'order_key', 'indent_level', 'is_collapsed', 'color_intent', 'handle_id', 'created_at', 'updated_at', 'deleted_at']);
   const handleFields = new Set(['name', 'display_name', 'content', 'intent', 'created_at', 'updated_at', 'deleted_at']);
   const echoFields = new Set(['handle_id', 'is_recurring', 'intervals_json', 'fire_date', 'is_active', 'next_fire_date', 'is_alerted', 'last_acknowledged_at', 'created_at', 'updated_at', 'deleted_at']);
   const calendarMemoFields = new Set(['date_key', 'content', 'created_at', 'updated_at', 'deleted_at']);

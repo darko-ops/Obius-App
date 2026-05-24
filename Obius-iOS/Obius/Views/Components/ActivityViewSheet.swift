@@ -213,7 +213,6 @@ struct NodeShareSheet: View {
     let title: String
     let preview: String
     @Environment(\.dismiss) private var dismiss
-    @State private var copied = false
     @State private var showingActivitySheet = false
 
     var body: some View {
@@ -272,34 +271,6 @@ struct NodeShareSheet: View {
                             Image(systemName: "chevron.right")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.tertiary)
-                        }
-                        .padding(.horizontal)
-                        .padding(.vertical, 12)
-                    }
-
-                    Divider().padding(.leading, 64)
-
-                    // Copy link
-                    Button {
-                        ClipboardHelper.copy(url.absoluteString)
-                        copied = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                            copied = false
-                        }
-                    } label: {
-                        HStack(spacing: 14) {
-                            Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                                .font(.title3)
-                                .foregroundStyle(.blue)
-                                .frame(width: 36, height: 36)
-                                .background(Color.blue.opacity(0.12))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                            Text(copied ? "Copied!" : "Copy Link")
-                                .font(.body.weight(.medium))
-                                .foregroundStyle(.primary)
-
-                            Spacer()
                         }
                         .padding(.horizontal)
                         .padding(.vertical, 12)
@@ -387,7 +358,6 @@ struct NodeShareSheet: View {
     let title: String
     let preview: String
     @Environment(\.dismiss) private var dismiss
-    @State private var copied = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -418,35 +388,6 @@ struct NodeShareSheet: View {
 
             // Share options
             VStack(spacing: 0) {
-                // Copy link
-                Button {
-                    ClipboardHelper.copy(url.absoluteString)
-                    copied = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        copied = false
-                    }
-                } label: {
-                    HStack(spacing: 14) {
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                            .font(.title3)
-                            .foregroundStyle(.blue)
-                            .frame(width: 36, height: 36)
-                            .background(Color.blue.opacity(0.12))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                        Text(copied ? "Copied!" : "Copy Link")
-                            .font(.body.weight(.medium))
-                            .foregroundStyle(.primary)
-
-                        Spacer()
-                    }
-                    .padding(.horizontal)
-                    .padding(.vertical, 12)
-                }
-                .buttonStyle(.plain)
-
-                Divider().padding(.leading, 64)
-
                 // System share
                 Button {
                     shareViaSystemPicker()

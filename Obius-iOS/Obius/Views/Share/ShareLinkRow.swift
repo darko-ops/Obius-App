@@ -4,8 +4,6 @@ struct ShareLinkRow: View {
     let shareLink: ShareLink
     let onDeactivate: () -> Void
 
-    @State private var copied = false
-
     var body: some View {
         HStack(spacing: 12) {
             // Type icon
@@ -42,12 +40,6 @@ struct ShareLinkRow: View {
 
             // Actions
             Menu {
-                Button {
-                    ClipboardHelper.copy(shareLink.url)
-                } label: {
-                    Label("Copy Link", systemImage: "doc.on.doc")
-                }
-
                 if let url = URL(string: shareLink.url) {
                     SwiftUI.ShareLink(item: url) {
                         Label("Share", systemImage: "square.and.arrow.up")

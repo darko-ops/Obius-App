@@ -5,8 +5,6 @@ struct ShareLinkCreatedView: View {
 
     let shareLink: ShareLink
 
-    @State private var copied = false
-
     var body: some View {
         VStack(spacing: 24) {
             // Header
@@ -40,27 +38,12 @@ struct ShareLinkCreatedView: View {
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
                     .lineLimit(1)
 
-                HStack(spacing: 16) {
-                    // Copy button
-                    Button {
-                        ClipboardHelper.copy(shareLink.url)
-                        withAnimation { copied = true }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                            withAnimation { copied = false }
-                        }
-                    } label: {
-                        Label(copied ? "Copied!" : "Copy Link",
-                              systemImage: copied ? "checkmark" : "doc.on.doc")
+                // System share
+                if let url = URL(string: shareLink.url) {
+                    SwiftUI.ShareLink(item: url) {
+                        Label("Share", systemImage: "square.and.arrow.up")
                     }
                     .buttonStyle(.borderedProminent)
-
-                    // System share
-                    if let url = URL(string: shareLink.url) {
-                        SwiftUI.ShareLink(item: url) {
-                            Label("Share", systemImage: "square.and.arrow.up")
-                        }
-                        .buttonStyle(.bordered)
-                    }
                 }
             }
             .padding(.horizontal, 24)

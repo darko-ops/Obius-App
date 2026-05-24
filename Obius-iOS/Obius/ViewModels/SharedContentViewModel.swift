@@ -146,6 +146,7 @@ final class SharedContentViewModel: ObservableObject {
                 let id: String
                 let content: String
                 let contentType: String
+                let sectionType: String?
                 let orderKey: String
                 let indentLevel: Int
                 let handleId: String?
@@ -185,6 +186,7 @@ final class SharedContentViewModel: ObservableObject {
                         id: snap.id,
                         content: snap.content,
                         contentType: snap.contentType,
+                        sectionType: snap.sectionType ?? "fold",
                         orderKey: snap.orderKey,
                         indentLevel: snap.indentLevel,
                         handleId: snap.handleId

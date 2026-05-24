@@ -70,10 +70,18 @@ final class RealtimeShareSubscriber: ObservableObject {
 
     private func handleNoteChange(_ change: AnyAction) {
         guard let record = change.record else { return }
+        var interstitial: [String: String] = [:]
+        if let raw = record["interstitial_content"]?.stringValue,
+           let data = raw.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+            // Normalize keys to lowercase to match Postgres-returned section IDs
+            interstitial = Dictionary(uniqueKeysWithValues: decoded.map { ($0.key.lowercased(), $0.value) })
+        }
         let updatedNote = SharedNote(
             id: record["id"]?.stringValue ?? noteId,
             title: record["title"]?.stringValue,
-            body: record["body"]?.stringValue ?? ""
+            body: record["body"]?.stringValue ?? "",
+            interstitialContent: interstitial
         )
         note = updatedNote
     }

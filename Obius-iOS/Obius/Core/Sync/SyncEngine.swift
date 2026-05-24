@@ -188,7 +188,7 @@ actor SyncEngine {
 
                 // Find ALL sections that don't have a pending or completed syncOperation
                 let unsyncedSections = try Row.fetchAll(db, sql: """
-                    SELECT s.id, s.noteId, s.content, s.contentType, s.parentSectionId,
+                    SELECT s.id, s.noteId, s.content, s.contentType, s.sectionType, s.parentSectionId,
                            s.orderKey, s.indentLevel, s.isCollapsed, s.intent, s.handleId,
                            s.createdAt, s.updatedAt
                     FROM sections s
@@ -215,6 +215,7 @@ actor SyncEngine {
                         "note_id": section["noteId"] as? String ?? "",
                         "content": section["content"] as? String ?? "",
                         "content_type": section["contentType"] as? String ?? "text",
+                        "section_type": section["sectionType"] as? String ?? "fold",
                         "parent_section_id": section["parentSectionId"] as? String ?? NSNull(),
                         "order_key": section["orderKey"] as? String ?? "a",
                         "indent_level": Int(truncating: section["indentLevel"] as? NSNumber ?? 0),
