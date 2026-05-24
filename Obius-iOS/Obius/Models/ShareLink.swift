@@ -82,6 +82,11 @@ struct ShareLink: Codable, Identifiable, Hashable {
         "https://obius.io/s/\(slug)"
     }
 
+    /// The deep link form opened in-app when shared via iMessage / Copy Link.
+    var deepLink: String {
+        "obius://share/\(slug)"
+    }
+
     /// Generates a random 8-character base62 slug
     static func generateSlug() -> String {
         let chars = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")

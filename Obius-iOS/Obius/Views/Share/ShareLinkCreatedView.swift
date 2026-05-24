@@ -4,6 +4,7 @@ struct ShareLinkCreatedView: View {
     @Environment(\.dismiss) private var dismiss
 
     let shareLink: ShareLink
+    @State private var copied = false
 
     var body: some View {
         VStack(spacing: 24) {
@@ -45,6 +46,19 @@ struct ShareLinkCreatedView: View {
                     }
                     .buttonStyle(.borderedProminent)
                 }
+
+                // Copy link (same link type as Send in iMessage)
+                Button {
+                    ClipboardHelper.copy(shareLink.deepLink)
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        copied = false
+                    }
+                } label: {
+                    Label(copied ? "Copied!" : "Copy Link",
+                          systemImage: copied ? "checkmark" : "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
             }
             .padding(.horizontal, 24)
 

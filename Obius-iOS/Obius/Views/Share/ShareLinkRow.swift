@@ -46,6 +46,12 @@ struct ShareLinkRow: View {
                     }
                 }
 
+                Button {
+                    ClipboardHelper.copy(shareLink.deepLink)
+                } label: {
+                    Label("Copy Link", systemImage: "doc.on.doc")
+                }
+
                 Divider()
 
                 Button(role: .destructive) {
