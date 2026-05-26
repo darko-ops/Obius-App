@@ -7,8 +7,6 @@ struct ContentView: View {
     @StateObject private var networkMonitor = NetworkMonitor.shared
 
     @State private var showCorruptionAlert = false
-    @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
-    @State private var showWelcome = false
 
     var body: some View {
         Group {
@@ -27,22 +25,13 @@ struct ContentView: View {
             SharedContentView(slug: item.slug)
                 .environmentObject(appState)
         }
-        .platformFullScreenCover(isPresented: $showWelcome) {
-            WelcomeView(isPresented: $showWelcome)
-        }
         .onAppear {
             DispatchQueue.main.async {
                 if appState.didRecoverFromCorruption {
                     showCorruptionAlert = true
                     appState.didRecoverFromCorruption = false
                 }
-                if !hasSeenWelcome {
-                    showWelcome = true
-                }
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .showWelcomeTour)) { _ in
-            showWelcome = true
         }
         .alert("Database Recovered", isPresented: $showCorruptionAlert) {
             Button("OK") {}
