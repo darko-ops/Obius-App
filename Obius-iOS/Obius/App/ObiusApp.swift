@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import UserNotifications
 import RevenueCat
 #if os(iOS)
@@ -165,6 +166,7 @@ class AppState: ObservableObject {
     @Published var didRecoverFromCorruption = false
 
     private var authObservationTask: Task<Void, Never>?
+    private var authManagerObservation: AnyCancellable?
     private var isSwitching = false
     private var pendingSwitchTarget: String?? = nil
 
@@ -370,6 +372,22 @@ class AppState: ObservableObject {
                 }
             }
         }
+
+        // Also watch AuthManager.currentUser. When email confirmation is
+        // required, `supabase.signUp` returns a user but no session, so
+        // `.signedIn` won't fire until the user clicks the verification
+        // link — meaning the seeder would only run post-confirmation.
+        // AuthManager sets currentUser the instant signUp returns, so this
+        // observer triggers `switchUser` (and the seeder) immediately.
+        authManagerObservation = AuthManager.shared.$currentUser
+            .compactMap { $0?.id.uuidString.lowercased() }
+            .removeDuplicates()
+            .sink { [weak self] userId in
+                guard let self else { return }
+                if userId != self.currentUserId {
+                    Task { await self.switchUser(to: userId) }
+                }
+            }
     }
 
     /// Tear down the active per-user state and rebuild it for `newUserId`.
@@ -520,52 +538,48 @@ class AppState: ObservableObject {
             Task { await mediaRepository.syncExistingMediaToCloud() }
         }
 
-        // Seed first-run demo note
-        await seedFirstRunNoteIfNeeded()
+        // Seed brand-new sign-ups with the Personal project + Welcome /
+        // Quotes / Tim Ferriss pages. The pending flag is set by
+        // AuthManager.signUp; we consume it here once the per-user database
+        // and repositories are live.
+        await runPendingOnboardingSeedIfNeeded()
     }
 
-    private func seedFirstRunNoteIfNeeded() async {
-        let key = "hasSeededFirstRunNote"
-        guard !UserDefaults.standard.bool(forKey: key) else { return }
-        UserDefaults.standard.set(true, forKey: key)
-
-        do {
-            // 1. Create the demo note
-            let note = try await noteRepository.createNote(title: "Welcome to Obius")
-
-            // 2. Create two handles (loops)
-            let groceryHandle = try await handleRepository.createHandle(
-                name: "grocery_list", content: "Milk, Eggs, Bread"
-            )
-            let meetingHandle = try await handleRepository.createHandle(
-                name: "meeting_notes", content: "Discuss project timeline"
-            )
-
-            // 3. Create sections: intro text, 2 portal sections, explanation text
-            let introSection = try await sectionRepository.createSection(
-                noteId: note.id, content: "This note demonstrates Loops — synced content blocks."
-            )
-            let portalSection1 = try await sectionRepository.createSection(
-                noteId: note.id, content: "", afterSectionId: introSection.id
-            )
-            try await sectionRepository.linkSectionToHandle(
-                sectionId: portalSection1.id, handleId: groceryHandle.id
-            )
-            let portalSection2 = try await sectionRepository.createSection(
-                noteId: note.id, content: "", afterSectionId: portalSection1.id
-            )
-            try await sectionRepository.linkSectionToHandle(
-                sectionId: portalSection2.id, handleId: meetingHandle.id
-            )
-            _ = try await sectionRepository.createSection(
-                noteId: note.id,
-                content: "Edit a Loop here — it updates everywhere it appears.",
-                afterSectionId: portalSection2.id
-            )
-
-            print("[FirstRun] Seeded demo note with 2 loop portals")
-        } catch {
-            print("[FirstRun] Failed to seed demo note: \(error)")
+    private func runPendingOnboardingSeedIfNeeded() async {
+        guard let userId = currentUserId else {
+            print("[AppState] OnboardingSeeder skip: no currentUserId")
+            return
+        }
+        // Convert the global signup flag (set by AuthManager.signUp BEFORE
+        // supabase emitted .signedIn) into a per-user flag now that we know
+        // the user's id. This covers the race where the auth-state observer
+        // ran initialize() before signUp returned and could mark per-user.
+        if OnboardingSeeder.isSignupInProgress() {
+            print("[AppState] OnboardingSeeder: converting global signup flag → per-user (userId=\(userId.prefix(8)))")
+            OnboardingSeeder.markPending(userId: userId)
+            OnboardingSeeder.clearSignupInProgress()
+        }
+        guard OnboardingSeeder.isPending(userId: userId) else {
+            print("[AppState] OnboardingSeeder skip: no pending flag for userId=\(userId.prefix(8))")
+            return
+        }
+        print("[AppState] OnboardingSeeder: running for userId=\(userId.prefix(8))")
+        let seeder = OnboardingSeeder(
+            moduleRepository: moduleRepository,
+            noteRepository: noteRepository,
+            sectionRepository: sectionRepository,
+            handleRepository: handleRepository,
+            echoRepository: echoRepository
+        )
+        let success = await seeder.seed()
+        if success {
+            OnboardingSeeder.clearPending(userId: userId)
+            print("[AppState] OnboardingSeeder: cleared pending flag (succeeded)")
+        } else {
+            // Leave the pending flag set so the seeder retries on the next
+            // initialize() (next app launch). Idempotent steps (getOrCreate
+            // Personal, etc.) prevent duplicates on retry.
+            print("[AppState] OnboardingSeeder: leaving pending flag set for retry")
         }
     }
 

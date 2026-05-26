@@ -192,18 +192,18 @@ struct LibraryView: View {
                     .overlay(Circle().stroke(Color.systemBackground, lineWidth: 3))
             } else {
                 Circle()
-                    .fill(Color.accentColor.opacity(0.15))
+                    .fill(Color.systemGray4)
                     .frame(width: 80, height: 80)
                     .overlay(Circle().stroke(Color.systemBackground, lineWidth: 3))
                     .overlay {
                         if authManager.isAuthenticated {
                             Text(userInitials)
                                 .font(.title.weight(.semibold))
-                                .foregroundStyle(Color.accentColor)
+                                .foregroundStyle(Color.platformSystemGray)
                         } else {
                             Image(systemName: "person.fill")
                                 .font(.title)
-                                .foregroundStyle(Color.accentColor)
+                                .foregroundStyle(Color.platformSystemGray)
                         }
                     }
             }

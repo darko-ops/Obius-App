@@ -714,12 +714,13 @@ struct SectionView: View {
             }
             .overlay(alignment: .bottomTrailing) {
                 if !section.isCollapsed, let handle = handle {
-                    // Handle name (when linked to a loop)
+                    // Handle name (when linked to a loop). Kept small so it
+                    // doesn't crash into wrapped content text below the node.
                     Text(handle.formattedName)
-                        .font(.caption.weight(.medium))
+                        .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(.purple)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
                         .background(Color.purple.opacity(0.1))
                         .clipShape(Capsule())
                         .contextMenu {
@@ -735,7 +736,7 @@ struct SectionView: View {
                                 Label("Copy Loop Name", systemImage: "doc.on.doc")
                             }
                         }
-                        .padding(6)
+                        .padding(4)
                         .padding(.trailing, 20) // Offset for lip
                 }
             }
@@ -1123,7 +1124,7 @@ struct SectionView: View {
             // Handle name (when linked to a loop)
             if let handle = handle {
                 Text(handle.formattedName)
-                    .font(.caption.weight(.medium))
+                    .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(.purple)
             }
         }

@@ -75,6 +75,7 @@
 		B8A1D0010000000000000502 /* ContextAssembler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000502 /* ContextAssembler.swift */; };
 		B8A1D0010000000000000057 /* EchoRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000057 /* EchoRepository.swift */; };
 		B8A1D0010000000000000058 /* EchoManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000058 /* EchoManager.swift */; };
+		B8A1D0200000000000000099 /* OnboardingSeeder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0200000000000000099 /* OnboardingSeeder.swift */; };
 		B8A1D0010000000000000059 /* EchoConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000059 /* EchoConfigSheet.swift */; };
 		B8A1D0010000000000000300 /* WorkspaceFAB.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000300 /* WorkspaceFAB.swift */; };
 		B8A1D0010000000000000301 /* WorkspaceTerminalPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0010000000000000301 /* WorkspaceTerminalPanel.swift */; };
@@ -228,6 +229,7 @@
 		B8A1F0010000000000000502 /* ContextAssembler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextAssembler.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000057 /* EchoRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoRepository.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000058 /* EchoManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoManager.swift; sourceTree = "<group>"; };
+		B8A1F0200000000000000099 /* OnboardingSeeder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingSeeder.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000059 /* EchoConfigSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoConfigSheet.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000300 /* WorkspaceFAB.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFAB.swift; sourceTree = "<group>"; };
 		B8A1F0010000000000000301 /* WorkspaceTerminalPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTerminalPanel.swift; sourceTree = "<group>"; };
@@ -358,6 +360,7 @@
 				B8A1G0010000000000000006 /* Database */,
 				B8A1F0010000000000000058 /* EchoManager.swift */,
 				B8A1F0010000000000000008 /* HandleManager.swift */,
+				B8A1F0200000000000000099 /* OnboardingSeeder.swift */,
 				B8A1G0010000000000000007 /* Network */,
 				B8A1F0010000000000000093 /* ProfileImageManager.swift */,
 				B8A1F0020000000000000005 /* ShareManager.swift */,
@@ -830,6 +833,7 @@
 				B8A1D0010000000000000401 /* CalendarMemoRepository.swift in Sources */,
 				B8A1D0010000000000000057 /* EchoRepository.swift in Sources */,
 				B8A1D0010000000000000058 /* EchoManager.swift in Sources */,
+				B8A1D0200000000000000099 /* OnboardingSeeder.swift in Sources */,
 				B8A1D0010000000000000059 /* EchoConfigSheet.swift in Sources */,
 				B8A1D0010000000000000300 /* WorkspaceFAB.swift in Sources */,
 				B8A1D0010000000000000301 /* WorkspaceTerminalPanel.swift in Sources */,

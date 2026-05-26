@@ -864,14 +864,11 @@ final class DatabaseManager {
                 }
             }
 
-            // Ensure at least one module exists — create "Artifacts" if all were deleted
-            let remaining = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM modules WHERE deletedAt IS NULL") ?? 0
-            if remaining == 0 {
-                try db.execute(sql: """
-                    INSERT INTO modules (id, name, icon, isDefault, storageType, orderIndex, createdAt, updatedAt)
-                    VALUES (?, 'Artifacts', 'folder', 0, 'local', 0, ?, ?)
-                """, arguments: [UUID().uuidString, now, now])
-            }
+            // Intentionally no fallback module creation. New sign-ups are
+            // seeded with a "Personal" project by OnboardingSeeder; sign-ins
+            // on a new device pull existing modules from cloud sync. Auto-
+            // creating an "Artifacts" placeholder here was confusing for new
+            // users and would always need to be deleted by the seeder.
 
             try db.execute(sql: "UPDATE syncMetadata SET schemaVersion = 34")
         }

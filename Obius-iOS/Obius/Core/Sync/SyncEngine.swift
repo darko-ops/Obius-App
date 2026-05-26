@@ -1394,15 +1394,10 @@ actor SyncEngine {
                 print("[Sync] Cleaned up \(emptyModuleIds.count) empty modules")
             }
 
-            // 4. Ensure at least one module exists.
-            let remaining = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM modules WHERE deletedAt IS NULL") ?? 0
-            if remaining == 0 {
-                try db.execute(sql: """
-                    INSERT INTO modules (id, name, icon, isDefault, storageType, orderIndex, createdAt, updatedAt)
-                    VALUES (?, 'Artifacts', 'folder', 0, 'cloud', 0, ?, ?)
-                """, arguments: [UUID().uuidString, now, now])
-                print("[Sync] Created fallback 'Artifacts' module")
-            }
+            // No fallback module creation. If the user genuinely has zero
+            // modules they're either mid-onboarding (OnboardingSeeder will
+            // create "Personal") or they deliberately deleted everything,
+            // and the UI surfaces a "create project" affordance in that case.
         }
         } catch {
             print("[Sync] ERROR cleaning up orphaned modules: \(error)")

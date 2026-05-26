@@ -209,6 +209,17 @@ struct SignUpView: View {
                             password: password,
                             displayName: displayName.isEmpty ? nil : displayName
                         )
+                        // Show the paywall as an optional upsell — the sheet is
+                        // dismissible so users can skip and upgrade later from
+                        // Settings → Subscription. Onboarding seed-pending is
+                        // set inside AuthManager.signUp itself to avoid racing
+                        // the auth-state observer.
+                        if authManager.authError == nil,
+                           authManager.isAuthenticated,
+                           TierManager.shared.currentTier == .free {
+                            TierManager.shared.paywallFeature = nil
+                            TierManager.shared.showPaywall = true
+                        }
                     }
                 } label: {
                     if authManager.isLoading {

@@ -76,6 +76,15 @@ final class ModuleRepository: ObservableObject {
         }
     }
 
+    func getModuleByName(_ name: String) async throws -> Module? {
+        try await database.read { db in
+            try Module
+                .filter(Module.Columns.name == name)
+                .filter(Module.Columns.deletedAt == nil)
+                .fetchOne(db)
+        }
+    }
+
     /// Returns the first available module as a fallback
     func getLocalModule() -> Module? {
         modules.first

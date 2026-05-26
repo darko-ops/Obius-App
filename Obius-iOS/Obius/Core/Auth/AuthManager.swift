@@ -96,6 +96,13 @@ final class AuthManager: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
+        // Set the global signup flag BEFORE calling supabase.signUp. The
+        // Supabase SDK emits `.signedIn` from within its internal awaits, so
+        // AppState's auth-state observer can run `switchUser → initialize`
+        // before this method returns. AppState.initialize converts this flag
+        // into a per-user pending flag once it knows the new user's id.
+        OnboardingSeeder.markSignupInProgress()
+
         do {
             var metadata: [String: AnyJSON]? = nil
             if let displayName = displayName {
@@ -103,12 +110,20 @@ final class AuthManager: ObservableObject {
             }
 
             let user = try await supabase.signUp(email: email, password: password, data: metadata)
+            // Belt-and-suspenders: also mark per-user pending here, but ONLY
+            // if the observer hasn't yet consumed the global flag. If it has,
+            // it already ran the seed and re-marking would cause a duplicate
+            // on the next initialize().
+            if OnboardingSeeder.isSignupInProgress() {
+                OnboardingSeeder.markPending(userId: user.id.uuidString.lowercased())
+            }
             currentUser = user
             isAuthenticated = true
 
             // Sync RevenueCat identity
             await StoreManager.shared.identify(userId: user.id.uuidString.lowercased())
         } catch {
+            OnboardingSeeder.clearSignupInProgress()
             authError = error.localizedDescription
         }
     }

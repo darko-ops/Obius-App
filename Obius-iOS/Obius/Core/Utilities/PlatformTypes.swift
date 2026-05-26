@@ -40,6 +40,24 @@ extension Color {
         #endif
     }
 
+    /// System gray
+    static var platformSystemGray: Color {
+        #if os(iOS)
+        Color(UIColor.systemGray)
+        #else
+        Color(red: 0.56, green: 0.56, blue: 0.58) // matches iOS systemGray
+        #endif
+    }
+
+    /// System gray4
+    static var systemGray4: Color {
+        #if os(iOS)
+        Color(UIColor.systemGray4)
+        #else
+        Color(red: 0.27, green: 0.27, blue: 0.29) // matches iOS dark systemGray4
+        #endif
+    }
+
     /// System gray5
     static var systemGray5: Color {
         #if os(iOS)
