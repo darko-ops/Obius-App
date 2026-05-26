@@ -169,37 +169,54 @@ struct MainTabView: View {
                 }
                 #endif
 
-            // In-app echo alert banner with context
+            // In-app echo alert banner — sized like an iOS notification preview
+            // so it doesn't overtake the screen. Tap to navigate; ✕ to dismiss.
             if showBanner, let echo = bannerEcho {
-                VStack(spacing: 0) {
-                    EchoContextCard(
-                        echo: echo,
-                        handleName: echoManager.getHandleName(for: echo),
-                        portalContexts: bannerContexts,
-                        onNavigate: { noteId in
-                            withAnimation { showBanner = false }
-                            pendingEchoId = echo.id
-                            selectedTab = 1
-                        }
-                    )
-                    .overlay(alignment: .topTrailing) {
-                        Button {
-                            withAnimation { showBanner = false }
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(.secondary)
-                                .padding(8)
-                        }
+                HStack(alignment: .center, spacing: 10) {
+                    Image(systemName: "dot.radiowaves.left.and.right")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.yellow)
+                        .frame(width: 24, height: 24)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Echo: @\(echoManager.getHandleName(for: echo))")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Text(bannerContexts.first?.contentPreview ?? echo.cadenceDescription)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
+
+                    Spacer(minLength: 8)
+
+                    Button {
                         withAnimation { showBanner = false }
-                        pendingEchoId = echo.id
-                        selectedTab = 1
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.secondary)
+                            .padding(6)
+                            .background(Circle().fill(Color.secondarySystemBackground))
                     }
+                    .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(Color.orange.opacity(0.25), lineWidth: 1)
+                )
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation { showBanner = false }
+                    pendingEchoId = echo.id
+                    selectedTab = 1
+                }
+                .padding(.horizontal, 12)
                 .padding(.top, 8)
                 .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
                 .transition(.move(edge: .top).combined(with: .opacity))

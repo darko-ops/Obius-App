@@ -91,7 +91,11 @@ final class EchoManager: ObservableObject {
     func requestNotificationPermission() async {
         let center = UNUserNotificationCenter.current()
         do {
-            let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
+            // Request time-sensitive in addition to the basics so echoes can
+            // break through Focus/DND with `interruptionLevel = .timeSensitive`.
+            let granted = try await center.requestAuthorization(
+                options: [.alert, .sound, .badge, .timeSensitive]
+            )
             if !granted {
                 print("EchoManager: Notification permission not granted")
             }
@@ -117,6 +121,10 @@ final class EchoManager: ObservableObject {
         baseContent.title = "Echo: @\(handleName)"
         baseContent.body = echo.cadenceDescription
         baseContent.sound = .default
+        // Treat Echoes as alarm-style: break through Focus/DND and surface
+        // above other notifications.
+        baseContent.interruptionLevel = .timeSensitive
+        baseContent.relevanceScore = 1.0
         baseContent.userInfo = ["echoId": echo.id, "handleId": echo.handleId]
 
         // Determine the target fire date
@@ -161,6 +169,8 @@ final class EchoManager: ObservableObject {
             reminderContent.title = "Echo reminder"
             reminderContent.body = "@\(handleName) still needs attention"
             reminderContent.sound = .default
+            reminderContent.interruptionLevel = .timeSensitive
+            reminderContent.relevanceScore = 1.0
             reminderContent.userInfo = ["echoId": echo.id, "handleId": echo.handleId]
 
             let reminderComponents = Calendar.current.dateComponents(
