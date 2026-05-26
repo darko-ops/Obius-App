@@ -525,48 +525,170 @@ class AppState: ObservableObject {
     }
 
     private func seedFirstRunNoteIfNeeded() async {
-        let key = "hasSeededFirstRunNote"
+        let key = "hasSeededDemoContentV2"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
         UserDefaults.standard.set(true, forKey: key)
 
         do {
-            // 1. Create the demo note
-            let note = try await noteRepository.createNote(title: "Welcome to Obius")
-
-            // 2. Create two handles (loops)
-            let groceryHandle = try await handleRepository.createHandle(
-                name: "grocery_list", content: "Milk, Eggs, Bread"
-            )
-            let meetingHandle = try await handleRepository.createHandle(
-                name: "meeting_notes", content: "Discuss project timeline"
-            )
-
-            // 3. Create sections: intro text, 2 portal sections, explanation text
-            let introSection = try await sectionRepository.createSection(
-                noteId: note.id, content: "This note demonstrates Loops — synced content blocks."
-            )
-            let portalSection1 = try await sectionRepository.createSection(
-                noteId: note.id, content: "", afterSectionId: introSection.id
-            )
-            try await sectionRepository.linkSectionToHandle(
-                sectionId: portalSection1.id, handleId: groceryHandle.id
-            )
-            let portalSection2 = try await sectionRepository.createSection(
-                noteId: note.id, content: "", afterSectionId: portalSection1.id
-            )
-            try await sectionRepository.linkSectionToHandle(
-                sectionId: portalSection2.id, handleId: meetingHandle.id
-            )
-            _ = try await sectionRepository.createSection(
-                noteId: note.id,
-                content: "Edit a Loop here — it updates everywhere it appears.",
-                afterSectionId: portalSection2.id
-            )
-
-            print("[FirstRun] Seeded demo note with 2 loop portals")
+            try await seedDemoContent()
+            print("[FirstRun] Seeded demo content (V2)")
         } catch {
-            print("[FirstRun] Failed to seed demo note: \(error)")
+            print("[FirstRun] Failed to seed demo content: \(error)")
         }
+    }
+
+    /// Builds a first-launch demo that teaches Obius by example:
+    /// a primary "Welcome" note with one section per intent color, a Loop
+    /// portal block, an Echo portal block, plus a second note that shares
+    /// the same Loop so users see cross-note sync in action.
+    private func seedDemoContent() async throws {
+        // MARK: Loops
+
+        let launchHandle = try await handleRepository.createHandle(
+            name: "launch_checklist",
+            content: """
+            - Finalize App Store screenshots
+            - Schedule launch announcement for 10 AM PT
+            - Thank the 5 beta testers individually
+            - Open the front door — we're live
+            """,
+            intent: .task
+        )
+
+        let standupHandle = try await handleRepository.createHandle(
+            name: "daily_standup",
+            content: """
+            Yesterday: shipped the onboarding flow.
+            Today: wire up TestFlight feedback channel.
+            Blockers: none.
+            """,
+            intent: .evidence
+        )
+
+        // MARK: Welcome note
+
+        let welcome = try await noteRepository.createNote(
+            title: "Welcome to Obius",
+            intent: .idea
+        )
+
+        var previousId: String? = nil
+
+        func addSection(_ text: String, intent: IntentType) async throws -> String {
+            let s = try await sectionRepository.createSection(
+                noteId: welcome.id,
+                content: text,
+                afterSectionId: previousId
+            )
+            try await sectionRepository.setIntent(s.id, intent: intent)
+            previousId = s.id
+            return s.id
+        }
+
+        func addPortalSection(handleId: String, intent: IntentType) async throws -> String {
+            let s = try await sectionRepository.createSection(
+                noteId: welcome.id,
+                content: "",
+                afterSectionId: previousId
+            )
+            try await sectionRepository.linkSectionToHandle(sectionId: s.id, handleId: handleId)
+            try await sectionRepository.setIntent(s.id, intent: intent)
+            previousId = s.id
+            return s.id
+        }
+
+        _ = try await addSection(
+            "Welcome. This note is yours — edit it, delete it, or keep it around. Every section below is real and editable. Tap any one to change its color.",
+            intent: .idea
+        )
+
+        _ = try await addSection(
+            "Sections carry intent. The color tells you what kind of thinking lives there — at a glance, without reading a word.",
+            intent: .evidence
+        )
+
+        _ = try await addSection(
+            "Open — half-formed, still exploring.\n\n\"What if my notes could think back at me?\"",
+            intent: .idea
+        )
+
+        _ = try await addSection(
+            "Waiting — questions held, decisions deferred.\n\n\"Polish dark mode before launch, or after?\"",
+            intent: .question
+        )
+
+        _ = try await addSection(
+            "Active — in motion right now.\n\n\"Cutting the App Store screenshots.\"",
+            intent: .evidence
+        )
+
+        _ = try await addSection(
+            "Issue — broken, blocked, needs attention.\n\n\"Onboarding drop-off after the second screen.\"",
+            intent: .issue
+        )
+
+        _ = try await addSection(
+            "Done — locked in.\n\n\"Submitted to App Store.\"",
+            intent: .task
+        )
+
+        _ = try await addSection(
+            "Loops — reusable content blocks prefixed with @. Edit one, every copy updates. The block below is a live Loop. So is the one in your second demo note, 'Project: launch'. Try editing either — both stay in sync.",
+            intent: .idea
+        )
+
+        _ = try await addPortalSection(handleId: launchHandle.id, intent: .task)
+
+        _ = try await addSection(
+            "Echoes — time-based reminders attached to a Loop. They resurface the whole note with its context, not a one-line ping. The Loop below has a daily Echo attached — long-press a Loop in the Library to set your own.",
+            intent: .evidence
+        )
+
+        _ = try await addPortalSection(handleId: standupHandle.id, intent: .evidence)
+
+        _ = try await addSection(
+            "Ready to make your own? Tap + at the bottom of the notes list to start a new note.\n\nSign in any time from Settings to sync across all your devices.",
+            intent: .idea
+        )
+
+        // MARK: Second note (cross-note Loop demonstration)
+
+        let projectNote = try await noteRepository.createNote(
+            title: "Project: launch",
+            intent: .task
+        )
+
+        let intro = try await sectionRepository.createSection(
+            noteId: projectNote.id,
+            content: "Same launch checklist as in 'Welcome to Obius' — edit it here and it changes there too. That's a Loop."
+        )
+        try await sectionRepository.setIntent(intro.id, intent: .idea)
+
+        let sharedPortal = try await sectionRepository.createSection(
+            noteId: projectNote.id,
+            content: "",
+            afterSectionId: intro.id
+        )
+        try await sectionRepository.linkSectionToHandle(
+            sectionId: sharedPortal.id, handleId: launchHandle.id
+        )
+        try await sectionRepository.setIntent(sharedPortal.id, intent: .task)
+
+        // MARK: Echo on @daily_standup — daily at 9 AM starting tomorrow
+
+        let calendar = Calendar.current
+        var components = calendar.dateComponents([.year, .month, .day], from: Date())
+        components.day = (components.day ?? 0) + 1
+        components.hour = 9
+        components.minute = 0
+        let tomorrow9AM = calendar.date(from: components) ?? Date().addingTimeInterval(86400)
+
+        _ = try await echoRepository.createEcho(
+            handleId: standupHandle.id,
+            isRecurring: true,
+            intervals: [EchoInterval(value: 1, unit: .days)],
+            fireDate: Int64(tomorrow9AM.timeIntervalSince1970 * 1000)
+        )
     }
 
     func triggerSync() async {
