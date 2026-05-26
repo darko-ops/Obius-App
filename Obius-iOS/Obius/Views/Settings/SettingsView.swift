@@ -146,6 +146,15 @@ struct SettingsView: View {
 
             // About Section
             SwiftUI.Section("About") {
+                Button {
+                    dismiss()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        NotificationCenter.default.post(name: .showWelcomeTour, object: nil)
+                    }
+                } label: {
+                    Label("Show Welcome Tour", systemImage: "sparkles")
+                }
+
                 HStack {
                     Label("Version", systemImage: "info.circle")
                     Spacer()

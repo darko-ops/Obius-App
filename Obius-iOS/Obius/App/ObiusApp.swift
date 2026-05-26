@@ -605,4 +605,5 @@ class AppState: ObservableObject {
 extension Notification.Name {
     static let echoNotificationTapped = Notification.Name("echoNotificationTapped")
     static let createNewNote = Notification.Name("createNewNote")
+    static let showWelcomeTour = Notification.Name("showWelcomeTour")
 }
