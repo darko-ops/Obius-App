@@ -134,27 +134,65 @@ struct OnboardingSeeder {
             title: "Welcome to Obius", intent: .idea, moduleId: moduleId
         )
 
-        try await noteRepository.updateNoteBody(
-            note.id,
-            body: "This note demonstrates Loops — synced content blocks."
-        )
+        // Founder letter with Obius / Nodes / Echoes / Loops bolded.
+        let (plain, rich) = Self.welcomeBodyText()
+        try await noteRepository.updateNoteBody(note.id, body: plain, richText: rich)
 
-        let groceryPortal = try await addLoopSection(
-            noteId: note.id, after: nil,
-            handleName: "grocery_list", intent: .idea,
-            handleContent: "Milk, Eggs, Bread"
+        // Below the letter: a collapsed portal section linked to the SAME
+        // Romans12_21 handle used on the Quotes page (seeded earlier so the
+        // handle already exists). Multiple portal sections can point at the
+        // same handle — editing in one place updates everywhere.
+        guard let romans = try await handleRepository.getHandleByName("Romans12_21") else { return }
+        let portal = try await sectionRepository.createSection(
+            noteId: note.id, sectionType: .fold, afterSectionId: nil
         )
-        _ = try await addLoopSection(
-            noteId: note.id, after: groceryPortal.id,
-            handleName: "meeting_notes", intent: .idea,
-            handleContent: "Discuss project timeline"
-        )
+        try await sectionRepository.linkSectionToHandle(sectionId: portal.id, handleId: romans.id)
+        try await sectionRepository.setIntent(portal.id, intent: .idea)
+        try await sectionRepository.toggleCollapse(portal.id) // start collapsed
+    }
 
-        try await noteRepository.updateInterstitialContent(
-            note.id,
-            afterSectionId: nil, // nil → "end" interstitial slot
-            content: "Edit a Loop here — it updates everywhere it appears."
-        )
+    /// Builds the founder letter body with Obius / Nodes / Echoes / Loops
+    /// rendered in bold. Returns both plain and RTF base64 — the editor falls
+    /// back to plain if rich-text decoding fails on another platform.
+    private static func welcomeBodyText() -> (plain: String, rich: String?) {
+        // (text, bold)
+        let segments: [(String, Bool)] = [
+            ("Being someone who struggles with a constant scatter-brain and constantly starting new projects, I built ", false),
+            ("Obius", true),
+            (" to help me organize my life in one place.\n\n", false),
+            ("Obius", true),
+            (" is a simple, intuitive way to organize thoughts and research — or a visual project management tool for tracking workflows and decisions. Whatever your use case, the intelligence running in the background is designed to help you make connections between projects.\n\nDefine your context and chat naturally, or build new documents in the page editor.\n\nInside, you'll find ", false),
+            ("Nodes", true),
+            (" — stylistically simple yet powerful blocks of words, images, or audio. You can turn these ", false),
+            ("Nodes", true),
+            (" into ", false),
+            ("Echoes", true),
+            (", which act as reminders with a function, or ", false),
+            ("Loops", true),
+            (", which can be referenced globally to maximize the functionality of all your work.\n\n— Demetri, Founder", false),
+        ]
+
+        let attr = NSMutableAttributedString()
+        let regular = RichTextHelper.bodyAttributes()
+        let bold = boldBodyAttributes()
+        for (text, isBold) in segments {
+            attr.append(NSAttributedString(string: text, attributes: isBold ? bold : regular))
+        }
+        return (attr.string, RichTextHelper.serialize(attr))
+    }
+
+    private static func boldBodyAttributes() -> [NSAttributedString.Key: Any] {
+        #if os(iOS)
+        return [
+            .font: UIFont.systemFont(ofSize: RichTextHelper.bodySize, weight: .bold),
+            .foregroundColor: UIColor.label
+        ]
+        #else
+        return [
+            .font: NSFont.systemFont(ofSize: RichTextHelper.bodySize, weight: .bold),
+            .foregroundColor: NSColor.labelColor
+        ]
+        #endif
     }
 
     // MARK: - Quotes page
@@ -195,7 +233,7 @@ struct OnboardingSeeder {
             title: "The Tim Ferriss Lifestyle Guide", intent: .idea, moduleId: moduleId
         )
 
-        // Intro paragraphs + Big+Bold "Daily practices" heading all live in
+        // Intro paragraphs + Big "Daily practices" heading all live in
         // note.body so they render as normal prose with no drag handle or
         // section context menu.
         let (bodyPlain, bodyRich) = Self.timFerrissBodyText()
@@ -203,10 +241,10 @@ struct OnboardingSeeder {
 
         var previousId: String? = nil
 
-        previousId = try await addFold(
+        previousId = try await addFoldWithHeading(
             noteId: note.id, after: previousId,
-            title: "Fear-Setting",
-            content: """
+            heading: "Fear-Setting",
+            body: """
             The exercise Ferriss recommends above all others — he calls it more valuable than goal-setting. When stuck on a decision or paralyzed by worry, take a page and make three columns:
 
             1. Define — What's the worst that could realistically happen? List every fear in concrete detail.
@@ -217,16 +255,16 @@ struct OnboardingSeeder {
             """
         ).id
 
-        previousId = try await addFold(
+        previousId = try await addFoldWithHeading(
             noteId: note.id, after: previousId,
-            title: "The 5-Minute Journal",
-            content: "Two minutes in the morning, two at night. Ferriss has called it his highest-ROI habit."
+            heading: "The 5-Minute Journal",
+            body: "Two minutes in the morning, two at night. Ferriss has called it his highest-ROI habit."
         ).id
 
-        previousId = try await addFold(
+        previousId = try await addFoldWithHeading(
             noteId: note.id, after: previousId,
-            title: "Morning",
-            content: """
+            heading: "Morning",
+            body: """
             • 3 things I'm grateful for
             • 3 things that would make today great
             • A daily affirmation
@@ -254,10 +292,10 @@ struct OnboardingSeeder {
         ).id
         try await scheduleDailyEcho(forHandleNamed: "AMJournal", hour: 8, minute: 30)
 
-        previousId = try await addFold(
+        previousId = try await addFoldWithHeading(
             noteId: note.id, after: previousId,
-            title: "Evening",
-            content: """
+            heading: "Evening",
+            body: """
             • 3 amazing things that happened today
             • What could I have done to make today better?
             """
@@ -279,10 +317,10 @@ struct OnboardingSeeder {
         ).id
         try await scheduleDailyEcho(forHandleNamed: "PMJournal", hour: 20, minute: 30)
 
-        previousId = try await addFold(
+        previousId = try await addFoldWithHeading(
             noteId: note.id, after: previousId,
-            title: "The 80/20 Audit",
-            content: """
+            heading: "The 80/20 Audit",
+            body: """
             Every few months, sit down and ask:
             • Which 20% of activities give me 80% of my results, joy, or income?
             • Which 20% of people, tasks, or commitments cause 80% of my stress?
@@ -291,41 +329,46 @@ struct OnboardingSeeder {
             """
         ).id
 
-        _ = try await addFold(
+        _ = try await addFoldWithHeading(
             noteId: note.id, after: previousId,
-            title: "A better question for hard problems",
-            content: "When stuck, swap \"How do I do this?\" for \"What would this look like if it were easy?\" The honest answer usually points at a better path than the one you were forcing."
+            heading: "A better question for hard problems",
+            body: "When stuck, swap \"How do I do this?\" for \"What would this look like if it were easy?\" The honest answer usually points at a better path than the one you were forcing."
         )
     }
 
-    /// Builds the Tim Ferriss page body: two intro paragraphs in body type
-    /// followed by a Big+Bold "Daily practices" heading. Returns plain + RTF
-    /// base64 so the editor falls back gracefully if the rich blob fails to
-    /// deserialize on another platform.
+    /// Builds the Tim Ferriss page body: two intro paragraphs in body type,
+    /// an explicit empty line, then a "Daily practices" heading at the same
+    /// size as the editor toolbar's "Big text" / Title style.
     private static func timFerrissBodyText() -> (plain: String, rich: String?) {
+        // Two `\n\n` between the paragraphs gives the usual paragraph break;
+        // the extra "\n" before "Daily practices" inserts an empty row.
         let intro = """
         Tim Ferriss is an author, investor, and podcaster best known for The 4-Hour Workweek and Tools of Titans. He's spent two decades interviewing world-class performers and stress-testing their habits on himself. He treats his own life as an experiment — and the notebook is where he runs it.
 
         Here are a few of his most useful practices, plus quotes worth keeping.
 
-        """ // trailing blank line before the heading
+
+        """
 
         let attr = NSMutableAttributedString()
         attr.append(NSAttributedString(string: intro, attributes: RichTextHelper.bodyAttributes()))
-        attr.append(NSAttributedString(string: "Daily practices", attributes: bigBoldAttributes()))
+        attr.append(NSAttributedString(string: "Daily practices", attributes: bigTitleAttributes()))
 
         return (attr.string, RichTextHelper.serialize(attr))
     }
 
-    private static func bigBoldAttributes() -> [NSAttributedString.Key: Any] {
+    /// Same attributes the toolbar's "Big text" / Title button applies: h1
+    /// size, bold weight. Keep this in sync with `applyTitle()` in
+    /// SectionView's rich-text helper.
+    private static func bigTitleAttributes() -> [NSAttributedString.Key: Any] {
         #if os(iOS)
         return [
-            .font: UIFont.systemFont(ofSize: RichTextHelper.h2Size, weight: .bold),
+            .font: UIFont.systemFont(ofSize: RichTextHelper.h1Size, weight: .bold),
             .foregroundColor: UIColor.label
         ]
         #else
         return [
-            .font: NSFont.systemFont(ofSize: RichTextHelper.h2Size, weight: .bold),
+            .font: NSFont.systemFont(ofSize: RichTextHelper.h1Size, weight: .bold),
             .foregroundColor: NSColor.labelColor
         ]
         #endif
@@ -343,6 +386,34 @@ struct OnboardingSeeder {
         )
         try await sectionRepository.setTitle(section.id, title: title)
         return section
+    }
+
+    /// Creates a fold section whose first line is a bold heading inside the
+    /// content itself (no `section.title`). This keeps the heading editable
+    /// and visible in the collapsed preview row.
+    @discardableResult
+    private func addFoldWithHeading(noteId: String, after: String?, heading: String, body: String) async throws -> Section {
+        let section = try await sectionRepository.createSection(
+            noteId: noteId,
+            sectionType: .fold,
+            afterSectionId: after
+        )
+        let plain = "\(heading)\n\n\(body)"
+        let rich = Self.foldHeadingRichContent(heading: heading, body: body)
+        try await sectionRepository.updateContent(section.id, content: plain, richText: rich)
+        return section
+    }
+
+    /// Bold first line + regular body, both at body size — "normal text"
+    /// per the design ask, but with the heading visually distinct so the
+    /// collapsed preview still reads like a heading.
+    private static func foldHeadingRichContent(heading: String, body: String) -> String? {
+        let attr = NSMutableAttributedString()
+        let bold = boldBodyAttributes()
+        let regular = RichTextHelper.bodyAttributes()
+        attr.append(NSAttributedString(string: heading + "\n\n", attributes: bold))
+        attr.append(NSAttributedString(string: body, attributes: regular))
+        return RichTextHelper.serialize(attr)
     }
 
     /// Creates a Loop (Handle) and a portal section that displays its content.
