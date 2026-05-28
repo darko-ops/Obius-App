@@ -25,6 +25,12 @@ struct MacAIWorkspaceView: View {
     @State private var isLoading = false
     @FocusState private var isInputFocused: Bool
 
+    // MARK: - Streaming State (live preview while AI builds)
+    @State private var streamingText: String = ""
+    @State private var streamingToolName: String? = nil
+    @State private var streamingToolPartialJSON: String = ""
+    @State private var streamingCompletedActions: [SuggestedAction] = []
+
     // MARK: - Editor State (for AI-generated page)
     @State private var activeEditorNoteId: String?
     @State private var editorSections: [Section] = []
@@ -598,6 +604,18 @@ struct MacAIWorkspaceView: View {
 
                         if interactionMode != nil && isLoading {
                             loadingIndicator
+
+                            if hasStreamingContent {
+                                StreamingPreviewCard(
+                                    partialText: streamingText,
+                                    currentToolName: streamingToolName,
+                                    currentToolPartialJSON: streamingToolPartialJSON,
+                                    completedActions: streamingCompletedActions,
+                                    previewSections: editorSections,
+                                    mediaRepository: appState.mediaRepository
+                                )
+                                .id("streaming-preview")
+                            }
                         }
                     }
                     .padding(20)
@@ -1018,6 +1036,19 @@ struct MacAIWorkspaceView: View {
         !isLoading && !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var hasStreamingContent: Bool {
+        !streamingText.isEmpty
+            || streamingToolName != nil
+            || !streamingCompletedActions.isEmpty
+    }
+
+    private func resetStreamingState() {
+        streamingText = ""
+        streamingToolName = nil
+        streamingToolPartialJSON = ""
+        streamingCompletedActions = []
+    }
+
     private var inputBar: some View {
         HStack(spacing: 10) {
             TextField(
@@ -1076,6 +1107,7 @@ struct MacAIWorkspaceView: View {
         messages.append(ChatMessage(role: .user, content: text))
         inputText = ""
         isLoading = true
+        resetStreamingState()
 
         let currentMode = interactionMode ?? .edit
         let currentSelectedHandles = selectedHandles
@@ -1123,16 +1155,42 @@ struct MacAIWorkspaceView: View {
 
                 switch currentMode {
                 case .edit:
-                    let response = try await ClaudeService.sendWithTools(
+                    var finalText: String = ""
+                    var streamedActions: [SuggestedAction] = []
+
+                    let stream = ClaudeService.sendWithToolsStream(
                         messages: apiMessages,
                         noteContext: context
                     )
+                    for try await event in stream {
+                        switch event {
+                        case .partialText(let t):
+                            await MainActor.run { streamingText = t }
+                        case .partialTool(let name, let partial):
+                            await MainActor.run {
+                                streamingToolName = name
+                                streamingToolPartialJSON = partial
+                            }
+                        case .toolComplete(let action):
+                            streamedActions.append(action)
+                            await MainActor.run {
+                                streamingCompletedActions.append(action)
+                                // Clear in-flight tool slot so the next tool
+                                // (if any) starts from a clean draft.
+                                streamingToolName = nil
+                                streamingToolPartialJSON = ""
+                            }
+                        case .done(let text, let actions):
+                            finalText = text
+                            if streamedActions.isEmpty { streamedActions = actions }
+                        }
+                    }
 
-                    let finalActions = coalesceMicroActions(response.actions, pageId: targetPageId)
+                    let finalActions = coalesceMicroActions(streamedActions, pageId: targetPageId)
 
                     let content: String
-                    if !response.text.isEmpty {
-                        content = response.text
+                    if !finalText.isEmpty {
+                        content = finalText
                     } else if !finalActions.isEmpty {
                         content = "Here's what I suggest:"
                     } else {
@@ -1143,6 +1201,7 @@ struct MacAIWorkspaceView: View {
                         content: content,
                         actions: finalActions
                     ))
+                    resetStreamingState()
 
                 case .chat:
                     let responseText = try await ClaudeService.sendChat(
@@ -1167,6 +1226,7 @@ struct MacAIWorkspaceView: View {
                     errorMessage = "Something went wrong: \(error.localizedDescription)"
                 }
                 messages.append(ChatMessage(role: .assistant, content: errorMessage))
+                resetStreamingState()
             }
             isLoading = false
         }

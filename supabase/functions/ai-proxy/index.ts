@@ -10,7 +10,7 @@ import {
   corsResponse,
 } from '../_shared/supabase-client.ts';
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
-import { sendRaw, logUsage } from '../_shared/anthropic-client.ts';
+import { sendRaw, streamRaw, logUsage } from '../_shared/anthropic-client.ts';
 import { sendGeminiMessage } from '../_shared/gemini-client.ts';
 import { requireAIAction, requireFeature } from '../_shared/entitlements.ts';
 
@@ -384,6 +384,84 @@ async function handleSendWithTools(body: ActionRequest, userId: string, supabase
   return jsonResponse({ content: raw.content });
 }
 
+async function handleSendWithToolsStream(body: ActionRequest, userId: string, supabase: SupabaseClient) {
+  const messages = body.messages as { role: string; content: string }[];
+  const noteContext = (body.noteContext as string) || '';
+
+  if (!messages || !Array.isArray(messages)) {
+    return errorResponse('INVALID_REQUEST', 'messages array is required');
+  }
+
+  const system = await systemPromptForSendWithTools(noteContext);
+  const maxTokens = estimateMaxTokens(messages);
+
+  const upstream = await streamRaw(
+    messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+    {
+      model: MODELS.architect,
+      maxTokens,
+      system,
+      tools: TOOL_DEFINITIONS,
+    }
+  );
+
+  // Tee the stream so we can sniff input/output token usage from the
+  // `message_start` / `message_delta` events for logging without blocking
+  // delivery to the client.
+  const [clientStream, logStream] = upstream.body!.tee();
+
+  (async () => {
+    try {
+      const decoder = new TextDecoder();
+      const reader = logStream.getReader();
+      let buffer = '';
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let modelName = MODELS.architect as string;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buffer.indexOf('\n\n')) !== -1) {
+          const chunk = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const dataLine = chunk.split('\n').find((l) => l.startsWith('data:'));
+          if (!dataLine) continue;
+          const payload = dataLine.slice(5).trim();
+          if (!payload || payload === '[DONE]') continue;
+          try {
+            const evt = JSON.parse(payload);
+            if (evt.type === 'message_start' && evt.message?.usage) {
+              inputTokens = evt.message.usage.input_tokens || 0;
+              outputTokens = evt.message.usage.output_tokens || 0;
+              modelName = evt.message.model || modelName;
+            } else if (evt.type === 'message_delta' && evt.usage) {
+              outputTokens = evt.usage.output_tokens || outputTokens;
+            }
+          } catch {
+            // ignore parse errors on partial frames
+          }
+        }
+      }
+      logUsage({ supabase, userId, action: 'chat_stream', inputTokens, outputTokens, model: modelName }).catch(() => {});
+    } catch (err) {
+      console.error('stream usage logger error:', err);
+    }
+  })();
+
+  return new Response(clientStream, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': '*',
+    },
+  });
+}
+
 async function handleSendChat(body: ActionRequest, userId: string, supabase: SupabaseClient) {
   const messages = body.messages as { role: string; content: string }[];
   const noteContext = (body.noteContext as string) || '';
@@ -514,7 +592,7 @@ serve(async (req: Request) => {
     }
 
     // AI workspace actions require Pro
-    if (action === 'send_with_tools' || action === 'send_chat') {
+    if (action === 'send_with_tools' || action === 'send_with_tools_stream' || action === 'send_chat') {
       if (userId !== 'anonymous') {
         const gated = await requireFeature(supabase, userId, 'aiWorkspace');
         if (gated) return gated;
@@ -524,6 +602,8 @@ serve(async (req: Request) => {
     switch (action) {
       case 'send_with_tools':
         return await handleSendWithTools(body, userId, supabase);
+      case 'send_with_tools_stream':
+        return await handleSendWithToolsStream(body, userId, supabase);
       case 'send_chat':
         return await handleSendChat(body, userId, supabase);
       case 'generate_title':

@@ -136,6 +136,58 @@ export async function sendRaw(
 }
 
 /**
+ * Open a streaming request to Anthropic and return the raw Response.
+ * Caller is responsible for forwarding response.body (SSE) to its client.
+ */
+export async function streamRaw(
+  messages: ClaudeMessage[],
+  options: {
+    maxTokens?: number;
+    temperature?: number;
+    system?: string;
+    model?: string;
+    tools?: unknown[];
+  } = {}
+): Promise<Response> {
+  if (!ANTHROPIC_API_KEY) {
+    throw new Error('ANTHROPIC_API_KEY not configured');
+  }
+
+  const { maxTokens = 1024, temperature = 0.7, system, model, tools } = options;
+
+  const payload: Record<string, unknown> = {
+    model: model || CLAUDE_MODEL,
+    max_tokens: maxTokens,
+    temperature,
+    system,
+    messages,
+    stream: true,
+  };
+
+  if (tools && tools.length > 0) {
+    payload.tools = tools;
+  }
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Anthropic stream error ${response.status}: ${text.slice(0, 300)}`);
+  }
+
+  return response;
+}
+
+/**
  * Generate a note title and summary from content
  */
 export async function generateNoteSummary(

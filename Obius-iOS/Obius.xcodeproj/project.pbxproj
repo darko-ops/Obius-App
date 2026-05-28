@@ -137,6 +137,7 @@
 		B8A1D0090000000000000032 /* ExtractedEntity.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0090000000000000032 /* ExtractedEntity.swift */; };
 		B8A1D0090000000000000033 /* EntitySuggestionBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0090000000000000033 /* EntitySuggestionBanner.swift */; };
 		B8A1D0090000000000000034 /* EchoContextCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0090000000000000034 /* EchoContextCard.swift */; };
+		B8A1D0090000000000000040 /* StreamingPreviewCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0090000000000000040 /* StreamingPreviewCard.swift */; };
 		B8A1D00A0000000000000001 /* PlatformTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F00A0000000000000001 /* PlatformTypes.swift */; };
 		B8A1D00A0000000000000002 /* PlatformImage+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F00A0000000000000002 /* PlatformImage+Extensions.swift */; };
 		B8A1D00A0000000000000003 /* ClipboardHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F00A0000000000000003 /* ClipboardHelper.swift */; };
@@ -286,6 +287,7 @@
 		B8A1F0090000000000000032 /* ExtractedEntity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtractedEntity.swift; sourceTree = "<group>"; };
 		B8A1F0090000000000000033 /* EntitySuggestionBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EntitySuggestionBanner.swift; sourceTree = "<group>"; };
 		B8A1F0090000000000000034 /* EchoContextCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoContextCard.swift; sourceTree = "<group>"; };
+		B8A1F0090000000000000040 /* StreamingPreviewCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingPreviewCard.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -570,6 +572,7 @@
 				B8A1F0010000000000000304 /* EchoCalendarView.swift */,
 				B8A1F0090000000000000004 /* InsightCardView.swift */,
 				B8A1F0090000000000000031 /* ActionCardView.swift */,
+				B8A1F0090000000000000040 /* StreamingPreviewCard.swift */,
 			);
 			path = Intelligence;
 			sourceTree = "<group>";
@@ -875,6 +878,7 @@
 				B8A1D0090000000000000032 /* ExtractedEntity.swift in Sources */,
 				B8A1D0090000000000000033 /* EntitySuggestionBanner.swift in Sources */,
 				B8A1D0090000000000000034 /* EchoContextCard.swift in Sources */,
+				B8A1D0090000000000000040 /* StreamingPreviewCard.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

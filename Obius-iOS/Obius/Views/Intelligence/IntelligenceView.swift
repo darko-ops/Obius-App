@@ -1488,6 +1488,12 @@ struct WorkspaceSheet: View {
     @State private var isLoading = false
     @FocusState private var isInputFocused: Bool
 
+    // Streaming state (live preview while AI builds the template page)
+    @State private var streamingText: String = ""
+    @State private var streamingToolName: String? = nil
+    @State private var streamingToolPartialJSON: String = ""
+    @State private var streamingCompletedActions: [SuggestedAction] = []
+
     // Editable page content state
     @State private var editableTitle = ""
     @State private var editableBody = ""
@@ -1584,6 +1590,19 @@ struct WorkspaceSheet: View {
         return !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var hasStreamingContent: Bool {
+        !streamingText.isEmpty
+            || streamingToolName != nil
+            || !streamingCompletedActions.isEmpty
+    }
+
+    private func resetStreamingState() {
+        streamingText = ""
+        streamingToolName = nil
+        streamingToolPartialJSON = ""
+        streamingCompletedActions = []
+    }
+
     private var workspaceContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -1639,6 +1658,17 @@ struct WorkspaceSheet: View {
 
                 if interactionMode != nil && isLoading {
                     loadingIndicator
+
+                    if hasStreamingContent {
+                        StreamingPreviewCard(
+                            partialText: streamingText,
+                            currentToolName: streamingToolName,
+                            currentToolPartialJSON: streamingToolPartialJSON,
+                            completedActions: streamingCompletedActions,
+                            previewSections: cachedPageSections,
+                            mediaRepository: appState.mediaRepository
+                        )
+                    }
                 }
             }
             .padding()
@@ -2865,6 +2895,7 @@ struct WorkspaceSheet: View {
         messages.append(ChatMessage(role: .user, content: text))
         inputText = ""
         isLoading = true
+        resetStreamingState()
 
         let currentMode = interactionMode ?? .edit
 
@@ -2948,17 +2979,40 @@ struct WorkspaceSheet: View {
 
                 switch currentMode {
                 case .edit:
-                    let response = try await ClaudeService.sendWithTools(
+                    var finalText: String = ""
+                    var streamedActions: [SuggestedAction] = []
+
+                    let stream = ClaudeService.sendWithToolsStream(
                         messages: apiMessages,
                         noteContext: context
                     )
+                    for try await event in stream {
+                        switch event {
+                        case .partialText(let t):
+                            await MainActor.run { streamingText = t }
+                        case .partialTool(let name, let partial):
+                            await MainActor.run {
+                                streamingToolName = name
+                                streamingToolPartialJSON = partial
+                            }
+                        case .toolComplete(let action):
+                            streamedActions.append(action)
+                            await MainActor.run {
+                                streamingCompletedActions.append(action)
+                                streamingToolName = nil
+                                streamingToolPartialJSON = ""
+                            }
+                        case .done(let text, let actions):
+                            finalText = text
+                            if streamedActions.isEmpty { streamedActions = actions }
+                        }
+                    }
 
-                    // Coalesce multiple micro-actions into a single rewrite_page
-                    let finalActions = coalesceMicroActions(response.actions)
+                    let finalActions = coalesceMicroActions(streamedActions)
 
                     let content: String
-                    if !response.text.isEmpty {
-                        content = response.text
+                    if !finalText.isEmpty {
+                        content = finalText
                     } else if !finalActions.isEmpty {
                         content = "Here's what I suggest:"
                     } else {
@@ -2969,6 +3023,7 @@ struct WorkspaceSheet: View {
                         content: content,
                         actions: finalActions
                     ))
+                    resetStreamingState()
 
                 case .chat:
                     let responseText = try await ClaudeService.sendChat(
@@ -2993,6 +3048,7 @@ struct WorkspaceSheet: View {
                     errorMessage = "Something went wrong: \(error.localizedDescription)"
                 }
                 messages.append(ChatMessage(role: .assistant, content: errorMessage))
+                resetStreamingState()
             }
             isLoading = false
         }

@@ -160,6 +160,268 @@ enum ClaudeService {
         return ToolResponse(text: combinedText, actions: actions)
     }
 
+    // MARK: - Streaming (Send With Tools)
+
+    /// Incremental event emitted while `sendWithToolsStream` is running.
+    enum StreamEvent {
+        /// Accumulated free-text Claude has emitted so far (across all text blocks).
+        case partialText(String)
+        /// A tool_use block opened with the given tool name. `partialJSON` is the
+        /// accumulated input JSON so far for that block (may be empty initially).
+        case partialTool(name: String, partialJSON: String)
+        /// A tool_use block finished and parsed successfully into an action.
+        case toolComplete(SuggestedAction)
+        /// Stream finished. `text` is final accumulated text, `actions` is the
+        /// ordered list of fully-parsed actions (same as toolComplete emissions).
+        case done(text: String, actions: [SuggestedAction])
+    }
+
+    /// Stream a tool-augmented response. Yields incremental events as Anthropic's
+    /// SSE deltas arrive so the UI can show the page being built in real time.
+    static func sendWithToolsStream(
+        messages: [Message],
+        noteContext: String
+    ) -> AsyncThrowingStream<StreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try await checkAIGate()
+
+                    let url = URL(string: "\(AppConfiguration.supabaseURL)/functions/v1/ai-proxy")!
+                    var urlRequest = URLRequest(url: url)
+                    urlRequest.httpMethod = "POST"
+                    urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                    urlRequest.setValue(AppConfiguration.supabaseAnonKey, forHTTPHeaderField: "apikey")
+                    urlRequest.setValue("Bearer \(AppConfiguration.supabaseAnonKey)", forHTTPHeaderField: "Authorization")
+                    urlRequest.timeoutInterval = 120
+
+                    let body = AIProxyRequest(
+                        action: "send_with_tools_stream",
+                        messages: messages,
+                        noteContext: noteContext
+                    )
+                    urlRequest.httpBody = try JSONEncoder().encode(body)
+
+                    let (bytes, response) = try await URLSession.shared.bytes(for: urlRequest)
+                    guard let http = response as? HTTPURLResponse else {
+                        throw ClaudeError.invalidResponse
+                    }
+                    guard http.statusCode == 200 else {
+                        var collected = Data()
+                        for try await byte in bytes {
+                            collected.append(byte)
+                            if collected.count > 4096 { break }
+                        }
+                        let detail = String(data: collected, encoding: .utf8) ?? ""
+                        // The deployed ai-proxy may predate the streaming action.
+                        // Fall back to the non-streaming endpoint and synthesize
+                        // a single batch of events so callers don't have to know.
+                        if http.statusCode == 400 && detail.contains("UNKNOWN_ACTION") {
+                            let fallback = try await sendWithTools(
+                                messages: messages,
+                                noteContext: noteContext
+                            )
+                            if !fallback.text.isEmpty {
+                                continuation.yield(.partialText(fallback.text))
+                            }
+                            for action in fallback.actions {
+                                continuation.yield(.toolComplete(action))
+                            }
+                            continuation.yield(.done(text: fallback.text, actions: fallback.actions))
+                            continuation.finish()
+                            return
+                        }
+                        throw ClaudeError.proxyError("HTTP \(http.statusCode): \(detail)")
+                    }
+
+                    var textParts: [String] = []
+                    var combinedText: String = ""
+                    var completedActions: [SuggestedAction] = []
+
+                    struct OpenBlock {
+                        var type: String       // "text" | "tool_use"
+                        var toolId: String?
+                        var toolName: String?
+                        var partialJSON: String = ""
+                    }
+                    var openBlocks: [Int: OpenBlock] = [:]
+                    var totalInputTokens = 0
+                    var totalOutputTokens = 0
+
+                    for try await line in bytes.lines {
+                        // Anthropic SSE frames look like:
+                        //   event: content_block_delta
+                        //   data: {"type":"content_block_delta","index":0,...}
+                        //
+                        // URLSession's `.lines` strips trailing newlines but
+                        // delivers each line individually, so we only need to
+                        // parse the data: lines.
+                        guard line.hasPrefix("data:") else { continue }
+                        let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                        guard !payload.isEmpty, payload != "[DONE]" else { continue }
+                        guard let data = payload.data(using: .utf8),
+                              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                              let type = obj["type"] as? String else {
+                            continue
+                        }
+
+                        switch type {
+                        case "message_start":
+                            if let msg = obj["message"] as? [String: Any],
+                               let usage = msg["usage"] as? [String: Any] {
+                                totalInputTokens = usage["input_tokens"] as? Int ?? 0
+                                totalOutputTokens = usage["output_tokens"] as? Int ?? 0
+                            }
+                        case "content_block_start":
+                            guard let index = obj["index"] as? Int,
+                                  let block = obj["content_block"] as? [String: Any],
+                                  let blockType = block["type"] as? String else { continue }
+                            var open = OpenBlock(type: blockType)
+                            if blockType == "tool_use" {
+                                open.toolId = block["id"] as? String
+                                open.toolName = block["name"] as? String
+                                if let name = open.toolName {
+                                    continuation.yield(.partialTool(name: name, partialJSON: ""))
+                                }
+                            } else if blockType == "text",
+                                      let seed = block["text"] as? String,
+                                      !seed.isEmpty {
+                                combinedText += seed
+                                continuation.yield(.partialText(combinedText))
+                            }
+                            openBlocks[index] = open
+                        case "content_block_delta":
+                            guard let index = obj["index"] as? Int,
+                                  var open = openBlocks[index],
+                                  let delta = obj["delta"] as? [String: Any],
+                                  let deltaType = delta["type"] as? String else { continue }
+                            if deltaType == "text_delta", let text = delta["text"] as? String {
+                                combinedText += text
+                                continuation.yield(.partialText(combinedText))
+                            } else if deltaType == "input_json_delta",
+                                      let partial = delta["partial_json"] as? String {
+                                open.partialJSON += partial
+                                openBlocks[index] = open
+                                if let name = open.toolName {
+                                    continuation.yield(.partialTool(name: name, partialJSON: open.partialJSON))
+                                }
+                            }
+                        case "content_block_stop":
+                            guard let index = obj["index"] as? Int,
+                                  let open = openBlocks.removeValue(forKey: index) else { continue }
+                            if open.type == "text" {
+                                // Push the (now-final) text fragment into the parts list. We've
+                                // already streamed it via .partialText, so nothing more to emit.
+                                let fragment = String(combinedText.suffix(combinedText.count - textParts.joined().count))
+                                textParts.append(fragment)
+                            } else if open.type == "tool_use",
+                                      let id = open.toolId,
+                                      let name = open.toolName {
+                                let inputDict: [String: Any]
+                                if open.partialJSON.isEmpty {
+                                    inputDict = [:]
+                                } else if let data = open.partialJSON.data(using: .utf8),
+                                          let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                                    inputDict = parsed
+                                } else {
+                                    print("[ClaudeService] tool_use \(name) had unparseable JSON: \(open.partialJSON.prefix(200))")
+                                    continue
+                                }
+                                let toolUseBlock: [String: Any] = [
+                                    "id": id,
+                                    "name": name,
+                                    "input": inputDict
+                                ]
+                                if let action = SuggestedAction.from(toolUseBlock: toolUseBlock) {
+                                    completedActions.append(action)
+                                    continuation.yield(.toolComplete(action))
+                                } else {
+                                    print("[ClaudeService] failed to parse completed tool: \(name)")
+                                }
+                            }
+                        case "message_delta":
+                            if let usage = obj["usage"] as? [String: Any],
+                               let out = usage["output_tokens"] as? Int {
+                                totalOutputTokens = out
+                            }
+                        case "message_stop":
+                            break
+                        default:
+                            break
+                        }
+                    }
+
+                    let finalText = combinedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    continuation.yield(.done(text: finalText, actions: completedActions))
+
+                    let tokens = max(totalInputTokens + totalOutputTokens, 500)
+                    await MainActor.run { TierManager.shared.recordTokenUsage(tokens) }
+                    Task { await MainActor.run { Task { await TierManager.shared.syncCreditUsage() } } }
+
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// Extract progressive text from a tool_use's partial JSON without requiring
+    /// the JSON to be complete. Returns the current value of `new_body` /
+    /// `new_content` / similar text-bearing fields — even if the closing quote
+    /// hasn't streamed yet. Returns nil if no recognizable field has begun.
+    static func extractStreamingText(partialJSON: String, toolName: String) -> String? {
+        let keys: [String]
+        switch toolName {
+        case "rewrite_page":             keys = ["new_body", "new_content"]
+        case "update_page_body":         keys = ["new_body"]
+        case "update_section_content":   keys = ["new_content"]
+        case "update_loop_content":      keys = ["new_content"]
+        case "update_interstitial_content": keys = ["new_content"]
+        case "create_section", "add_section", "create_node": keys = ["content"]
+        default: return nil
+        }
+
+        for key in keys {
+            // Find `"key":"` and grab everything after until the next unescaped quote
+            // (or EOF if the value is still streaming).
+            let needle = "\"\(key)\":"
+            guard let range = partialJSON.range(of: needle) else { continue }
+            var i = range.upperBound
+            // Skip whitespace
+            while i < partialJSON.endIndex, partialJSON[i].isWhitespace { i = partialJSON.index(after: i) }
+            guard i < partialJSON.endIndex, partialJSON[i] == "\"" else { continue }
+            i = partialJSON.index(after: i)
+            var out = ""
+            while i < partialJSON.endIndex {
+                let c = partialJSON[i]
+                if c == "\\" {
+                    let next = partialJSON.index(after: i)
+                    guard next < partialJSON.endIndex else { break }
+                    let esc = partialJSON[next]
+                    switch esc {
+                    case "n": out.append("\n")
+                    case "t": out.append("\t")
+                    case "r": out.append("\r")
+                    case "\"": out.append("\"")
+                    case "\\": out.append("\\")
+                    case "/": out.append("/")
+                    default: out.append(esc)
+                    }
+                    i = partialJSON.index(after: next)
+                    continue
+                }
+                if c == "\"" { break }
+                out.append(c)
+                i = partialJSON.index(after: i)
+            }
+            return out
+        }
+        return nil
+    }
+
     // MARK: - Send Chat (no tools)
 
     /// Send a conversation without tools — returns a plain text response.
