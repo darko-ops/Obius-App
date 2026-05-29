@@ -233,7 +233,6 @@ struct MacSidebarProjectList: View {
             .preferredColorScheme(.dark)
             .environmentObject(appState)
             .environmentObject(AuthManager.shared)
-            .environmentObject(AppearanceManager.shared)
         }
     }
 

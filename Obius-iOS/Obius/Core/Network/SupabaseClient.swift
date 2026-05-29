@@ -74,14 +74,18 @@ final class SupabaseManager {
         currentSession != nil
     }
 
-    func signUp(email: String, password: String, data: [String: AnyJSON]? = nil) async throws -> User {
+    /// Sign up a new user. `session` is non-nil when the project has email
+    /// confirmation disabled; when confirmation is required, the user must
+    /// tap the link in the confirmation email before a session is issued
+    /// (handled via the `obius://auth/callback` deep link).
+    func signUp(email: String, password: String, data: [String: AnyJSON]? = nil) async throws -> (user: User, session: Session?) {
         let response = try await client.auth.signUp(
             email: email,
             password: password,
             data: data,
             redirectTo: Self.authCallbackURL
         )
-        return response.user
+        return (response.user, response.session)
     }
 
     /// Exchange an incoming auth callback URL for a session (handles both PKCE `?code=`

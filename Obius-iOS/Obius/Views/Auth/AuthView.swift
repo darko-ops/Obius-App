@@ -135,16 +135,19 @@ struct SignUpView: View {
     @StateObject private var authManager = AuthManager.shared
     @State private var email = ""
     @State private var password = ""
-    @State private var confirmPassword = ""
     @State private var displayName = ""
 
     let showSignIn: () -> Void
 
-    var passwordsMatch: Bool {
-        password == confirmPassword && !password.isEmpty
+    var body: some View {
+        if let pendingEmail = authManager.pendingEmailConfirmation {
+            ConfirmEmailView(email: pendingEmail, showSignIn: showSignIn)
+        } else {
+            signUpForm
+        }
     }
 
-    var body: some View {
+    private var signUpForm: some View {
         VStack(spacing: 24) {
             Spacer()
 
@@ -186,16 +189,6 @@ struct SignUpView: View {
                     .textFieldStyle(.roundedBorder)
                     .textContentType(.newPassword)
 
-                SecureField("Confirm Password", text: $confirmPassword)
-                    .textFieldStyle(.roundedBorder)
-                    .textContentType(.newPassword)
-
-                if !confirmPassword.isEmpty && !passwordsMatch {
-                    Text("Passwords don't match")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-
                 if let error = authManager.authError {
                     Text(error)
                         .font(.caption)
@@ -234,7 +227,7 @@ struct SignUpView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.white)
-                .disabled(email.isEmpty || !passwordsMatch || authManager.isLoading)
+                .disabled(email.isEmpty || password.isEmpty || authManager.isLoading)
             }
             .padding()
 
@@ -264,6 +257,54 @@ struct SignUpView: View {
             }
         }
         #endif
+    }
+}
+
+// MARK: - Confirm Email View
+
+/// Shown after sign-up when the Supabase project requires email confirmation.
+/// The user must tap the link in the email, which deep-links back to
+/// `obius://auth/callback` and triggers `.signedIn` — clearing
+/// `pendingEmailConfirmation` automatically.
+struct ConfirmEmailView: View {
+    @StateObject private var authManager = AuthManager.shared
+    let email: String
+    let showSignIn: () -> Void
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Spacer()
+
+            Image(systemName: "envelope.badge.fill")
+                .font(.system(size: 60))
+                .foregroundStyle(.green)
+
+            Text("Check your email")
+                .font(.custom("LexendExa-SemiBold", size: 28, relativeTo: .title))
+
+            VStack(spacing: 8) {
+                Text("We sent a confirmation link to")
+                    .foregroundStyle(.secondary)
+                Text(email)
+                    .font(.body.weight(.semibold))
+                Text("Tap the link to finish creating your account.")
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
+            }
+            .multilineTextAlignment(.center)
+            .padding(.horizontal)
+
+            Spacer()
+
+            Button("Back to sign in") {
+                authManager.clearPendingEmailConfirmation()
+                showSignIn()
+            }
+            .font(.footnote)
+            .padding(.bottom)
+        }
+        .padding()
     }
 }
 

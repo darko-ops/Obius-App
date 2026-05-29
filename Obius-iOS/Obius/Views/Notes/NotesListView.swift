@@ -32,6 +32,7 @@ private struct NotesListContent: View {
     #endif
     @State private var showingModulePicker = false
     @State private var searchQuery = ""
+    @State private var selectedFilter: LoopFilter = .all
     @State private var selectedNote: Note?
     @State private var sectionPreviews: [String: String] = [:]
     @State private var sectionSearchContent: [String: String] = [:]
@@ -81,11 +82,15 @@ private struct NotesListContent: View {
     }
 
     private var filteredNotes: [Note] {
+        var result = notes
+        if let intent = selectedFilter.intent {
+            result = result.filter { $0.intent == intent }
+        }
         if searchQuery.isEmpty {
-            return notes
+            return result
         }
         let query = searchQuery
-        return notes.filter { note in
+        return result.filter { note in
             let title = autoTitles[note.id] ?? note.displayTitle
             if title.localizedCaseInsensitiveContains(query) { return true }
 
@@ -129,6 +134,10 @@ private struct NotesListContent: View {
             RoundedSearchBar(text: $searchQuery, placeholder: "Search")
                 .padding(.horizontal)
                 .padding(.vertical, 8)
+                .background(Color.systemBackground)
+
+            intentFilterBar
+                .padding(.bottom, 6)
                 .background(Color.systemBackground)
 
             notesList
@@ -455,6 +464,44 @@ private struct NotesListContent: View {
 
     private var activeTrackedBlocks: [String] {
         trackedBlockNames.filter { groupNames.contains($0) }
+    }
+
+    /// Intent-color filter bar — mirrors `LoopsListView.loopFilterBar` in
+    /// LibraryView so the two screens read identically.
+    private var intentFilterBar: some View {
+        HStack(spacing: 4) {
+            ForEach(LoopFilter.allCases, id: \.self) { filter in
+                let isSelected = selectedFilter == filter
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selectedFilter = filter
+                    }
+                } label: {
+                    Group {
+                        if filter == .all {
+                            Text("All")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(isSelected ? Color.primary : .secondary)
+                                .padding(.horizontal, isSelected ? 10 : 8)
+                                .padding(.vertical, 5)
+                        } else {
+                            Capsule()
+                                .fill(filter.tint)
+                                .frame(width: 22, height: 8)
+                                .opacity(isSelected ? 1 : 0.55)
+                                .padding(.horizontal, isSelected ? 8 : 6)
+                                .padding(.vertical, 6)
+                        }
+                    }
+                    .contentShape(Capsule())
+                    .background(
+                        Capsule()
+                            .fill(isSelected ? filter.tint.opacity(0.12) : Color.clear)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     private var notesList: some View {

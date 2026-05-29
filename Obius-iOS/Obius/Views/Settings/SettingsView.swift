@@ -5,7 +5,6 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var authManager: AuthManager
-    @EnvironmentObject var appearanceManager: AppearanceManager
     @State private var showingSignOut = false
     @State private var showingAuth = false
     @State private var showingEditProfile = false
@@ -97,18 +96,6 @@ struct SettingsView: View {
             SwiftUI.Section("Privacy") {
                 NavigationLink(value: SettingsDestination.dataManagement) {
                     Label("Data Management", systemImage: "externaldrive")
-                }
-            }
-
-            // Appearance Section
-            SwiftUI.Section("Appearance") {
-                Picker(selection: $appearanceManager.currentMode) {
-                    ForEach(AppearanceManager.AppearanceMode.allCases, id: \.self) { mode in
-                        Label(mode.rawValue, systemImage: mode.icon)
-                            .tag(mode)
-                    }
-                } label: {
-                    Label("Theme", systemImage: "paintbrush")
                 }
             }
 
@@ -253,6 +240,13 @@ struct SettingsView: View {
 
         // Server-side delete succeeded — wipe local state. Failures here are not
         // fatal (the cloud account is gone); we still sign out and dismiss.
+        // Clear onboarding seeder flags so the next sign-up (potentially with
+        // the same Apple ID on the same device) gets a clean state and doesn't
+        // accidentally re-trigger seeding for a stale userId.
+        if let userId = authManager.currentUser?.id.uuidString.lowercased() {
+            OnboardingSeeder.clearPending(userId: userId)
+        }
+        OnboardingSeeder.clearSignupInProgress()
         try? await appState.deleteAllLocalData()
         await authManager.signOut()
         dismiss()
@@ -1030,5 +1024,4 @@ struct EditProfileView: View {
     }
     .environmentObject(AppState())
     .environmentObject(AuthManager.shared)
-    .environmentObject(AppearanceManager.shared)
 }

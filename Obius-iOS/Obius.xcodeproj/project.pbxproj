@@ -115,7 +115,6 @@
 		B8A1D0020000000000000013 /* SharedContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0020000000000000013 /* SharedContentView.swift */; };
 		B8A1D0020000000000000014 /* CommentThreadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0020000000000000014 /* CommentThreadView.swift */; };
 		B8A1D0020000000000000015 /* CommentRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0020000000000000015 /* CommentRow.swift */; };
-		B8A1D0040000000000000001 /* AppearanceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0040000000000000001 /* AppearanceManager.swift */; };
 		B8A1D0050000000000000001 /* MessageSharePayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0050000000000000003 /* MessageSharePayload.swift */; };
 		B8A1D0050000000000000002 /* SharedRemoteTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0050000000000000004 /* SharedRemoteTypes.swift */; };
 		B8A1D0060000000000000001 /* DatabaseMigrationHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A1F0060000000000000001 /* DatabaseMigrationHelper.swift */; };
@@ -267,7 +266,6 @@
 		B8A1F0020000000000000013 /* SharedContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedContentView.swift; sourceTree = "<group>"; };
 		B8A1F0020000000000000014 /* CommentThreadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommentThreadView.swift; sourceTree = "<group>"; };
 		B8A1F0020000000000000015 /* CommentRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommentRow.swift; sourceTree = "<group>"; };
-		B8A1F0040000000000000001 /* AppearanceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceManager.swift; sourceTree = "<group>"; };
 		B8A1F0050000000000000001 /* Obius.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Obius.entitlements; sourceTree = "<group>"; };
 		B8A1F0050000000000000003 /* MessageSharePayload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageSharePayload.swift; sourceTree = "<group>"; };
 		B8A1F0050000000000000004 /* SharedRemoteTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedRemoteTypes.swift; sourceTree = "<group>"; };
@@ -356,7 +354,6 @@
 		B8A1G0010000000000000004 /* Core */ = {
 			isa = PBXGroup;
 			children = (
-				B8A1F0040000000000000001 /* AppearanceManager.swift */,
 				B8A1F0010000000000000095 /* AutoCommitManager.swift */,
 				B8A1G0010000000000000005 /* Auth */,
 				B8A1G0010000000000000006 /* Database */,
@@ -779,7 +776,6 @@
 				B8A1D00A0000000000000005 /* View+Platform.swift in Sources */,
 				B8A1D00A0000000000000008 /* WindowAccessor.swift in Sources */,
 				B8A1D00A0000000000000009 /* TextMergeUtilities.swift in Sources */,
-				B8A1D0040000000000000001 /* AppearanceManager.swift in Sources */,
 				B8A1D0010000000000000009 /* NetworkMonitor.swift in Sources */,
 				B8A1D0010000000000000010 /* SupabaseClient.swift in Sources */,
 				B8A1D0100000000000000001 /* ClaudeService.swift in Sources */,
@@ -1019,7 +1015,7 @@
 				CODE_SIGN_ENTITLEMENTS = Obius/Obius.entitlements;
 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "Obius/Obius-macOS.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 31;
 				DEVELOPMENT_TEAM = W276447S6T;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1035,7 +1031,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.obius.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -1054,7 +1050,7 @@
 				CODE_SIGN_ENTITLEMENTS = Obius/Obius.entitlements;
 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "Obius/Obius-macOS.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 31;
 				DEVELOPMENT_TEAM = W276447S6T;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1070,7 +1066,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.obius.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;

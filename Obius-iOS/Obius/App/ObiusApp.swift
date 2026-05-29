@@ -11,7 +11,6 @@ struct ObiusApp: App {
     @StateObject private var appState = AppState()
     @StateObject private var authManager = AuthManager.shared
     @StateObject private var deepLinkRouter = DeepLinkRouter.shared
-    @StateObject private var appearanceManager = AppearanceManager.shared
     @StateObject private var tierManager = TierManager.shared
     private let notificationDelegate = NotificationDelegate()
 
@@ -38,9 +37,8 @@ struct ObiusApp: App {
                 .environmentObject(appState)
                 .environmentObject(authManager)
                 .environmentObject(deepLinkRouter)
-                .environmentObject(appearanceManager)
                 .environmentObject(tierManager)
-                .preferredColorScheme(appearanceManager.currentMode.colorScheme)
+                .preferredColorScheme(.dark)
                 .task {
                     await StoreManager.shared.initialize()
                     await appState.initialize()
@@ -93,7 +91,6 @@ struct ObiusApp: App {
                 .environmentObject(appState)
                 .environmentObject(authManager)
                 .environmentObject(tierManager)
-                .environmentObject(appearanceManager)
         }
         #endif
     }
@@ -563,6 +560,15 @@ class AppState: ObservableObject {
             print("[AppState] OnboardingSeeder skip: no pending flag for userId=\(userId.prefix(8))")
             return
         }
+        // Clear the flag BEFORE awaiting seed(). The seeder yields between
+        // every DB write, and initialize() can be re-entered concurrently —
+        // e.g. AuthManager.signUp sets currentUser while the Supabase SDK
+        // separately fires .signedIn, both routing through AppState's auth
+        // observer. If we cleared after seed(), the second pass would still
+        // see the flag set and produce a duplicate set of demo pages. The
+        // note-level seeders (Welcome / Quotes / Tim Ferriss) are NOT
+        // idempotent by title, so the race must be closed here.
+        OnboardingSeeder.clearPending(userId: userId)
         print("[AppState] OnboardingSeeder: running for userId=\(userId.prefix(8))")
         let seeder = OnboardingSeeder(
             moduleRepository: moduleRepository,
@@ -573,13 +579,15 @@ class AppState: ObservableObject {
         )
         let success = await seeder.seed()
         if success {
-            OnboardingSeeder.clearPending(userId: userId)
-            print("[AppState] OnboardingSeeder: cleared pending flag (succeeded)")
+            print("[AppState] OnboardingSeeder: succeeded")
         } else {
-            // Leave the pending flag set so the seeder retries on the next
-            // initialize() (next app launch). Idempotent steps (getOrCreate
-            // Personal, etc.) prevent duplicates on retry.
-            print("[AppState] OnboardingSeeder: leaving pending flag set for retry")
+            // Re-mark so the seeder retries on the next initialize() (next
+            // app launch). Idempotent steps (getOrCreatePersonalProject)
+            // prevent duplicate projects on retry; duplicate notes are
+            // possible but a partial-failure retry is the better trade-off
+            // than no retry at all.
+            OnboardingSeeder.markPending(userId: userId)
+            print("[AppState] OnboardingSeeder: re-marked pending for retry")
         }
     }
 

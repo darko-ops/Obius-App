@@ -193,7 +193,6 @@ struct IntelligenceView: View {
             .preferredColorScheme(.dark)
             .environmentObject(appState)
             .environmentObject(AuthManager.shared)
-            .environmentObject(AppearanceManager.shared)
         }
         .sheet(isPresented: $showingLoops) {
             LoopsSheetView(handles: handleManager.handles)

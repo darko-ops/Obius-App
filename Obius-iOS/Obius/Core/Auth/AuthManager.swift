@@ -15,6 +15,12 @@ final class AuthManager: ObservableObject {
     @Published private(set) var isLoading: Bool = true
     @Published var authError: String?
 
+    /// Set to the user's email after sign-up when the Supabase project requires
+    /// email confirmation and no session was issued. The sign-up screen reads
+    /// this to show a "Check your email" state. Cleared on `.signedIn` (i.e.
+    /// after the user taps the confirmation link) or when the UI resets.
+    @Published private(set) var pendingEmailConfirmation: String?
+
     private init() {
         // Check initial auth state
         Task {
@@ -71,6 +77,7 @@ final class AuthManager: ObservableObject {
                 case .signedIn:
                     currentUser = session?.user
                     isAuthenticated = true
+                    pendingEmailConfirmation = nil
                     if let userId = session?.user.id.uuidString.lowercased() {
                         await StoreManager.shared.identify(userId: userId)
                     }
@@ -93,6 +100,7 @@ final class AuthManager: ObservableObject {
 
     func signUp(email: String, password: String, displayName: String? = nil) async {
         authError = nil
+        pendingEmailConfirmation = nil
         isLoading = true
         defer { isLoading = false }
 
@@ -109,23 +117,45 @@ final class AuthManager: ObservableObject {
                 metadata = ["display_name": .string(displayName)]
             }
 
-            let user = try await supabase.signUp(email: email, password: password, data: metadata)
-            // Belt-and-suspenders: also mark per-user pending here, but ONLY
-            // if the observer hasn't yet consumed the global flag. If it has,
-            // it already ran the seed and re-marking would cause a duplicate
-            // on the next initialize().
-            if OnboardingSeeder.isSignupInProgress() {
-                OnboardingSeeder.markPending(userId: user.id.uuidString.lowercased())
-            }
-            currentUser = user
-            isAuthenticated = true
+            let result = try await supabase.signUp(email: email, password: password, data: metadata)
 
-            // Sync RevenueCat identity
-            await StoreManager.shared.identify(userId: user.id.uuidString.lowercased())
+            if result.session != nil {
+                // No email confirmation required — user is fully signed in.
+                // Belt-and-suspenders: also mark per-user pending here, but ONLY
+                // if the observer hasn't yet consumed the global flag. If it has,
+                // it already ran the seed and re-marking would cause a duplicate
+                // on the next initialize().
+                if OnboardingSeeder.isSignupInProgress() {
+                    OnboardingSeeder.markPending(userId: result.user.id.uuidString.lowercased())
+                }
+                currentUser = result.user
+                isAuthenticated = true
+
+                // Sync RevenueCat identity
+                await StoreManager.shared.identify(userId: result.user.id.uuidString.lowercased())
+            } else {
+                // Email confirmation required — no session yet. The user must
+                // tap the link in the confirmation email; that hits
+                // obius://auth/callback and the auth-state observer flips
+                // isAuthenticated. The global signup flag won't survive until
+                // .signedIn fires later, so mark the per-user pending flag
+                // directly using the user id we got back from signUp — that
+                // way AppState.runPendingOnboardingSeedIfNeeded picks it up
+                // when the confirmed session arrives.
+                OnboardingSeeder.markPending(userId: result.user.id.uuidString.lowercased())
+                OnboardingSeeder.clearSignupInProgress()
+                pendingEmailConfirmation = email
+            }
         } catch {
             OnboardingSeeder.clearSignupInProgress()
             authError = error.localizedDescription
         }
+    }
+
+    /// Reset the "Check your email" state — called when the user backs out of
+    /// the confirmation screen to try a different email.
+    func clearPendingEmailConfirmation() {
+        pendingEmailConfirmation = nil
     }
 
     // MARK: - Sign In
