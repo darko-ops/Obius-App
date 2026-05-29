@@ -219,7 +219,7 @@ final class ContextAssembler {
                 entry += "\nBody: \(version.bodyPreview)"
             }
             if !version.sectionPreviews.isEmpty {
-                entry += "\nSections:\n" + version.sectionPreviews.joined(separator: "\n")
+                entry += "\nNodes:\n" + version.sectionPreviews.joined(separator: "\n")
             }
             parts.append(entry)
         }

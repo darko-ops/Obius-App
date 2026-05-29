@@ -1133,16 +1133,29 @@ struct MacAIWorkspaceView: View {
                 // Build context from selected pages + loops
                 let context: String
                 if selectedPageIds.isEmpty && selectedHandleIds.isEmpty {
-                    // Project-wide mode
+                    // Project-wide mode. Always prepend the editor page's
+                    // structured context (with section IDs) when an editor
+                    // page exists — otherwise the AI has no IDs to target
+                    // and silently falls back to editing only loops (which
+                    // it can address by @handleName from the project
+                    // overview). iOS's assembleContext always includes the
+                    // focused page structured context; without this prepend,
+                    // Mac diverges and can't update nodes via tool calls.
+                    var parts: [String] = []
+                    if let editorId = targetPageId,
+                       let note = try? await appState.noteRepository.getNote(id: editorId) {
+                        let sections = (try? await appState.sectionRepository.getSections(noteId: editorId)) ?? []
+                        parts.append(appState.contextAssembler.buildStructuredPageContext(page: note, sections: sections))
+                    }
                     if let moduleId = selectedModuleId {
-                        context = await appState.contextAssembler.assembleProjectContext(
+                        let projectCtx = await appState.contextAssembler.assembleProjectContext(
                             query: text,
                             moduleId: moduleId,
                             selectedHandles: currentSelectedHandles
                         )
-                    } else {
-                        context = ""
+                        parts.append(projectCtx)
                     }
+                    context = parts.joined(separator: "\n\n")
                 } else {
                     // Multi-page context assembly
                     context = await assembleMultiPageContext(
