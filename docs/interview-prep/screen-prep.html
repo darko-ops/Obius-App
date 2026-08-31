@@ -1,0 +1,1438 @@
+<title>Go &amp; TypeScript Screen Prep</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=JetBrains+Mono:wght@400;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<style>
+:root{
+  --ground:#F5F8F6; --surface:#FFFFFF; --surface-2:#E9EFEB; --sunk:#EEF3F0;
+  --ink:#111A17; --ink-2:#3D4C47; --muted:#6D7D77;
+  --rule:#D9E2DD; --rule-strong:#BFCCC6;
+  --accent:#0D7355; --accent-ink:#0A5B44; --accent-soft:#DCEDE6;
+  --warn:#8A5A0E; --warn-soft:#F6ECD8;
+  --danger:#9C2F27; --danger-soft:#F7E3E0;
+  --code-bg:#0F1A17; --code-ink:#D9E6E0; --code-rule:#22332D;
+  --c-key:#7FD3B0; --c-str:#D9C48A; --c-num:#9FC2E8; --c-com:#6A7F78; --c-fn:#A8D8F0; --c-type:#E0B8E8;
+  --shadow:0 1px 2px rgba(15,35,28,.05), 0 8px 24px -16px rgba(15,35,28,.28);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#0D1412; --surface:#141C19; --surface-2:#1B2521; --sunk:#101815;
+    --ink:#E6EEEA; --ink-2:#B2C0BA; --muted:#87968F;
+    --rule:#24302B; --rule-strong:#35443E;
+    --accent:#4FCDA3; --accent-ink:#7EDCBB; --accent-soft:#152D26;
+    --warn:#D9A44F; --warn-soft:#2A2317;
+    --danger:#E08076; --danger-soft:#2E1B18;
+    --code-bg:#080E0C; --code-ink:#D9E6E0; --code-rule:#1D2A25;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0D1412; --surface:#141C19; --surface-2:#1B2521; --sunk:#101815;
+  --ink:#E6EEEA; --ink-2:#B2C0BA; --muted:#87968F;
+  --rule:#24302B; --rule-strong:#35443E;
+  --accent:#4FCDA3; --accent-ink:#7EDCBB; --accent-soft:#152D26;
+  --warn:#D9A44F; --warn-soft:#2A2317;
+  --danger:#E08076; --danger-soft:#2E1B18;
+  --code-bg:#080E0C; --code-ink:#D9E6E0; --code-rule:#1D2A25;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--ground); color:var(--ink);
+  font-family:"Source Serif 4", Georgia, "Times New Roman", serif;
+  font-size:17px; line-height:1.62; margin:0;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,h4,.ui{font-family:Archivo, "Helvetica Neue", Arial, sans-serif;}
+code,kbd,pre,.mono{font-family:"JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;}
+
+/* ---------- shell ---------- */
+.wrap{max-width:1180px; margin:0 auto; padding:0 22px;}
+.layout{display:grid; grid-template-columns:minmax(0,1fr); gap:0;}
+@media (min-width:1120px){
+  .layout{grid-template-columns:212px minmax(0,1fr); gap:48px; align-items:start;}
+}
+main{max-width:70ch; min-width:0; padding-bottom:96px;}
+
+/* ---------- masthead ---------- */
+header.top{border-bottom:1px solid var(--rule); background:var(--surface);}
+.masthead{padding:52px 0 40px; display:flex; flex-direction:column; gap:18px;}
+.eyebrow{
+  font-family:Archivo, sans-serif; font-size:11.5px; font-weight:600;
+  letter-spacing:.17em; text-transform:uppercase; color:var(--accent-ink);
+  display:flex; align-items:center; gap:10px;
+}
+.eyebrow::before{content:""; width:26px; height:2px; background:var(--accent); display:block;}
+h1{
+  font-size:clamp(34px,6vw,54px); line-height:1.02; margin:0; font-weight:700;
+  letter-spacing:-.025em; text-wrap:balance;
+}
+h1 .dim{color:var(--muted); font-weight:500;}
+.standfirst{font-size:19px; color:var(--ink-2); max-width:60ch; margin:0;}
+.facts{
+  display:flex; flex-wrap:wrap; gap:8px; margin-top:6px;
+}
+.fact{
+  font-family:"JetBrains Mono", monospace; font-size:11.5px; letter-spacing:.02em;
+  border:1px solid var(--rule-strong); border-radius:2px; padding:5px 9px;
+  color:var(--ink-2); background:var(--sunk);
+}
+.fact b{color:var(--accent-ink); font-weight:700;}
+
+/* ---------- sticky section nav ---------- */
+nav.chips{
+  position:sticky; top:0; z-index:20; background:color-mix(in srgb, var(--ground) 92%, transparent);
+  backdrop-filter:blur(10px); border-bottom:1px solid var(--rule);
+}
+.chiprow{display:flex; gap:4px; overflow-x:auto; padding:9px 0; scrollbar-width:thin;}
+.chiprow a{
+  font-family:Archivo, sans-serif; font-size:12.5px; font-weight:600; white-space:nowrap;
+  color:var(--ink-2); text-decoration:none; padding:5px 10px; border-radius:3px;
+}
+.chiprow a:hover{background:var(--surface-2); color:var(--ink);}
+
+/* ---------- toc rail ---------- */
+.rail{display:none;}
+@media (min-width:1120px){
+  .rail{display:block; position:sticky; top:70px; padding-top:44px; font-family:Archivo,sans-serif;}
+  .rail ol{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:1px;}
+  .rail a{
+    display:flex; gap:9px; font-size:12.5px; line-height:1.35; color:var(--muted);
+    text-decoration:none; padding:6px 8px 6px 10px; border-left:2px solid var(--rule); border-radius:0 3px 3px 0;
+  }
+  .rail a .n{font-family:"JetBrains Mono",monospace; font-size:10.5px; opacity:.7; padding-top:1px;}
+  .rail a:hover{color:var(--ink); background:var(--surface-2);}
+  .rail a.on{color:var(--accent-ink); border-left-color:var(--accent); background:var(--accent-soft); font-weight:600;}
+}
+
+/* ---------- sections ---------- */
+section{padding-top:52px; scroll-margin-top:62px;}
+h2{
+  font-size:clamp(24px,3.4vw,32px); letter-spacing:-.02em; line-height:1.12; margin:0 0 6px;
+  font-weight:700; text-wrap:balance;
+}
+.sectag{
+  font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--muted);
+  letter-spacing:.08em; text-transform:uppercase; display:block; margin-bottom:10px;
+}
+.intro{color:var(--ink-2); margin:0 0 4px; max-width:62ch;}
+h3{font-size:19px; line-height:1.3; letter-spacing:-.01em; margin:0; font-weight:600; text-wrap:balance;}
+h4{font-size:14px; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); margin:26px 0 8px; font-weight:600;}
+p{margin:12px 0;}
+ul,ol{margin:12px 0; padding-left:22px;}
+li{margin:6px 0;}
+li::marker{color:var(--muted);}
+strong{font-weight:600; color:var(--ink);}
+a{color:var(--accent-ink);}
+hr{border:0; border-top:1px solid var(--rule); margin:40px 0 0;}
+
+/* ---------- Q&A ---------- */
+.qa{
+  border-top:1px solid var(--rule); padding:22px 0 4px;
+  display:flex; flex-direction:column; gap:2px;
+}
+.qa .qline{display:flex; gap:12px; align-items:baseline;}
+.qa .marker{
+  font-family:"JetBrains Mono",monospace; font-size:12px; font-weight:700; color:var(--accent);
+  flex:none; padding-top:2px;
+}
+.qa .body{padding-left:26px;}
+@media (max-width:520px){.qa .body{padding-left:0;}}
+.tell{
+  background:var(--sunk); border-left:2px solid var(--accent); border-radius:0 3px 3px 0;
+  padding:11px 14px; margin:14px 0; font-size:15px; color:var(--ink-2);
+}
+.tell b{
+  font-family:Archivo,sans-serif; font-size:10.5px; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--accent-ink); display:block; margin-bottom:3px;
+}
+.say{
+  border:1px solid var(--rule); border-radius:3px; background:var(--surface);
+  padding:14px 16px; margin:14px 0; box-shadow:var(--shadow);
+}
+.say b{
+  font-family:Archivo,sans-serif; font-size:10.5px; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--muted); display:block; margin-bottom:5px;
+}
+.say p:first-of-type{margin-top:0;} .say p:last-child{margin-bottom:0;}
+.warnbox{background:var(--warn-soft); border-left:2px solid var(--warn); padding:11px 14px; margin:14px 0; font-size:15px; border-radius:0 3px 3px 0;}
+.warnbox b{font-family:Archivo,sans-serif; font-size:10.5px; letter-spacing:.13em; text-transform:uppercase; color:var(--warn); display:block; margin-bottom:3px;}
+
+/* ---------- code ---------- */
+pre{
+  background:var(--code-bg); color:var(--code-ink); border:1px solid var(--code-rule);
+  border-radius:4px; padding:15px 16px; overflow-x:auto; margin:16px 0;
+  font-size:12.6px; line-height:1.62; tab-size:2;
+}
+pre code{background:none; padding:0; font-size:inherit; color:inherit;}
+:not(pre) > code{
+  background:var(--surface-2); border:1px solid var(--rule); border-radius:3px;
+  padding:1px 5px; font-size:.855em; color:var(--ink);
+}
+.codelabel{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--muted); margin:18px 0 -8px; display:block;
+}
+.hljs-keyword,.hljs-literal,.hljs-built_in{color:var(--c-key);}
+.hljs-string,.hljs-meta .hljs-string{color:var(--c-str);}
+.hljs-number{color:var(--c-num);}
+.hljs-comment,.hljs-quote{color:var(--c-com); font-style:italic;}
+.hljs-title,.hljs-title.function_,.hljs-function .hljs-title{color:var(--c-fn);}
+.hljs-type,.hljs-title.class_,.hljs-attr,.hljs-property{color:var(--c-type);}
+.hljs-params{color:var(--code-ink);}
+
+/* ---------- tables ---------- */
+.tablewrap{overflow-x:auto; margin:18px 0; border:1px solid var(--rule); border-radius:4px;}
+table{border-collapse:collapse; width:100%; font-family:Archivo,sans-serif; font-size:14px; background:var(--surface);}
+th{
+  text-align:left; font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted);
+  font-weight:600; padding:10px 14px; border-bottom:1px solid var(--rule); background:var(--sunk); white-space:nowrap;
+}
+td{padding:10px 14px; border-bottom:1px solid var(--rule); vertical-align:top; color:var(--ink-2);}
+tr:last-child td{border-bottom:0;}
+td code{font-size:12px;}
+.num{font-variant-numeric:tabular-nums;}
+
+/* ---------- checklist ---------- */
+.check{list-style:none; padding:0; margin:14px 0; display:flex; flex-direction:column; gap:1px;}
+.check li{margin:0;}
+.check label{
+  display:flex; gap:11px; align-items:flex-start; padding:9px 12px; border:1px solid var(--rule);
+  border-radius:3px; background:var(--surface); cursor:pointer; font-size:15.5px;
+}
+.check label:hover{border-color:var(--rule-strong);}
+.check input{margin:5px 0 0; accent-color:var(--accent); flex:none; width:15px; height:15px;}
+.check input:checked ~ span{color:var(--muted); text-decoration:line-through; text-decoration-color:var(--rule-strong);}
+:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+
+footer{border-top:1px solid var(--rule); margin-top:60px; padding:26px 0 60px; color:var(--muted); font-size:14px;}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto !important; transition:none !important; animation:none !important;}}
+html{scroll-behavior:smooth;}
+</style>
+
+<header class="top">
+  <div class="wrap">
+    <div class="masthead">
+      <div class="eyebrow">Technical screen &mdash; live coding</div>
+      <h1>Go &amp; TypeScript<br><span class="dim">screen prep</span></h1>
+      <p class="standfirst">Everything likely to come up in a 60-minute live-coding screen for a 2&ndash;4 year full-stack role built on Go, TypeScript, React, and third-party integrations &mdash; with answers written the way you should actually say them.</p>
+      <div class="facts">
+        <span class="fact"><b>60</b> min &middot; shared editor</span>
+        <span class="fact">Go &middot; TS &middot; React</span>
+        <span class="fact">REST / gRPC</span>
+        <span class="fact"><b>2&ndash;4</b> yrs</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<nav class="chips" aria-label="Sections">
+  <div class="wrap"><div class="chiprow">
+    <a href="#read">The read</a>
+    <a href="#hour">The hour</a>
+    <a href="#go">Go Q&amp;A</a>
+    <a href="#golive">Go live-coding</a>
+    <a href="#ts">TypeScript</a>
+    <a href="#react">React</a>
+    <a href="#api">API design</a>
+    <a href="#mapping">Data mapping</a>
+    <a href="#debug">Debugging</a>
+    <a href="#obs">Observability</a>
+    <a href="#behavioral">Behavioral</a>
+    <a href="#project">Your project</a>
+    <a href="#ask">Ask them</a>
+    <a href="#drill">Drill list</a>
+  </div></div>
+</nav>
+
+<div class="wrap"><div class="layout">
+  <aside class="rail" aria-label="Contents">
+    <ol>
+      <li><a href="#read"><span class="n">01</span><span>The read on this JD</span></a></li>
+      <li><a href="#hour"><span class="n">02</span><span>Driving the hour</span></a></li>
+      <li><a href="#go"><span class="n">03</span><span>Go rapid-fire</span></a></li>
+      <li><a href="#golive"><span class="n">04</span><span>Go live-coding</span></a></li>
+      <li><a href="#ts"><span class="n">05</span><span>TypeScript &amp; async</span></a></li>
+      <li><a href="#react"><span class="n">06</span><span>React</span></a></li>
+      <li><a href="#api"><span class="n">07</span><span>REST &amp; gRPC</span></a></li>
+      <li><a href="#mapping"><span class="n">08</span><span>Data mapping</span></a></li>
+      <li><a href="#debug"><span class="n">09</span><span>Full-stack debugging</span></a></li>
+      <li><a href="#obs"><span class="n">10</span><span>Observability</span></a></li>
+      <li><a href="#behavioral"><span class="n">11</span><span>Behavioral</span></a></li>
+      <li><a href="#project"><span class="n">12</span><span>Your project</span></a></li>
+      <li><a href="#ask"><span class="n">13</span><span>Questions to ask</span></a></li>
+      <li><a href="#drill"><span class="n">14</span><span>Drill list</span></a></li>
+    </ol>
+  </aside>
+
+  <main>
+
+<section id="read">
+  <span class="sectag">01 &mdash; Orientation</span>
+  <h2>What this job description is actually telling you</h2>
+  <p class="intro">Read the bullets as a description of the company's daily problem, not a checklist of technologies. Almost every line points the same direction.</p>
+
+  <p>"Data transformation and mapping between different system formats," "integrating with third-party services," "gathering requirements from users," and "comfort working directly with customers" together describe an <strong>integrations-heavy product on a small team</strong> &mdash; something that pulls data out of other people's systems, reshapes it, and puts it somewhere useful. Go on the backend, React on the front, and someone who can sit on a call with a customer and then go fix the thing.</p>
+
+  <p>That has three consequences for the screen:</p>
+  <ul>
+    <li><strong>The coding problem will be practical, not algorithmic.</strong> Expect: call an API, page through it, reshape the payload, handle partial failures. Not: balance a red-black tree. If you get a DSA question at all, it will be easy-to-lower-medium &mdash; parsing, hash maps, two pointers.</li>
+    <li><strong>Error handling and messy input are the real test.</strong> On an integrations team, the code that matters is the code that survives a vendor sending <code>null</code> where the docs promised a string. Volunteering "what happens if this field is missing?" scores higher than a clever one-liner.</li>
+    <li><strong>They are listening to how you talk.</strong> "Strong communication skills and comfort working directly with customers" in a JD means the interviewer is explicitly grading your narration. Silent coding, even correct silent coding, reads as a risk for a customer-facing role.</li>
+  </ul>
+
+  <div class="tell">
+    <b>The one-sentence strategy</b>
+    Be the person who talks through tradeoffs while writing straightforward, defensive, well-named code &mdash; and who asks about the edge cases before being asked.
+  </div>
+</section>
+
+<section id="hour">
+  <span class="sectag">02 &mdash; Format</span>
+  <h2>How to drive the 60 minutes</h2>
+  <p class="intro">A live-coding screen has a predictable shape. Knowing where you are in it stops you from spending twenty minutes on a detail that carries no points.</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Minutes</th><th>What's happening</th><th>What to do</th></tr></thead>
+      <tbody>
+        <tr><td class="num">0&ndash;5</td><td>Intros, "tell me about yourself"</td><td>Two-minute version, ending on why <em>this</em> role. Don't recite a resume.</td></tr>
+        <tr><td class="num">5&ndash;10</td><td>Problem statement</td><td>Restate it back. Ask 2&ndash;3 clarifying questions. Confirm input/output shape with a concrete example.</td></tr>
+        <tr><td class="num">10&ndash;20</td><td>Approach</td><td>Say the plan out loud <em>before</em> typing. Name the data structure and the complexity.</td></tr>
+        <tr><td class="num">20&ndash;45</td><td>Implementation</td><td>Working, ugly, complete beats elegant and half-finished. Narrate as you go.</td></tr>
+        <tr><td class="num">45&ndash;52</td><td>Test &amp; harden</td><td>Walk one real input through by hand. Then name the edge cases and fix or flag them.</td></tr>
+        <tr><td class="num">52&ndash;60</td><td>Your questions</td><td>Have three ready. This is a scored part of the interview.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>The clarifying questions that always apply</h4>
+  <ul>
+    <li>"What's the expected size &mdash; hundreds of records or millions?" (decides in-memory vs streaming)</li>
+    <li>"Can I assume the input is well-formed, or should I validate?" (they'll almost always say validate &mdash; and now it's a requirement, not gold-plating)</li>
+    <li>"If one record fails, do we abort the batch or skip and report?" (this is <em>the</em> integrations question, and asking it signals you've done this before)</li>
+    <li>"Is this a library function or an HTTP handler?" (decides error returns vs status codes)</li>
+  </ul>
+
+  <h4>Narration that sounds senior, not nervous</h4>
+  <div class="say">
+    <b>Instead of silence</b>
+    <p>"I'm going to build the lookup map first so the join is O(n) instead of O(n&sup2;) &mdash; I'll come back and handle the duplicate-key case once the happy path runs."</p>
+    <p>"I'm going to leave this as a TODO and say it out loud so you know I see it: this assumes the timestamps are UTC. In real code I'd normalize at the boundary."</p>
+    <p>"Two options here &mdash; fail the whole batch, or collect errors and return partial results. For an integration I'd default to partial results with a per-record error, because one bad vendor row shouldn't block the other 999. Want me to build it that way?"</p>
+  </div>
+
+  <div class="warnbox">
+    <b>If you get stuck</b>
+    Say what you know, what you've ruled out, and what you'd try next &mdash; then ask for a nudge. "I know I need to dedupe by ID before the join; I'm deciding whether to do it in the same pass or a separate one. Any preference?" Being stuck is normal; being stuck <em>silently</em> is the only version that fails you.
+  </div>
+</section>
+
+<section id="go">
+  <span class="sectag">03 &mdash; Backend</span>
+  <h2>Go rapid-fire</h2>
+  <p class="intro">Short verbal questions used to calibrate depth before or during the coding problem. Answer in two or three sentences, then stop &mdash; over-answering reads as uncertainty.</p>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>What's the difference between a slice and an array, and where does that bite people?</h3></div><div class="body">
+    <p>An array has a fixed length that's part of its type; a slice is a header &mdash; pointer, length, capacity &mdash; pointing into a backing array. The bite is aliasing: two slices can share one backing array, so writing through one is visible through the other, and <code>append</code> either mutates in place (capacity available) or reallocates (capacity exhausted), which means whether a caller sees your change depends on capacity.</p>
+    <pre><code class="language-go">a := []int{1, 2, 3, 4, 5}
+b := a[:2]           // len 2, cap 5 — same backing array
+b = append(b, 99)    // fits in cap, so it overwrites a[2]
+// a is now [1 2 99 4 5]
+
+c := a[:2:2]         // three-index slice caps it: len 2, cap 2
+c = append(c, 99)    // must allocate; a is untouched</code></pre>
+    <div class="tell"><b>What they're testing</b>Whether you've been burned by a function that "randomly" mutated its caller's data. Mention <code>slices.Clone</code> or the three-index slice as the fix.</div>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>How do you avoid goroutine leaks?</h3></div><div class="body">
+    <p>Every goroutine needs a guaranteed exit path. The classic leak is a goroutine blocked forever sending on a channel nobody reads from &mdash; typically after the caller returned early on a timeout. Two habits fix nearly all of it: pass a <code>context.Context</code> and <code>select</code> on <code>ctx.Done()</code> in every blocking operation, and give one-shot result channels a buffer of 1 so the sender can always complete even if nobody's listening.</p>
+    <pre><code class="language-go">// Leaks if the caller gives up: the goroutine blocks forever on send.
+func bad(ctx context.Context) (int, error) {
+    ch := make(chan int)          // unbuffered
+    go func() { ch <- expensive() }()
+    select {
+    case v := <-ch: return v, nil
+    case <-ctx.Done(): return 0, ctx.Err()   // goroutine stranded
+    }
+}
+
+// Buffer of 1: the send always completes, the goroutine always exits.
+func good(ctx context.Context) (int, error) {
+    ch := make(chan int, 1)
+    go func() { ch <- expensive() }()
+    select {
+    case v := <-ch: return v, nil
+    case <-ctx.Done(): return 0, ctx.Err()
+    }
+}</code></pre>
+    <p>Also worth saying: goroutine count is a metric worth graphing &mdash; a slow steady climb is a leak, and <code>pprof</code>'s goroutine profile shows you exactly which line they're all parked on.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>Explain <code>context</code> &mdash; what's it for and what are the rules?</h3></div><div class="body">
+    <p>It carries cancellation, deadlines, and request-scoped values across API boundaries. When a request is cancelled &mdash; client hung up, timeout fired &mdash; the cancellation propagates down the whole tree of derived contexts, so the DB query, the outbound HTTP call, and the goroutines all stop instead of doing work nobody wants.</p>
+    <ul>
+      <li>First parameter, always named <code>ctx</code>. Never store it in a struct.</li>
+      <li>Always <code>defer cancel()</code> after <code>WithCancel</code>/<code>WithTimeout</code> &mdash; not calling it leaks the timer and the parent's child list.</li>
+      <li><code>context.Value</code> is for request-scoped metadata (request ID, auth subject, trace span), not for passing dependencies. Use a typed unexported key, never a bare string.</li>
+      <li>Cancellation is cooperative: it's a signal, not a kill. Code that never checks it never stops.</li>
+    </ul>
+    <div class="tell"><b>The follow-up</b>"Where do you set the timeout?" &mdash; per outbound call, derived from the request context, so the total is bounded by the inbound deadline and each dependency gets its own budget.</div>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>Channels: buffered vs unbuffered, and what are the closed/nil rules?</h3></div><div class="body">
+    <p>Unbuffered is a rendezvous &mdash; sender and receiver both block until the handoff happens, so it doubles as synchronization. Buffered decouples them up to the buffer size, which is what you want for a work queue or a fan-in where a little burst absorption helps.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Operation</th><th>nil channel</th><th>closed channel</th></tr></thead>
+      <tbody>
+        <tr><td>Receive</td><td>Blocks forever</td><td>Returns zero value immediately; <code>v, ok := &lt;-ch</code> gives <code>ok == false</code></td></tr>
+        <tr><td>Send</td><td>Blocks forever</td><td><strong>Panics</strong></td></tr>
+        <tr><td>Close</td><td>Panics</td><td>Panics (double close)</td></tr>
+      </tbody>
+    </table></div>
+    <p>Convention: the sender closes, never the receiver, and never close from multiple goroutines. With multiple senders, close a separate <code>done</code> channel or use a <code>WaitGroup</code> plus one goroutine that closes after <code>wg.Wait()</code>. A nil channel in a <code>select</code> is genuinely useful &mdash; it disables that case, which is how you turn off a branch dynamically.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>How do you handle and classify errors?</h3></div><div class="body">
+    <p>Wrap with <code>%w</code> to preserve the chain and add context at each layer, inspect with <code>errors.Is</code> for sentinels and <code>errors.As</code> for typed errors. The important design decision on an integrations team is <strong>classification</strong>: the caller needs to know whether to retry.</p>
+    <pre><code class="language-go">var ErrNotFound = errors.New("not found")
+
+type RateLimited struct{ RetryAfter time.Duration }
+func (e *RateLimited) Error() string { return "rate limited" }
+
+// Caller decides policy from the type, not from string matching.
+if errors.Is(err, ErrNotFound) {
+    return nil, nil                       // absence isn't a failure here
+}
+var rl *RateLimited
+if errors.As(err, &rl) {
+    time.Sleep(rl.RetryAfter)
+    return retry()
+}
+return fmt.Errorf("sync vendor order %s: %w", id, err)</code></pre>
+    <p>Wrap messages should read as a stack when concatenated: <code>"sync vendor order A1: fetch line items: unexpected status 502"</code>. Add the identifier, not the word "error".</p>
+    <div class="tell"><b>The follow-up</b>"When do you panic?" &mdash; programmer bugs and impossible states at startup (a bad regex constant, a missing required env var). Never for an expected runtime failure, and never across a package boundary. Recover only at the top of a request handler so one bad request can't take the process down.</div>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>Why does a nil pointer in an interface not equal nil?</h3></div><div class="body">
+    <p>An interface value is a pair: type and value. Assigning a nil <code>*MyError</code> to an <code>error</code> gives you an interface with a non-nil <em>type</em> and a nil value, so <code>err != nil</code> is true and the caller takes the error branch on a success.</p>
+    <pre><code class="language-go">func broken() error {
+    var e *MyError = nil   // typed nil
+    return e               // interface is (*MyError, nil) — NOT nil
+}
+// if broken() != nil { ... }  ← this fires
+
+func fixed() error {
+    var e *MyError
+    if somethingWentWrong { e = &MyError{} }
+    if e == nil { return nil }   // return the untyped nil explicitly
+    return e
+}</code></pre>
+    <p>Rule of thumb: declare the return as <code>error</code> and return literal <code>nil</code> on the success path, rather than returning a concrete pointer variable.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>Mutex or channel?</h3></div><div class="body">
+    <p>Mutex for protecting shared state &mdash; a cache, a counter, a connection pool. Channels for transferring ownership of data and for coordinating goroutine lifecycles. "Share memory by communicating" is the slogan, but in practice a <code>sync.Mutex</code> around a map is simpler and faster than routing every read through a goroutine, and simpler wins.</p>
+    <p>Practical notes: <code>sync.RWMutex</code> when reads dominate heavily; <code>sync.Map</code> only for the two cases it's tuned for (write-once-read-many, or disjoint key sets per goroutine) &mdash; otherwise a plain map with a mutex benchmarks better. And always run <code>go test -race</code>; the race detector finds in seconds what code review misses for months.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>What are the <code>defer</code> gotchas?</h3></div><div class="body">
+    <ul>
+      <li>Arguments are evaluated <em>at defer time</em>, the call happens at return. <code>defer log(time.Since(start))</code> logs zero; <code>defer func(){ log(time.Since(start)) }()</code> works.</li>
+      <li>Defers run LIFO, and only at <em>function</em> return &mdash; not at the end of a loop iteration. Opening files or response bodies in a loop with <code>defer Close()</code> holds every handle until the function ends. Move the body into its own function, or close explicitly.</li>
+      <li>A deferred closure can modify named return values &mdash; that's how you convert a panic into an error, or add context on the way out.</li>
+    </ul>
+    <pre><code class="language-go">func process(ids []string) (err error) {
+    defer func() {
+        if err != nil { err = fmt.Errorf("process %d ids: %w", len(ids), err) }
+    }()
+    for _, id := range ids {
+        if err := handleOne(id); err != nil { return err }  // shadows; see note
+    }
+    return nil
+}</code></pre>
+    <div class="warnbox"><b>Say this out loud</b>The <code>:=</code> inside the loop shadows the named return. It still works here because <code>return err</code> assigns to the named value &mdash; but shadowing a named return is exactly the kind of subtlety worth flagging rather than leaving for the reviewer.</div>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>How do you model "field was absent" vs "field was zero" in JSON?</h3></div><div class="body">
+    <p>This is a real integrations question, and it comes up constantly in PATCH endpoints and vendor payloads. A plain <code>int</code> can't distinguish <code>{"count": 0}</code> from <code>{}</code>. Use a pointer, or <code>json.RawMessage</code>, or a small wrapper type.</p>
+    <pre><code class="language-go">type PatchUser struct {
+    Name  *string `json:"name,omitempty"`   // nil = don't touch
+    Email *string `json:"email,omitempty"`  // &"" = explicitly clear it
+    Age   *int    `json:"age,omitempty"`
+}
+
+func (p PatchUser) apply(u *User) {
+    if p.Name != nil { u.Name = *p.Name }
+    if p.Age != nil  { u.Age = *p.Age }
+}</code></pre>
+    <p>Related tags worth knowing: <code>json:"-"</code> to drop a field, <code>json:",string"</code> for APIs that send numbers as strings (very common in vendor payloads), and a custom <code>UnmarshalJSON</code> when a vendor sends a field as either a string or an array depending on the day.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>What do you get wrong with <code>http.Client</code> in production?</h3></div><div class="body">
+    <ul>
+      <li><strong>Using <code>http.DefaultClient</code></strong> &mdash; it has no timeout, so a hung vendor can pin a goroutine forever. Construct one client with an explicit <code>Timeout</code> and a tuned <code>Transport</code>, and reuse it; a fresh client per call defeats connection pooling.</li>
+      <li><strong>Not draining the body.</strong> <code>defer resp.Body.Close()</code> isn't enough for keep-alive reuse &mdash; the connection only returns to the pool if the body is read to EOF. <code>io.Copy(io.Discard, resp.Body)</code> before close.</li>
+      <li><strong>Leaving <code>MaxIdleConnsPerHost</code> at 2</strong> while hammering one vendor host, which silently serializes your concurrency.</li>
+      <li><strong>Retrying non-idempotent requests</strong> without an idempotency key &mdash; that's how customers get double-charged.</li>
+    </ul>
+    <pre><code class="language-go">var client = &http.Client{
+    Timeout: 10 * time.Second,
+    Transport: &http.Transport{
+        MaxIdleConns:        100,
+        MaxIdleConnsPerHost: 20,
+        IdleConnTimeout:     90 * time.Second,
+    },
+}</code></pre>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>How do you test Go code?</h3></div><div class="body">
+    <p>Table-driven tests as the default shape, <code>httptest.Server</code> to stand in for the vendor, interfaces at the boundary so the thing under test takes a dependency I can fake. Names describe behaviour, not the function: <code>TestMapOrder_RejectsZeroQuantity</code>.</p>
+    <pre><code class="language-go">func TestMapOrder(t *testing.T) {
+    tests := []struct {
+        name    string
+        input   string
+        want    int64
+        wantErr string
+    }{
+        {"single line", `{"line_items":[{"quantity":2,"unit_price_cents":500}]}`, 1000, ""},
+        {"zero quantity", `{"line_items":[{"quantity":0}]}`, 0, "quantity 0"},
+    }
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            got, err := MapOrder([]byte(tt.input), "vendor-x")
+            if tt.wantErr != "" {
+                if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+                    t.Fatalf("want error containing %q, got %v", tt.wantErr, err)
+                }
+                return
+            }
+            if err != nil { t.Fatalf("unexpected error: %v", err) }
+            if got.TotalCents != tt.want { t.Errorf("total = %d, want %d", got.TotalCents, tt.want) }
+        })
+    }
+}</code></pre>
+    <p>Also mention: <code>t.Parallel()</code> where tests are independent, <code>-race</code> in CI, <code>t.Cleanup</code> over defer in helpers, and golden files for big transformation outputs &mdash; which is exactly the mapping work in this JD.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>How do you shut a Go service down gracefully?</h3></div><div class="body">
+    <pre><code class="language-go">srv := &http.Server{Addr: ":8080", Handler: mux,
+    ReadHeaderTimeout: 5 * time.Second}
+
+go func() {
+    if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+        log.Fatalf("listen: %v", err)
+    }
+}()
+
+ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+defer stop()
+<-ctx.Done()
+
+shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+defer cancel()
+if err := srv.Shutdown(shutdownCtx); err != nil {
+    log.Printf("forced shutdown: %v", err)
+}</code></pre>
+    <p>The point to make out loud: <code>Shutdown</code> stops accepting new connections and waits for in-flight requests, so a deploy doesn't cut a customer's request in half. Background workers need the same treatment &mdash; the shutdown context should reach them too, or you'll drop half-processed jobs.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>When would you reach for generics?</h3></div><div class="body">
+    <p>When the same logic is genuinely identical across types and the alternative is copy-paste or <code>any</code> plus type assertions &mdash; container helpers, a concurrency utility like a bounded <code>Map</code>, a generic result cache. Not for business logic, where a concrete type is clearer. <code>maps</code>, <code>slices</code>, and <code>cmp</code> in the standard library cover most of what people used to hand-roll.</p>
+  </div></div>
+</section>
+
+<section id="golive">
+  <span class="sectag">04 &mdash; Backend</span>
+  <h2>Go live-coding problems</h2>
+  <p class="intro">Five problems that cover most of what a Go screen for this role can throw at you. Every solution below compiles and passes <code>go test -race</code> &mdash; type them from memory a few times rather than reading them.</p>
+
+  <div class="qa"><div class="qline"><span class="marker">1</span><h3>Fetch N records concurrently, at most K at a time, preserving order</h3></div><div class="body">
+    <p>The single most likely Go problem for an integrations team. Phrased as: "here's a list of 500 IDs and an API that rate-limits at 10 concurrent requests &mdash; fetch them all."</p>
+    <p>Talk through the three requirements as you write: bounded concurrency (a semaphore channel), stable output order (write to <code>out[i]</code>, don't append), and cancellation (fail fast so 499 doomed requests don't run).</p>
+    <pre><code class="language-go">// FetchAll runs fn over every id with at most `limit` in flight, preserves
+// input order in the result, and fails fast on the first error.
+func FetchAll[T any](ctx context.Context, ids []string, limit int,
+    fn func(context.Context, string) (T, error)) ([]T, error) {
+
+    ctx, cancel := context.WithCancel(ctx)
+    defer cancel()
+
+    out := make([]T, len(ids))
+    sem := make(chan struct{}, limit)
+    var wg sync.WaitGroup
+    var once sync.Once
+    var firstErr error
+
+    for i, id := range ids {
+        wg.Add(1)
+        go func(i int, id string) {
+            defer wg.Done()
+
+            select {
+            case sem <- struct{}{}:            // acquire
+            case <-ctx.Done():
+                return
+            }
+            defer func() { <-sem }()           // release
+
+            v, err := fn(ctx, id)
+            if err != nil {
+                once.Do(func() {
+                    firstErr = fmt.Errorf("id %s: %w", id, err)
+                    cancel()                    // stop the rest
+                })
+                return
+            }
+            out[i] = v   // distinct index per goroutine: no lock needed
+        }(i, id)
+    }
+    wg.Wait()
+    return out, firstErr
+}</code></pre>
+    <div class="tell"><b>Points you score by saying them</b>
+      <p>&bull; "Each goroutine writes a distinct index, so there's no data race and no mutex &mdash; the slice header itself is never mutated."</p>
+      <p>&bull; "I'm passing <code>i</code> and <code>id</code> as parameters. Go 1.22 made loop variables per-iteration so it's no longer required, but I'd still write it this way in a codebase that might be on an older version."</p>
+      <p>&bull; "In real code this is <code>golang.org/x/sync/errgroup</code> with <code>g.SetLimit(10)</code> &mdash; I'm hand-rolling it because you asked for the mechanism."</p>
+    </div>
+    <p><strong>Very likely follow-up:</strong> "What if I don't want to abort the batch on one failure?" &mdash; collect a per-index error slice instead of failing fast, return <code>([]T, []error)</code> or a slice of result structs, and don't cancel. That's the right default for ingesting vendor data. Have the answer ready; it's the whole point of the question.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">2</span><h3>Retry with exponential backoff, jitter, and no retry on permanent failures</h3></div><div class="body">
+    <p>"Integrating with third-party services" in a JD means this problem is on the table. The two things that separate a real answer from a naive one: <strong>jitter</strong> (so a thousand clients don't retry in lockstep and re-kill the vendor), and <strong>classifying</strong> errors so you don't burn five attempts on a 422 that will never succeed.</p>
+    <pre><code class="language-go">// Permanent marks an error that must not be retried (4xx, validation).
+type Permanent struct{ Err error }
+
+func (p *Permanent) Error() string { return p.Err.Error() }
+func (p *Permanent) Unwrap() error { return p.Err }
+
+func Retry(ctx context.Context, attempts int, base, max time.Duration,
+    fn func(context.Context) error) error {
+
+    var err error
+    for i := 0; i < attempts; i++ {
+        if err = fn(ctx); err == nil {
+            return nil
+        }
+        var perm *Permanent
+        if errors.As(err, &perm) {
+            return err                  // never going to succeed
+        }
+        if i == attempts-1 {
+            break
+        }
+
+        backoff := base << i            // 1x, 2x, 4x, 8x...
+        if backoff > max {
+            backoff = max
+        }
+        sleep := time.Duration(rand.Int63n(int64(backoff) + 1))  // full jitter
+
+        t := time.NewTimer(sleep)
+        select {
+        case <-ctx.Done():
+            t.Stop()
+            return ctx.Err()            // never sleep through a cancellation
+        case <-t.C:
+        }
+    }
+    return err
+}</code></pre>
+    <div class="tell"><b>Say this</b>"I'm sleeping inside a <code>select</code> on <code>ctx.Done()</code> rather than <code>time.Sleep</code>, so a cancelled request doesn't sit in a backoff for thirty seconds. And I'd honour a <code>Retry-After</code> header over my own backoff when the vendor sends one."</div>
+    <p><strong>Follow-up:</strong> "What if the request isn't idempotent?" &mdash; then retrying can duplicate a side effect. Send an idempotency key the server dedupes on, or make the retry safe at the data layer with an upsert on a natural key.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">3</span><h3>Rate limiter (token bucket)</h3></div><div class="body">
+    <p>Asked either as "limit our outbound calls to the vendor" or "limit inbound requests per API key." Lazy refill on read is the trick worth knowing &mdash; no ticker goroutine to leak, and it works for millions of keys.</p>
+    <pre><code class="language-go">type TokenBucket struct {
+    mu       sync.Mutex
+    tokens   float64
+    capacity float64          // burst size
+    rate     float64          // tokens per second
+    last     time.Time
+    now      func() time.Time // injectable, so tests don't sleep
+}
+
+func NewTokenBucket(rate, capacity float64) *TokenBucket {
+    return &TokenBucket{tokens: capacity, capacity: capacity,
+        rate: rate, now: time.Now, last: time.Now()}
+}
+
+func (b *TokenBucket) Allow() bool {
+    b.mu.Lock()
+    defer b.mu.Unlock()
+
+    now := b.now()
+    b.tokens += now.Sub(b.last).Seconds() * b.rate   // refill for elapsed time
+    if b.tokens > b.capacity {
+        b.tokens = b.capacity
+    }
+    b.last = now
+
+    if b.tokens < 1 {
+        return false
+    }
+    b.tokens--
+    return true
+}</code></pre>
+    <div class="tell"><b>Score the extra point</b>"I've made <code>now</code> a field so the test can advance time instead of sleeping &mdash; a rate limiter test that calls <code>time.Sleep</code> is slow and flaky." Then mention <code>golang.org/x/time/rate</code> as what you'd actually import, and that per-key limiters need eviction or the map grows forever.</div>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">4</span><h3>Worker pool over a job channel</h3></div><div class="body">
+    <p>The other shape of the same idea: fixed N workers draining one queue. Prefer this when jobs arrive over time (a stream, a queue consumer) rather than from a known slice.</p>
+    <pre><code class="language-go">func WorkerPool(ctx context.Context, jobs []int, workers int, do func(int) int) []int {
+    in := make(chan int)
+    type res struct{ idx, val int }
+    outCh := make(chan res)
+
+    var wg sync.WaitGroup
+    for w := 0; w < workers; w++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            for idx := range in {                  // exits when `in` closes
+                select {
+                case outCh <- res{idx, do(jobs[idx])}:
+                case <-ctx.Done():
+                    return
+                }
+            }
+        }()
+    }
+
+    go func() {                                     // producer
+        defer close(in)
+        for i := range jobs {
+            select {
+            case in <- i:
+            case <-ctx.Done():
+                return
+            }
+        }
+    }()
+
+    go func() { wg.Wait(); close(outCh) }()         // closer
+
+    out := make([]int, len(jobs))
+    for r := range outCh {
+        out[r.idx] = r.val
+    }
+    return out
+}</code></pre>
+    <p>The structural point to narrate: <strong>three goroutine roles</strong> &mdash; producer closes the input, workers exit when input closes, and one closer goroutine waits on the WaitGroup then closes the output so the main range loop terminates. Getting the close ownership right is what the question is really about.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">5</span><h3>An HTTP handler with validation and typed errors</h3></div><div class="body">
+    <p>If they ask you to "expose this as an endpoint," this is the shape. Keep transport concerns (status codes, JSON) in the handler and business logic in a service the handler calls &mdash; say that out loud, it's the design point.</p>
+    <pre><code class="language-go">type APIError struct {
+    Status  int    `json:"-"`
+    Code    string `json:"code"`
+    Message string `json:"message"`
+}
+
+func (e *APIError) Error() string { return e.Code + ": " + e.Message }
+
+func handleCreateOrder(store Store, log *slog.Logger) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        ctx := r.Context()
+
+        var req CreateOrderReq
+        body := http.MaxBytesReader(w, r.Body, 1<<20)     // cap the body
+        if err := json.NewDecoder(body).Decode(&req); err != nil {
+            writeErr(w, &APIError{http.StatusBadRequest, "invalid_json",
+                "body is not valid JSON"})
+            return
+        }
+        if req.ExternalID == "" || req.Email == "" {
+            writeErr(w, &APIError{http.StatusUnprocessableEntity, "missing_field",
+                "external_id and email are required"})
+            return
+        }
+
+        id, err := store.Create(ctx, req)
+        if err != nil {
+            var apiErr *APIError
+            if errors.As(err, &apiErr) {                   // expected failure
+                writeErr(w, apiErr)
+                return
+            }
+            log.ErrorContext(ctx, "create order failed",    // unexpected: log it
+                "err", err, "external_id", req.ExternalID)
+            writeErr(w, &APIError{http.StatusInternalServerError, "internal",
+                "unexpected error"})
+            return
+        }
+
+        w.Header().Set("Content-Type", "application/json")
+        w.WriteHeader(http.StatusCreated)
+        _ = json.NewEncoder(w).Encode(map[string]string{"id": id})
+    }
+}</code></pre>
+    <div class="tell"><b>Three things to name</b>
+      <p>&bull; <code>MaxBytesReader</code> &mdash; without it an unbounded body is a trivial memory DoS.</p>
+      <p>&bull; The error split: expected failures map to a status code and a stable machine-readable <code>code</code>; unexpected ones get logged with context and return a generic message, because internal errors must never leak into a response body.</p>
+      <p>&bull; The closure over dependencies (<code>store</code>, <code>log</code>) instead of package-level globals &mdash; that's what makes the handler testable with <code>httptest</code>.</p>
+    </div>
+  </div></div>
+</section>
+
+<section id="ts">
+  <span class="sectag">05 &mdash; Frontend &amp; Node</span>
+  <h2>TypeScript &amp; async patterns</h2>
+  <p class="intro">"Strong understanding of asynchronous programming patterns" is a JD bullet, which means it's a scored question. These are the ones that actually get asked.</p>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>What does this print, and why?</h3></div><div class="body">
+    <pre><code class="language-javascript">console.log("1 sync");
+setTimeout(() => console.log("5 macrotask"), 0);
+queueMicrotask(() => console.log("3 microtask"));
+Promise.resolve().then(() => console.log("4 promise"));
+console.log("2 sync");</code></pre>
+    <p>Output is <code>1 sync, 2 sync, 3 microtask, 4 promise, 5 macrotask</code>. All synchronous code runs first. Then the <strong>entire microtask queue</strong> drains &mdash; promise callbacks and <code>queueMicrotask</code>, in FIFO order &mdash; and only then does the event loop take one macrotask (<code>setTimeout</code>, I/O). Microtasks queued <em>by</em> microtasks run in the same drain, which is why an infinite promise chain can starve the loop entirely.</p>
+    <div class="tell"><b>The follow-up</b>"Where does <code>await</code> fit?" &mdash; everything after an <code>await</code> is a microtask continuation. So <code>await</code>-ing an already-resolved promise still yields to the microtask queue; it does not run synchronously.</div>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3><code>Promise.all</code> vs <code>allSettled</code> vs <code>race</code> vs <code>any</code></h3></div><div class="body">
+    <div class="tablewrap"><table>
+      <thead><tr><th>Method</th><th>Resolves when</th><th>Rejects when</th><th>Use for</th></tr></thead>
+      <tbody>
+        <tr><td><code>all</code></td><td>All fulfil</td><td>First rejection (immediately)</td><td>Independent calls where you need every result</td></tr>
+        <tr><td><code>allSettled</code></td><td>All settle</td><td>Never</td><td>Batch ingest &mdash; report per-item success/failure</td></tr>
+        <tr><td><code>race</code></td><td>First to settle, either way</td><td>If the first settle is a rejection</td><td>Timeouts</td></tr>
+        <tr><td><code>any</code></td><td>First fulfilment</td><td>Only if all reject (<code>AggregateError</code>)</td><td>Redundant sources / fallback providers</td></tr>
+      </tbody>
+    </table></div>
+    <div class="warnbox"><b>The gotcha to volunteer</b><code>Promise.all</code> rejecting does <em>not</em> cancel the other promises &mdash; they keep running, and if one of them later rejects with no handler you get an unhandled rejection. Cancellation needs an <code>AbortController</code>; there is no such thing as cancelling a promise.</div>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>Write a concurrency limiter for async work</h3></div><div class="body">
+    <p>The TypeScript twin of the Go problem. <code>Promise.all(ids.map(fetch))</code> fires 500 requests at once and gets you rate-limited; this caps it.</p>
+    <pre><code class="language-typescript">export async function mapLimit&lt;T, R&gt;(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) =&gt; Promise&lt;R&gt;,
+): Promise&lt;R[]&gt; {
+  const results = new Array&lt;R&gt;(items.length);
+  let next = 0;
+
+  // N workers share one cursor; each pulls the next index when it's free.
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () =&gt; {
+    while (true) {
+      const i = next++;
+      if (i &gt;= items.length) return;
+      results[i] = await fn(items[i], i);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+}</code></pre>
+    <p>The insight to narrate: <code>next++</code> is safe without a lock because JavaScript is single-threaded &mdash; no other worker can run between the read and the increment. That's a genuinely good thing to say out loud; it shows you understand <em>why</em> the concurrency model makes this simple.</p>
+    <p><strong>Variant they'll ask for:</strong> "don't let one failure kill the batch." Wrap the <code>await</code> in try/catch and store <code>{status: "fulfilled" | "rejected"}</code> per index &mdash; a hand-rolled <code>allSettled</code> with a concurrency cap, which is exactly what a vendor sync needs.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>How do you time out and cancel a fetch?</h3></div><div class="body">
+    <pre><code class="language-typescript">export async function fetchJSON&lt;T&gt;(
+  url: string,
+  { timeoutMs = 5000, signal }: { timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise&lt;T&gt; {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  // Combine the caller's cancellation with our timeout.
+  const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+
+  const res = await fetch(url, { signal: combined });
+  if (!res.ok) {
+    const body = await res.text().catch(() =&gt; "");
+    throw Object.assign(new Error(`HTTP ${res.status} for ${url}: ${body.slice(0, 200)}`), {
+      status: res.status,
+    });
+  }
+  return (await res.json()) as T;
+}</code></pre>
+    <p>Points: <code>fetch</code> only rejects on network failure, so <strong><code>res.ok</code> must be checked explicitly</strong> &mdash; forgetting that is the single most common async bug in JS codebases. Including the status and a body snippet in the error message is what makes the eventual production incident debuggable. <code>AbortSignal.any</code> composes cancellation sources so a component unmount and a timeout both work.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>Consume a paginated API</h3></div><div class="body">
+    <p>An async generator is the elegant answer here, and it's the kind of thing that makes an interviewer sit up: the caller iterates records and never thinks about pages, and memory stays flat because you never accumulate the whole set.</p>
+    <pre><code class="language-typescript">type Page&lt;T&gt; = { items: T[]; next_cursor: string | null };
+
+export async function* paginate&lt;T&gt;(
+  fetchPage: (cursor?: string) =&gt; Promise&lt;Page&lt;T&gt;&gt;,
+): AsyncGenerator&lt;T&gt; {
+  let cursor: string | undefined;
+  do {
+    const page = await fetchPage(cursor);
+    for (const item of page.items) yield item;
+    cursor = page.next_cursor ?? undefined;
+  } while (cursor);
+}
+
+// Caller doesn't know pages exist:
+for await (const order of paginate(getOrdersPage)) {
+  await handle(order);
+}</code></pre>
+    <div class="tell"><b>Follow-ups worth pre-loading</b>
+      <p>&bull; "What if the cursor is broken and loops forever?" &mdash; cap total pages, and detect a repeated cursor.</p>
+      <p>&bull; "Offset vs cursor pagination?" &mdash; offset is simple but drifts when rows are inserted mid-scan (you skip or duplicate records) and gets slow at high offsets; cursor pagination on a stable sort key is correct and stays fast.</p>
+    </div>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3><code>any</code> vs <code>unknown</code>, and where do types actually help?</h3></div><div class="body">
+    <p><code>any</code> switches type checking off and the unsoundness spreads to everything it touches. <code>unknown</code> is the honest top type: you can hold it, but you must narrow before you use it &mdash; which is exactly right for a vendor payload.</p>
+    <pre><code class="language-typescript">// A discriminated union makes the impossible states unrepresentable.
+type SyncResult =
+  | { status: "ok"; id: string; recordsWritten: number }
+  | { status: "partial"; id: string; errors: string[] }
+  | { status: "failed"; id: string; reason: string };
+
+function describe(r: SyncResult): string {
+  switch (r.status) {
+    case "ok":      return `${r.recordsWritten} records`;
+    case "partial": return `${r.errors.length} problems`;
+    case "failed":  return r.reason;
+    default: {
+      const _exhaustive: never = r;   // compile error if a case is added
+      return _exhaustive;
+    }
+  }
+}</code></pre>
+    <p>The line that lands: <strong>"types are a claim about data I control; at the boundary I validate."</strong> A <code>as VendorOrder</code> cast on a JSON response is a lie the compiler believes. Parse with a runtime validator (Zod, Valibot, or a hand-written guard) at the edge, and let the inferred type flow inward from there.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>Node/backend TS: anything different from the browser?</h3></div><div class="body">
+    <ul>
+      <li><strong>Blocking the loop.</strong> One synchronous CPU-heavy call (a big <code>JSON.parse</code>, a sync crypto call, a regex with catastrophic backtracking) stalls <em>every</em> in-flight request. Move it to a worker thread or a queue.</li>
+      <li><strong>Streams and backpressure.</strong> For large payloads, pipe rather than buffer &mdash; <code>pipeline()</code> handles error propagation and cleanup that a manual <code>.pipe()</code> chain doesn't.</li>
+      <li><strong>Unhandled rejections</strong> terminate the process by default in modern Node. Every background promise needs a <code>.catch</code>, even a logging one.</li>
+      <li><strong>Graceful shutdown</strong> on <code>SIGTERM</code>: stop accepting, drain in-flight, close the pool &mdash; the same discipline as the Go answer.</li>
+    </ul>
+  </div></div>
+</section>
+
+<section id="react">
+  <span class="sectag">06 &mdash; Frontend</span>
+  <h2>React</h2>
+  <p class="intro">"Proven track record of building responsive, intuitive user interfaces" &mdash; so expect either a small component to build live, or pointed questions about re-renders and data fetching.</p>
+
+  <div class="qa"><div class="qline"><span class="marker">1</span><h3>Live problem: a search box that queries an API as you type</h3></div><div class="body">
+    <p>The most common React screen exercise, because it hides four real problems: debouncing, request cancellation, out-of-order responses, and the loading/error/empty states people forget.</p>
+    <pre><code class="language-typescript">function useDebounced&lt;T&gt;(value: T, ms = 300): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() =&gt; {
+    const t = setTimeout(() =&gt; setDebounced(value), ms);
+    return () =&gt; clearTimeout(t);      // reset the timer on every keystroke
+  }, [value, ms]);
+  return debounced;
+}
+
+function OrderSearch() {
+  const [query, setQuery] = useState("");
+  const [state, setState] = useState&lt;
+    { status: "idle" | "loading" } | { status: "error"; message: string }
+    | { status: "done"; orders: Order[] }
+  &gt;({ status: "idle" });
+
+  const debouncedQuery = useDebounced(query);
+
+  useEffect(() =&gt; {
+    if (!debouncedQuery) { setState({ status: "idle" }); return; }
+
+    const controller = new AbortController();
+    setState({ status: "loading" });
+
+    fetchJSON&lt;Order[]&gt;(`/api/orders?q=${encodeURIComponent(debouncedQuery)}`, {
+      signal: controller.signal,
+    })
+      .then((orders) =&gt; setState({ status: "done", orders }))
+      .catch((err) =&gt; {
+        if (err.name === "AbortError") return;   // superseded, not a failure
+        setState({ status: "error", message: err.message });
+      });
+
+    return () =&gt; controller.abort();   // cancel on new query or unmount
+  }, [debouncedQuery]);
+
+  return (
+    &lt;div&gt;
+      &lt;label htmlFor="q"&gt;Search orders&lt;/label&gt;
+      &lt;input id="q" value={query} onChange={(e) =&gt; setQuery(e.target.value)} /&gt;
+
+      {state.status === "loading" &amp;&amp; &lt;p&gt;Searching&hellip;&lt;/p&gt;}
+      {state.status === "error" &amp;&amp; &lt;p role="alert"&gt;{state.message}&lt;/p&gt;}
+      {state.status === "done" &amp;&amp; state.orders.length === 0 &amp;&amp; &lt;p&gt;No orders match &ldquo;{debouncedQuery}&rdquo;.&lt;/p&gt;}
+      {state.status === "done" &amp;&amp; (
+        &lt;ul&gt;{state.orders.map((o) =&gt; &lt;li key={o.id}&gt;{o.externalId}&lt;/li&gt;)}&lt;/ul&gt;
+      )}
+    &lt;/div&gt;
+  );
+}</code></pre>
+    <div class="tell"><b>The four things to say while writing it</b>
+      <p>&bull; <strong>Cleanup solves the race.</strong> Without <code>abort()</code>, a slow response for "ab" can land after the fast one for "abcd" and overwrite it. The cleanup function makes the last request the winning one.</p>
+      <p>&bull; <strong>One state object, not four booleans.</strong> <code>isLoading</code> + <code>error</code> + <code>data</code> as separate state lets you represent "loading and errored and has data," which is meaningless. A discriminated union makes that impossible.</p>
+      <p>&bull; <strong>Empty is a state.</strong> "No results" is different from "haven't searched yet," and users notice.</p>
+      <p>&bull; <strong>A real app uses TanStack Query here</strong> &mdash; caching, deduping, retries, stale-while-revalidate. I'm hand-rolling it to show the mechanism.</p>
+    </div>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>Why do keys matter, and why is the array index a bad one?</h3></div><div class="body">
+    <p>Keys tell React which element in the new list corresponds to which in the old one. With index keys, deleting the first item shifts everything: React thinks item 0 changed its content rather than that item 0 was removed, so it reuses the wrong DOM node &mdash; and any state living in that node (an input's text, focus, a CSS transition) sticks to the wrong row. Index keys are fine only for a list that is static and never reordered, filtered, or inserted into.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>When does <code>useMemo</code> / <code>useCallback</code> / <code>React.memo</code> actually help?</h3></div><div class="body">
+    <p>Three cases: an expensive computation you don't want to redo; a value or callback passed to a <code>React.memo</code> child, where a new reference each render defeats the memo; and a dependency of another hook, where an unstable reference causes an effect to re-run in a loop. Everywhere else it's a cost &mdash; you pay allocation and comparison for nothing, and the code is harder to read.</p>
+    <p>Say the diagnosis order: <strong>measure with the Profiler first</strong>. Most "React is slow" problems turn out to be a big unmemoised list, state living too high in the tree so a keystroke re-renders the page, or a chart library re-mounting &mdash; not a missing <code>useCallback</code>. The best fix is usually moving state <em>down</em> to the component that owns it, not memoising the top.</p>
+    <p>Worth mentioning if you've kept up: the React Compiler automates most of this, which is a reason not to litter a codebase with hand-written memoisation today.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>Controlled vs uncontrolled inputs?</h3></div><div class="body">
+    <p>Controlled means React state is the source of truth (<code>value</code> + <code>onChange</code>) &mdash; needed for validation as you type, formatting, or driving other UI from the input. Uncontrolled leaves the value in the DOM and reads it with a ref on submit &mdash; less code, fewer renders, and it's what form libraries lean on. For a big form, uncontrolled with validation on blur/submit is usually the better default.</p>
+    <div class="warnbox"><b>The bug they may show you</b>An input that switches from <code>value={undefined}</code> to <code>value={"x"}</code> flips from uncontrolled to controlled and React logs a warning. Fix: initialise to <code>""</code>, never <code>undefined</code>.</div>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>How would you make a 10,000-row table usable?</h3></div><div class="body">
+    <ul>
+      <li><strong>Don't render 10,000 rows.</strong> Virtualise (TanStack Virtual, react-window) so only the visible window plus a small overscan is in the DOM.</li>
+      <li><strong>Paginate or filter server-side</strong> where the data allows &mdash; the fastest render is the one you skip.</li>
+      <li><strong>Memoise the row component</strong> and keep row props referentially stable, or virtualisation gains get eaten by re-renders.</li>
+      <li><strong>Keep sort/filter state in the URL</strong> so a customer can send you the link when they report "the numbers look wrong" &mdash; which for a customer-facing role is worth saying explicitly.</li>
+    </ul>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>What breaks in <code>useEffect</code>?</h3></div><div class="body">
+    <ul>
+      <li><strong>Missing cleanup</strong> &mdash; subscriptions, timers, and fetches outlive the component. Every effect that starts something must return a function that stops it.</li>
+      <li><strong>Derived state in an effect</strong> &mdash; <code>useEffect(() =&gt; setFullName(first + " " + last))</code> causes a second render for something that should just be computed during render.</li>
+      <li><strong>Object/array dependencies</strong> recreated each render, so the effect runs every time. Depend on primitives, or memoise the object.</li>
+      <li><strong>Strict Mode double-invocation</strong> in development is a feature: it runs mount/unmount/mount to surface exactly the missing-cleanup bug above. Don't "fix" it with a ref guard.</li>
+    </ul>
+  </div></div>
+</section>
+
+<section id="api">
+  <span class="sectag">07 &mdash; Interfaces</span>
+  <h2>REST, gRPC, and webhooks</h2>
+  <p class="intro">"Production APIs (REST and/or gRPC)" plus "API optimization techniques" &mdash; two bullets, so budget real preparation here.</p>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>Design a REST endpoint. What do you get right?</h3></div><div class="body">
+    <ul>
+      <li><strong>Resources are nouns, verbs are methods.</strong> <code>POST /orders</code>, <code>GET /orders/{id}</code>, <code>PATCH /orders/{id}</code>. If you're reaching for <code>POST /orders/{id}/doTheThing</code>, either the action is a resource (<code>POST /orders/{id}/cancellations</code>) or the design needs a rethink.</li>
+      <li><strong>Status codes that mean something:</strong> 201 with a <code>Location</code> for creation, 202 when the work is queued and the client must poll, 400 for malformed, 401 vs 403 (who are you / you can't), 404 vs 409 (gone / conflicts with current state), 422 for semantically invalid, 429 with <code>Retry-After</code>.</li>
+      <li><strong>A stable error envelope</strong> with a machine-readable code, a human message, and a request ID. Customers quote the request ID; that one field turns a support ticket into a log query.</li>
+      <li><strong>Cursor pagination</strong> with an opaque cursor, never offset for anything that mutates.</li>
+      <li><strong>Idempotency keys</strong> on unsafe operations, so a client retry after a timeout doesn't create a second order.</li>
+      <li><strong>Versioning</strong> in the path (<code>/v1/</code>) &mdash; simple, cacheable, obvious in logs.</li>
+    </ul>
+    <div class="tell"><b>The line to land</b>"Adding a field is backwards compatible; removing one, renaming one, or tightening validation is not. Clients in the wild will parse strictly whatever you told them, so I treat the response shape as a contract with an out-of-band deprecation process."</div>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>REST or gRPC &mdash; when and why?</h3></div><div class="body">
+    <div class="tablewrap"><table>
+      <thead><tr><th></th><th>REST/JSON</th><th>gRPC</th></tr></thead>
+      <tbody>
+        <tr><td>Wire format</td><td>JSON &mdash; human-readable, self-describing, verbose</td><td>Protobuf &mdash; binary, compact, schema-required</td></tr>
+        <tr><td>Contract</td><td>OpenAPI, often drifts from reality</td><td><code>.proto</code> generates both sides; drift is a compile error</td></tr>
+        <tr><td>Transport</td><td>HTTP/1.1 or 2</td><td>HTTP/2 &mdash; multiplexed, bidirectional streaming</td></tr>
+        <tr><td>Browser</td><td>Native</td><td>Needs grpc-web / Connect proxy</td></tr>
+        <tr><td>Best for</td><td>Public APIs, partner integrations, anything a customer curls</td><td>Internal service-to-service, high call volume, streaming</td></tr>
+      </tbody>
+    </table></div>
+    <p>Practical answer: gRPC internally where both ends are ours and the generated client saves real work; REST at the edge because every customer, every vendor, and every debugging session already speaks JSON over HTTP. A lot of teams run both from one definition via grpc-gateway or Connect.</p>
+    <div class="tell"><b>The depth follow-up</b>"How do you evolve a proto safely?" &mdash; field numbers are the contract, not names. Never reuse a number; <code>reserved</code> the numbers and names of deleted fields; adding an optional field is safe; changing a field's type or making a field required is not. Unknown fields are preserved on round-trip, which matters for proxies.</div>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>An endpoint is slow. What do you do?</h3></div><div class="body">
+    <p>Answer in order &mdash; the order <em>is</em> the answer, because it shows you measure before you optimise.</p>
+    <ol>
+      <li><strong>Measure where the time goes.</strong> A trace, or timing spans around each phase. p50 vs p99 matters: a slow p99 with a fine p50 is contention, GC, or a cold cache, not the algorithm.</li>
+      <li><strong>Look for N+1 first.</strong> It's the answer more often than anything else &mdash; one query for the list plus one per row. Fix by batching into a single <code>WHERE id = ANY($1)</code> and joining in memory, or a proper JOIN.</li>
+      <li><strong>Check the query plan.</strong> <code>EXPLAIN ANALYZE</code>; a sequential scan on a big table means a missing or unusable index (a function on the column, a type mismatch, or leading-wildcard <code>LIKE</code>).</li>
+      <li><strong>Reduce what's returned.</strong> Pagination, sparse fieldsets, and not serialising a 2 MB blob nobody reads.</li>
+      <li><strong>Parallelise independent I/O</strong> &mdash; three vendor calls that don't depend on each other should be concurrent, with a bounded total deadline.</li>
+      <li><strong>Then cache</strong>, with an explicit invalidation story. Caching is the last resort because a cache with no invalidation plan is a correctness bug on a delay.</li>
+    </ol>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>How do you build a webhook receiver correctly?</h3></div><div class="body">
+    <p>A very likely question given the integrations angle, and one where concrete experience shows immediately.</p>
+    <ul>
+      <li><strong>Verify the signature</strong> before parsing &mdash; HMAC over the raw body, constant-time compare, and a timestamp check to stop replays. That means you need the <em>raw</em> bytes, so the body parser must not have already consumed them.</li>
+      <li><strong>Assume at-least-once delivery.</strong> Every provider retries, so duplicates are guaranteed. Store the provider's event ID in a table with a unique constraint and treat the insert conflict as "already handled" &mdash; that's an idempotency log, and it costs one table.</li>
+      <li><strong>Assume out-of-order delivery.</strong> Don't apply a state transition just because it arrived; compare an event timestamp or version against current state and ignore stale ones.</li>
+      <li><strong>Return 2xx fast, do the work async.</strong> Persist the raw payload, enqueue, respond. A slow handler causes provider timeouts and a retry storm on top of an already-slow system.</li>
+      <li><strong>Keep the raw payload.</strong> When a customer says "the subscription didn't activate," the original body is the only ground truth.</li>
+      <li><strong>Dead-letter what fails repeatedly</strong> with enough context to replay it after a fix.</li>
+    </ul>
+    <div class="tell"><b>You have this story</b>Your RevenueCat webhook does exactly this: it rejects unauthorised calls before doing any work, and uses the <code>subscription_events</code> table as an idempotency log so a replayed event can't double-apply an entitlement. Tell it as a story, not a list.</div>
+  </div></div>
+</section>
+
+<section id="mapping">
+  <span class="sectag">08 &mdash; The signature skill</span>
+  <h2>Data transformation &amp; mapping</h2>
+  <p class="intro">"Experience with data transformation and mapping between different system formats" is the most specific bullet in the whole JD. If there's one live problem you can predict, it's this one.</p>
+
+  <p>The shape: here's a payload in <em>their</em> format, produce a record in <em>ours</em>. What separates a passing answer from a strong one is entirely in the handling of bad data.</p>
+
+  <pre><code class="language-go">// --- Source: the vendor's shape ---
+type SrcOrder struct {
+    ID     string    `json:"order_id"`
+    Buyer  SrcBuyer  `json:"buyer"`
+    Items  []SrcItem `json:"line_items"`
+    Placed string    `json:"placed_at"`      // RFC3339 string
+}
+
+// --- Target: ours ---
+type DstOrder struct {
+    ExternalID   string    `json:"external_id"`
+    CustomerName string    `json:"customer_name"`
+    Email        string    `json:"email"`
+    TotalCents   int64     `json:"total_cents"`
+    Lines        []DstLine `json:"lines"`
+    PlacedAt     time.Time `json:"placed_at"`
+    Source       string    `json:"source"`
+}
+
+// MapOrder converts one vendor order into our shape, collecting every problem
+// instead of bailing on the first one — integrations fail in batches.
+func MapOrder(raw []byte, source string) (DstOrder, error) {
+    var s SrcOrder
+    if err := json.Unmarshal(raw, &s); err != nil {
+        return DstOrder{}, fmt.Errorf("decode source order: %w", err)
+    }
+
+    var problems []string
+    if s.ID == "" {
+        problems = append(problems, "missing order_id")
+    }
+    if s.Buyer.Email == "" {
+        problems = append(problems, "missing email_address")
+    }
+
+    placed, err := time.Parse(time.RFC3339, s.Placed)
+    if err != nil {
+        problems = append(problems, fmt.Sprintf("bad placed_at %q", s.Placed))
+    }
+
+    d := DstOrder{
+        ExternalID:   s.ID,
+        CustomerName: strings.TrimSpace(s.Buyer.First + " " + s.Buyer.Last),
+        Email:        strings.ToLower(strings.TrimSpace(s.Buyer.Email)),
+        PlacedAt:     placed.UTC(),
+        Source:       source,
+        Lines:        make([]DstLine, 0, len(s.Items)),
+    }
+
+    for i, it := range s.Items {
+        if it.Qty <= 0 {
+            problems = append(problems, fmt.Sprintf("line %d: quantity %d", i, it.Qty))
+            continue
+        }
+        amt := it.Cents * int64(it.Qty)     // integer cents; never float money
+        d.Lines = append(d.Lines, DstLine{SKU: it.SKU, Quantity: it.Qty, AmountCents: amt})
+        d.TotalCents += amt
+    }
+
+    if len(problems) > 0 {
+        return d, fmt.Errorf("order %s: %s", s.ID, strings.Join(problems, "; "))
+    }
+    return d, nil
+}</code></pre>
+
+  <h4>The eight things to say while writing a mapper</h4>
+  <ol>
+    <li><strong>Money is integer cents.</strong> Never a float. Say it before they ask; it's a one-line credibility test.</li>
+    <li><strong>Timestamps are normalised to UTC at the boundary</strong>, and I ask what the vendor sends when it's ambiguous &mdash; a naive local timestamp with no zone is a data-corruption bug waiting for a DST change.</li>
+    <li><strong>Collect problems, don't bail on the first.</strong> One error per record beats an operator fixing one field, re-running, and finding the next.</li>
+    <li><strong>Return the partial record alongside the error</strong> so a caller can quarantine it with context instead of losing it.</li>
+    <li><strong>Normalise on the way in</strong> &mdash; trim and lowercase emails, canonicalise IDs &mdash; so downstream comparisons don't fail on whitespace.</li>
+    <li><strong>Absent vs zero.</strong> A missing quantity and a quantity of 0 are different facts; pointers or a custom unmarshaller preserve that.</li>
+    <li><strong>Keep the vendor's ID</strong> as <code>external_id</code> with a <code>source</code> label, and put a unique constraint on the pair &mdash; that's what makes re-running the sync idempotent instead of duplicating everything.</li>
+    <li><strong>Unknown fields.</strong> Ask whether to ignore them (resilient, silently drops new data) or reject (strict, catches vendor changes early). Naming the tradeoff is the point.</li>
+  </ol>
+
+  <div class="tell"><b>Likely extension</b>"Now do a thousand of these." &mdash; that's the concurrency problem from section 04 wrapped around this function: bounded parallelism, per-record errors, a summary of <code>{processed, skipped, failed}</code>, and the failures written somewhere replayable. Mention batching the database writes rather than one INSERT per record.</div>
+</section>
+
+<section id="debug">
+  <span class="sectag">09 &mdash; Craft</span>
+  <h2>Debugging across the stack</h2>
+  <p class="intro">"Solid debugging skills across the full stack &mdash; from backend services to frontend UI." Expect either "walk me through your hardest bug" or a live "here's a bug report, what do you do?"</p>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>A customer says "the dashboard shows the wrong total." Where do you start?</h3></div><div class="body">
+    <p>The strong answer is a <strong>method</strong>, not a list of tools. Bisect the pipeline until the layer that's lying is isolated.</p>
+    <ol>
+      <li><strong>Reproduce, and get specific.</strong> Which account, which record, what number did they expect versus see, and when. A vague report costs a day; one ID costs ten minutes.</li>
+      <li><strong>Find the boundary.</strong> Open the network tab: is the wrong number already in the API response, or does the response look right and the UI renders it wrong? That single check halves the search space and is where most people skip a step.</li>
+      <li><strong>If it's the response</strong> &mdash; replay the request with <code>curl</code>, then run the query directly. Wrong in the DB, or wrong in the code that shaped it?</li>
+      <li><strong>If the data is wrong in the DB</strong> &mdash; it went in wrong. Now it's an ingest bug: find the raw payload for that record and re-run the mapper against it.</li>
+      <li><strong>If it's the UI</strong> &mdash; stale cache, a rounding or locale format, a race where two responses landed out of order, or state derived from the wrong source.</li>
+      <li><strong>Write the failing test first</strong>, then fix. Otherwise you don't know you fixed it, and it comes back.</li>
+      <li><strong>Close the loop with the customer</strong> in their language: what happened, whether other records are affected, what you changed.</li>
+    </ol>
+    <div class="tell"><b>The sentence that makes this answer land</b>"I try to find the first place the data is wrong, not the first place it looks wrong &mdash; those are usually different layers."</div>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>What tools do you actually reach for?</h3></div><div class="body">
+    <div class="tablewrap"><table>
+      <thead><tr><th>Layer</th><th>Tool</th><th>What it answers</th></tr></thead>
+      <tbody>
+        <tr><td>Browser</td><td>Network tab, React DevTools Profiler</td><td>What was actually sent/received; which component re-rendered and why</td></tr>
+        <tr><td>Boundary</td><td><code>curl</code> / a saved request</td><td>Is the backend wrong, independent of the frontend?</td></tr>
+        <tr><td>Service</td><td>Structured logs + request ID, distributed trace</td><td>Which call in the chain was slow or failed</td></tr>
+        <tr><td>Go runtime</td><td><code>pprof</code> (cpu, heap, goroutine), <code>go test -race</code>, <code>delve</code></td><td>Where the time/memory goes; leaks; data races</td></tr>
+        <tr><td>Database</td><td><code>EXPLAIN ANALYZE</code>, <code>pg_stat_statements</code>, slow-query log</td><td>Missing index, bad plan, N+1</td></tr>
+        <tr><td>Integration</td><td>The stored raw payload</td><td>Did the vendor send what we think they sent?</td></tr>
+      </tbody>
+    </table></div>
+    <p>Two habits worth naming: <strong>a request ID threaded from the browser through every service and into every log line</strong>, so one identifier pulls the whole story; and <strong>bisecting with <code>git bisect</code></strong> when a regression has a known-good version &mdash; it turns "read all the diffs" into a handful of tests.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>Tell me about the hardest bug you've fixed.</h3></div><div class="body">
+    <p>Use the sync retry loop from Obius &mdash; it's a genuinely good story because it's a distributed-systems bug with a customer-visible symptom.</p>
+    <div class="say">
+      <b>The story, in the order to tell it</b>
+      <p><strong>Symptom.</strong> "Some devices never finished syncing. The client kept pushing the same batch of operations, the server kept responding, and the queue never drained &mdash; so the user saw a spinner forever and burned battery on a loop."</p>
+      <p><strong>Investigation.</strong> "The server was returning success at the HTTP level, so the client's error handling never triggered. Once I looked at the per-operation results rather than the response status, the pattern was obvious: a handful of operations were being rejected by a database constraint every single time, and the client's retry logic treated every non-accepted operation as 'try again later.'"</p>
+      <p><strong>Root cause.</strong> "The protocol had two outcomes &mdash; accepted or conflicted &mdash; and conflict meant retry. But there's a third category: operations that will <em>never</em> succeed, because the payload violates a constraint. Those were being classified as conflicts, so the client retried them forever."</p>
+      <p><strong>Fix.</strong> "I added a third outcome to the sync response &mdash; rejected, with a machine-readable code and the underlying database message &mdash; and taught the client to drop those operations from the queue and surface them rather than retry. The batch drains, and the failure is visible instead of invisible."</p>
+      <p><strong>Lesson.</strong> "Any retry protocol needs to distinguish transient from permanent failure explicitly, at the protocol level. If the API can't express 'don't try this again,' the client has no choice but to loop."</p>
+    </div>
+    <p>That lesson is the same one behind the <code>Permanent</code> error type in the retry problem &mdash; which means you can connect a live-coding answer to real experience in one sentence. That connection is worth more than either piece alone.</p>
+  </div></div>
+</section>
+
+<section id="obs">
+  <span class="sectag">10 &mdash; Craft</span>
+  <h2>Monitoring, logging, observability</h2>
+  <p class="intro">A JD bullet, so expect at least one question. The trap is listing vendor names; the answer is what you'd instrument and why.</p>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>What do you instrument in a new service?</h3></div><div class="body">
+    <p><strong>The three pillars, and what each is for:</strong></p>
+    <ul>
+      <li><strong>Metrics</strong> &mdash; cheap, aggregated, good for alerting. The RED method per endpoint: <em>Rate</em>, <em>Errors</em>, <em>Duration</em> as a histogram (so you get p50/p95/p99, not a mean that hides everything). Plus the business metrics that actually matter: records synced, sync failures per vendor, queue depth, webhook lag.</li>
+      <li><strong>Logs</strong> &mdash; structured (Go's <code>slog</code>, or pino in Node), one event per line, with a request ID, user/account ID, and duration. Never a bare <code>log.Println("here")</code>. Errors log once, at the boundary where they're handled &mdash; logging at every layer of the wrap chain produces five lines for one failure.</li>
+      <li><strong>Traces</strong> &mdash; OpenTelemetry spans from the browser through the API to the database and the outbound vendor call. This is the one that answers "the request took 4 seconds, which part?" &mdash; and it's the only one that works well across service boundaries.</li>
+    </ul>
+    <pre><code class="language-go">log.InfoContext(ctx, "vendor sync complete",
+    "vendor", vendor,
+    "account_id", accountID,
+    "processed", stats.Processed,
+    "skipped", stats.Skipped,
+    "failed", stats.Failed,
+    "duration_ms", time.Since(start).Milliseconds(),
+)</code></pre>
+    <div class="tell"><b>The detail that shows real experience</b>"Watch cardinality &mdash; putting a user ID or an order ID in a metric <em>label</em> creates a new time series per value and will take down your metrics backend or your bill. High-cardinality identifiers belong in logs and trace attributes, not metric labels."</div>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>What would you alert on?</h3></div><div class="body">
+    <p><strong>Symptoms, not causes</strong> &mdash; page on things a customer would notice. Elevated error rate or latency against an SLO, a sync that hasn't succeeded in longer than its interval, queue depth growing without recovering, webhook processing lag. Not "CPU is at 80%," which is a dashboard fact, not a customer problem.</p>
+    <p>Every page needs to be actionable and rare. The failure mode to name: alert fatigue &mdash; a channel full of warnings nobody reads is worse than no alerting, because it trains the team to ignore the real one. Anything non-actionable becomes a dashboard or a weekly digest.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>How do you know an integration is healthy?</h3></div><div class="body">
+    <p>A strong, specific answer for this company: per-vendor dashboards showing success rate, latency, and <em>freshness</em> &mdash; how long since the last successful sync. Freshness is the metric that catches the silent failure where nothing errors, the job just stopped running. Plus a count of quarantined records by error code, so a vendor changing a field shows up as a spike in one bucket rather than a slow drift nobody notices until a customer complains.</p>
+  </div></div>
+</section>
+
+<section id="behavioral">
+  <span class="sectag">11 &mdash; Conversation</span>
+  <h2>Behavioral &amp; customer-facing</h2>
+  <p class="intro">Three of the ten bullets are about communication, requirements, and shipping judgment. On a small team those questions are not a formality &mdash; they're often the deciding round.</p>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>Tell me about yourself.</h3></div><div class="body">
+    <p>Ninety seconds, three beats, ending on them. Present &rarr; the work you're proudest of &rarr; why this role. Do not narrate your resume chronologically.</p>
+    <div class="say">
+      <b>Structure</b>
+      <p>"I'm a full-stack engineer, mostly backend &mdash; TypeScript services and Go, with React on the front end. [<em>Current context in one line.</em>]"</p>
+      <p>"The work I'd point at is a product I built end to end: an offline-first notes app with a TypeScript backend on Postgres. The interesting half is the sync layer &mdash; a local SQLite schema and a Postgres schema that have to stay consistent across devices, with optimistic concurrency, conflict detection, and a client that has to know which failures are worth retrying. Plus integrations: an AI proxy that streams responses and meters token usage, and a billing webhook that has to be idempotent because the provider delivers at least once."</p>
+      <p>"That's why this role caught my eye &mdash; mapping data between systems that disagree about shape is most of what I've been doing, and I'd rather do it on a team where I can also talk to the people whose data it is."</p>
+    </div>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>Tell me about a time you had to ship something imperfect.</h3></div><div class="body">
+    <p>They put "balance technical excellence with shipping features that provide immediate value" in the JD, so they're screening out both extremes: the person who ships slop, and the person who can't stop refactoring. Show that you make the tradeoff <em>deliberately and visibly</em>.</p>
+    <div class="say">
+      <b>The shape of a good answer</b>
+      <p>"<strong>Situation:</strong> I needed AI features in the app but couldn't have unbounded model costs per user."</p>
+      <p>"<strong>What I shipped:</strong> Rather than build a full quota system, I shipped a daily token budget with a simple per-user counter and heuristics that size each request's token limit to what it's actually doing &mdash; a short edit gets a small budget, a 'write me a full draft' gets a large one. Crude, but it capped the downside on day one."</p>
+      <p>"<strong>What I deliberately deferred:</strong> Real usage analytics, and per-feature quotas. I logged every request's actual token usage from the start, though &mdash; I didn't want to be guessing later."</p>
+      <p>"<strong>Outcome:</strong> The feature shipped weeks earlier, and the logs told me where the real cost was, which is what a proper quota design should be based on anyway. The tradeoff I refused to make was on correctness of the billing path &mdash; cost control can be approximate, but charging someone twice cannot."</p>
+    </div>
+    <div class="tell"><b>The principle to state</b>"I'll take shortcuts on completeness and polish. I don't take them on data correctness, on anything touching money, or on the ability to observe what's happening &mdash; because those are the ones you can't cheaply fix later."</div>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>How do you turn vague user feedback into technical work?</h3></div><div class="body">
+    <ol>
+      <li><strong>Get to the specific instance.</strong> "It's slow" becomes "which screen, what were you doing, roughly when" &mdash; then find that request in the logs. Users report feelings; logs report facts, and you need both.</li>
+      <li><strong>Ask what they were trying to accomplish</strong>, not what they want built. Feature requests are usually a guess at a solution; the underlying goal is often served better and cheaper by something else.</li>
+      <li><strong>Play it back.</strong> "So when a sync fails you have no way to tell which records didn't make it &mdash; is that the painful part, or is it that it fails at all?" Being wrong out loud is the fastest way to get corrected.</li>
+      <li><strong>Look for the pattern across customers</strong> before building for one. Three people describing the same workaround is a roadmap item; one person is a support conversation.</li>
+      <li><strong>Close the loop.</strong> Tell the person what shipped, in their words. It's the cheapest trust you'll ever buy, and it makes the next report more detailed.</li>
+    </ol>
+    <p>If you have a concrete instance &mdash; a piece of feedback that changed what you built &mdash; use it. Even from a beta tester on your own app: "a tester kept losing track of which of their reusable blocks was linked where, which is why I built the library view" is a real requirements-to-shipped story.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>Tell me about a disagreement with a colleague or a customer.</h3></div><div class="body">
+    <p>Pick a real technical disagreement, show that you argued from evidence, and &mdash; this is the part people miss &mdash; <strong>show that you committed to the outcome even if you lost</strong>. Interviewers are checking for someone who can be overruled without becoming a problem.</p>
+    <p>Structure: what each side wanted and <em>why they wanted it</em> (steelman them), what evidence you brought, what was decided, what happened, what you'd do differently. Never a story where the other person was simply an idiot.</p>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>What's your weakness / what would you do differently?</h3></div><div class="body">
+    <p>Name something real and specific, then the correction you've actually made. A working example from a solo-built product: "Building alone, I under-invested in tests early &mdash; I leaned on manually exercising the app. It caught up with me on the sync layer, where the failure modes are combinatorial and manual testing simply can't cover them. Now I write the test first for anything with concurrency or state transitions, and I've been deliberate about looking for code review, because a codebase only I have read has blind spots I can't see by definition."</p>
+    <div class="warnbox"><b>Avoid</b>"I'm a perfectionist," "I work too hard," and anything that's a strength in a costume. Interviewers have heard them and they read as evasion.</div>
+  </div></div>
+
+  <div class="qa"><div class="qline"><span class="marker">Q</span><h3>Why do you want to work here?</h3></div><div class="body">
+    <p>Two sentences of substance beats a paragraph of enthusiasm. Connect one concrete thing about the company to one concrete thing you've done: the integrations problem, the small-team scope, the customer contact. If you can name their product and what it does for whom, you're already ahead of most candidates &mdash; look that up the day before.</p>
+  </div></div>
+</section>
+
+<section id="project">
+  <span class="sectag">12 &mdash; Evidence</span>
+  <h2>Your project, mapped to their bullets</h2>
+  <p class="intro">Obius is your strongest asset in this interview, but only if you frame it for this job. Lead with the backend and the integrations &mdash; not the SwiftUI.</p>
+
+  <div class="warnbox">
+    <b>Framing rule</b>
+    The role is Go, TypeScript, and React. Your app's UI is SwiftUI, which is not what they're hiring for &mdash; but the <strong>backend is TypeScript on Postgres</strong>, and the hard parts are protocol design, third-party integration, and async correctness, which transfer completely. Describe it as "a TypeScript backend with a native client," not "an iOS app." One sentence of framing changes what the interviewer hears.
+  </div>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>Their bullet</th><th>Your evidence</th></tr></thead>
+    <tbody>
+      <tr><td>Production APIs, REST</td><td>A dozen TypeScript HTTP endpoints behind auth: sync push/pull, share creation, AI proxy, search, account deletion. Typed request/response contracts, structured error codes, CORS preflight, per-user authorization on every call.</td></tr>
+      <tr><td>Third-party integrations</td><td>Anthropic (streaming), Gemini and OpenAI as fallbacks for extraction and embeddings, RevenueCat billing webhooks. Three providers with different payload shapes behind one internal interface &mdash; which is the integrations pattern in miniature.</td></tr>
+      <tr><td>Data transformation &amp; mapping</td><td>The sync layer maps a local SQLite schema to a Postgres schema across notes, sections, handles, echoes, and modules &mdash; different shapes, different ID handling, sixteen schema migrations kept compatible with clients that may be several versions behind.</td></tr>
+      <tr><td>Async patterns &amp; API optimization</td><td>Server-sent-event streaming from the model to the client, with the stream <em>tee'd</em> so token usage is metered without adding latency to the user's response. Adaptive token budgeting sized to the request. Rate limiting per user.</td></tr>
+      <tr><td>Full-stack debugging</td><td>The sync retry-loop bug (section 09) &mdash; symptom on the client, root cause in the protocol's error taxonomy, fix on both sides.</td></tr>
+      <tr><td>Monitoring &amp; observability</td><td>Per-request usage logging with model, action, and token counts; an event log; an operation log on every sync write that makes "what happened to this record" answerable after the fact.</td></tr>
+      <tr><td>Requirements from users</td><td>Onboarding and feature changes driven by watching real people get stuck &mdash; and the entitlement tiers, which are a product decision expressed as server-enforced code.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h4>Three stories to have loaded and ready</h4>
+  <ol>
+    <li><strong>Optimistic concurrency in the sync protocol.</strong> Every entity carries a version; the client sends its base version with each operation; the server compares and returns accepted, conflicted (with the server's current state, so the client can merge rather than guess), or rejected. Talk about <em>why</em> version numbers rather than last-write-wins timestamps: clocks on client devices lie, and a version is a fact about the data rather than about a clock.</li>
+    <li><strong>The idempotent billing webhook.</strong> Verify authorization before any work; use the events table as an idempotency log so an at-least-once redelivery can't double-apply an entitlement; state transitions guarded so a stale event can't downgrade a paying customer. This is the single most on-topic story you have for an integrations team &mdash; know the details cold.</li>
+    <li><strong>Streaming with metering.</strong> The user gets the model's tokens as they arrive; a tee'd copy of the same stream is parsed for usage and logged after the fact, with the logging call deliberately not awaited on the response path. The point: <strong>observability that doesn't tax the hot path.</strong></li>
+  </ol>
+
+  <div class="tell"><b>If they ask "did you write the Go?"</b>Be straight: you've built production services in TypeScript and you're comfortable in Go, and name honestly what you've done in it. Then pivot to the transferable part &mdash; concurrency with explicit cancellation, typed errors with retry classification, protocol design &mdash; and demonstrate it in the coding round. Interviewers hire for demonstrated judgment plus honest self-assessment; they discount inflated claims heavily, and they will find out.</div>
+</section>
+
+<section id="ask">
+  <span class="sectag">13 &mdash; Your turn</span>
+  <h2>Questions to ask them</h2>
+  <p class="intro">Pick three or four. Good ones are specific to what they told you in the JD and reveal that you're evaluating the job, not just hoping for it.</p>
+
+  <h4>About the work</h4>
+  <ul>
+    <li>"The JD mentions mapping data between system formats &mdash; how many integrations are you running today, and what usually breaks first when you add a new one?"</li>
+    <li>"Where's the Go/TypeScript line drawn? Is Go the services layer with TypeScript at the edges, or is it more mixed than that?"</li>
+    <li>"REST and/or gRPC &mdash; which is it in practice, and is that settled or still being argued about?"</li>
+    <li>"When a customer reports that data looks wrong, what does the path from report to fix look like today? How long does it typically take?"</li>
+  </ul>
+
+  <h4>About the team</h4>
+  <ul>
+    <li>"How much direct customer contact does an engineer actually have &mdash; is that support rotation, discovery calls, or sitting in on implementations?"</li>
+    <li>"What does the first ninety days look like? What would I have shipped by then?"</li>
+    <li>"How do you decide what to build &mdash; where does a piece of customer feedback go before it becomes work?"</li>
+    <li>"What's the on-call situation, and what wakes people up most often?"</li>
+  </ul>
+
+  <h4>The two that get the most honest answers</h4>
+  <ul>
+    <li>"What's the part of the codebase everyone agrees needs work but nobody's had time for?"</li>
+    <li>"What separates someone who does well here from someone who struggles?"</li>
+  </ul>
+
+  <div class="warnbox"><b>Don't lead with</b>Comp, remote policy, and vacation in a technical screen. Those are recruiter conversations &mdash; ask them, but ask the recruiter.</div>
+</section>
+
+<section id="drill">
+  <span class="sectag">14 &mdash; Preparation</span>
+  <h2>The drill list</h2>
+  <p class="intro">Reading this page is not preparation. Typing these from an empty file, out loud, is. Tick them off &mdash; progress is saved in this browser.</p>
+
+  <h4>Type it from memory (twice each)</h4>
+  <ul class="check" id="drills">
+    <li><label><input type="checkbox" data-k="d1"><span>Bounded-concurrency fetch in Go, order-preserving, with cancellation</span></label></li>
+    <li><label><input type="checkbox" data-k="d2"><span>Retry with exponential backoff, jitter, and a permanent-error type</span></label></li>
+    <li><label><input type="checkbox" data-k="d3"><span>Token bucket rate limiter with an injectable clock</span></label></li>
+    <li><label><input type="checkbox" data-k="d4"><span>A vendor payload mapper that aggregates problems instead of bailing</span></label></li>
+    <li><label><input type="checkbox" data-k="d5"><span>Go HTTP handler: decode, validate, typed errors, status mapping</span></label></li>
+    <li><label><input type="checkbox" data-k="d6"><span>Table-driven test with subtests for the mapper</span></label></li>
+    <li><label><input type="checkbox" data-k="d7"><span><code>mapLimit</code> in TypeScript, plus the settled variant</span></label></li>
+    <li><label><input type="checkbox" data-k="d8"><span>Async generator that paginates a cursor API</span></label></li>
+    <li><label><input type="checkbox" data-k="d9"><span>React debounced search with AbortController and all four states</span></label></li>
+  </ul>
+
+  <h4>Say it out loud, timed</h4>
+  <ul class="check">
+    <li><label><input type="checkbox" data-k="s1"><span>Tell me about yourself &mdash; 90 seconds, backend-first framing</span></label></li>
+    <li><label><input type="checkbox" data-k="s2"><span>The sync retry-loop bug &mdash; symptom, investigation, root cause, fix, lesson</span></label></li>
+    <li><label><input type="checkbox" data-k="s3"><span>The idempotent billing webhook &mdash; 60 seconds, no jargon</span></label></li>
+    <li><label><input type="checkbox" data-k="s4"><span>Shipping something imperfect deliberately, and where you refused to</span></label></li>
+    <li><label><input type="checkbox" data-k="s5"><span>Turning vague feedback into a shipped change</span></label></li>
+  </ul>
+
+  <h4>The morning of</h4>
+  <ul class="check">
+    <li><label><input type="checkbox" data-k="m1"><span>Read the company's product page &mdash; what it does, for whom, and what it integrates with</span></label></li>
+    <li><label><input type="checkbox" data-k="m2"><span>Editor ready: a scratch Go file that compiles, a scratch TS file, and know how to run them</span></label></li>
+    <li><label><input type="checkbox" data-k="m3"><span>Three questions written down where you can see them</span></label></li>
+    <li><label><input type="checkbox" data-k="m4"><span>Your project open in a tab, in case they want to look at it</span></label></li>
+    <li><label><input type="checkbox" data-k="m5"><span>Water, a notepad, notifications off, camera at eye level</span></label></li>
+  </ul>
+
+  <div class="tell">
+    <b>The last thing</b>
+    If you only remember one instruction: <strong>narrate everything, and ask what should happen when the data is bad.</strong> Both of those are free, both are exactly what this team is screening for, and almost nobody does them.
+  </div>
+</section>
+
+<footer>
+  <p>Prepared for a Go / TypeScript full-stack technical screen. Every Go snippet compiles and passes <code>go test -race</code>; the TypeScript typechecks under <code>--strict</code>.</p>
+</footer>
+</main>
+</div></div>
+
+<script>
+  // Syntax highlighting is a progressive enhancement: if the CDN is blocked,
+  // the rest of the page must still work.
+  if (window.hljs) { try { hljs.highlightAll(); } catch (e) {} }
+
+  // Scroll-spy for the contents rail.
+  var links = Array.prototype.slice.call(document.querySelectorAll('.rail a'));
+  var byId = {};
+  links.forEach(function (a) { byId[a.getAttribute('href').slice(1)] = a; });
+  if ('IntersectionObserver' in window) {
+    var seen = {};
+    var obs = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { seen[e.target.id] = e.isIntersecting; });
+      var current = null;
+      Object.keys(byId).forEach(function (id) { if (seen[id] && !current) current = id; });
+      links.forEach(function (a) { a.classList.remove('on'); });
+      if (current && byId[current]) byId[current].classList.add('on');
+    }, { rootMargin: '-64px 0px -70% 0px' });
+    document.querySelectorAll('section[id]').forEach(function (s) { obs.observe(s); });
+  }
+
+  // Checklist state, per browser. Never let storage failures break the page.
+  var boxes = document.querySelectorAll('.check input[type="checkbox"]');
+  function readState() {
+    try { return JSON.parse(localStorage.getItem('screenprep.drills') || '{}'); }
+    catch (e) { return {}; }
+  }
+  var state = readState();
+  boxes.forEach(function (box) {
+    var k = box.getAttribute('data-k');
+    if (state[k]) box.checked = true;
+    box.addEventListener('change', function () {
+      state[k] = box.checked;
+      try { localStorage.setItem('screenprep.drills', JSON.stringify(state)); } catch (e) {}
+    });
+  });
+</script>
