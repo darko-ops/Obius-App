@@ -2,6 +2,13 @@
 
 A local-first note-taking app for iOS and macOS built with SwiftUI. Obius structures notes into reorderable, collapsible sections with semantic tagging, reusable content loops, version history, and AI-powered intelligence — all backed by a local SQLite database with optional cloud sync.
 
+**Shipped solo to the App Store.** 53,610 lines of Swift across 139 files, iOS and macOS
+from one codebase, built alongside a full-time job. The hard part is
+[`SyncEngine.swift`](Obius-iOS/Obius/Core/Sync/SyncEngine.swift): a 1,700-line actor that
+holds a local SQLite database and a remote Postgres one in agreement through queued push,
+incremental pull, explicit conflict handling, per-device registration and realtime
+subscriptions, so the app is fully usable with no network and reconciles when one returns.
+
 <p align="center">
   <img src="assets/Obius%20logo%20clean%20(black%20back).PNG" alt="Obius Logo" width="200"/>
 </p>
@@ -42,6 +49,22 @@ A local-first note-taking app for iOS and macOS built with SwiftUI. Obius struct
 
 ### Templates
 - Template sections with bold, uneditable prefixes for repeatable note structures
+
+## Where to look
+
+If you are reading this to judge the code rather than to use the app:
+
+| File | Why |
+|---|---|
+| `Core/Sync/SyncEngine.swift` | The actor. Queued push, incremental pull, conflict handling, realtime subscriptions consumed as async sequences, device registration, orphan cleanup. 1,700 lines and the hardest thing in the repo |
+| `Core/Database/DatabaseManager.swift` | GRDB connection pool and sixteen schema migrations |
+| `Core/Network/ClaudeService.swift` | Model responses streamed over server-sent events into the interface rather than arriving as a block |
+| `Views/Editor/NoteEditorView.swift` | The editor: draggable sections, image and audio nodes, platform representables for iOS and macOS |
+| `Core/InsightEngine.swift` | Local detection of leaked secrets, list structure and cross-note concepts |
+| `ObiusTests/` | 2,800 lines across auth, database, models, repositories, sync and entitlement tiers |
+
+Swift concurrency is used throughout: `async`/`await` across 77 files, `@MainActor`
+isolation across 43, three actors, with Combine publishers driving view state.
 
 ## Architecture
 
@@ -121,8 +144,8 @@ supabase/
 
 1. **Clone the repo**
    ```bash
-   git clone https://github.com/darko-ops/CodeNameNoodle.git
-   cd CodeNameNoodle
+   git clone https://github.com/darko-ops/Obius-App.git
+   cd Obius-App
    ```
 
 2. **Set up secrets** — Create `Obius-iOS/Obius/Configuration/Secrets.xcconfig` (git-ignored) with:
